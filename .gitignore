@@ -1,0 +1,47 @@
+# Environment & Secrets
+.env
+*.env
+client_secret*.json
+gemini_api_key.txt
+token.json
+*.key
+*.pem
+
+# Runtime State & Telemetry
+stats_cache.json
+usage_tracker.json
+video_mappings.json
+.legacy_claimed.json
+
+# User Data & Generated Media
+users_data/
+videos/
+branding/avatar.jpg
+branding/banner.jpg
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.bak
+venv/
+.pytest_cache/
+
+# Node & Frontend
+node_modules/
+dist/
+.npm/
+
+# Archives & Temp
+*.tar.gz
+*.zip
+*.log
+yt-update.tar.gz
+
+# Local Personal Files
+HANDOFF.md
+deploy_to_cloud.bat
+
+# OS
+.DS_Store
+Thumbs.db

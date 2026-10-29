@@ -1,0 +1,57 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Build Auth Backend
+      run: |
+        cd auth
+        npm ci
+        npm run build
+
+    - name: Build Dashboard Frontend
+      run: |
+        cd dashboard
+        npm ci
+        npm run build
+
+    - name: Deploy to Oracle Cloud VPS
+      uses: appleboy/scp-action@master
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        source: "server.py,requirements.txt,branding,shorts_engine,tools,auth/package.json,auth/dist,dashboard/dist"
+        target: "~/yt-desk"
+        overwrite: true
+
+    - name: Restart Cloud Services
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          cd ~/yt-desk
+          # 1. Update Python dependencies if any added
+          venv/bin/pip install --no-cache-dir -r requirements.txt
+          # 2. Restart FastAPI backend
+          sudo systemctl restart yt-desk
+          sudo systemctl is-active --quiet yt-desk && echo "FastAPI is active" || (echo "FastAPI restart failed" && exit 1)
+          # 3. Restart NestJS Auth service
+          pm2 restart yt-auth || (cd auth && pm2 start dist/main.js --name "yt-auth")
+          pm2 save

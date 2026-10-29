@@ -1,0 +1,25 @@
+services:
+  shadowmind-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: shadowmind-studio:latest
+    container_name: shadowmind_shorts_studio
+    ports:
+      - "8050:8050"
+    volumes:
+      - ./videos:/app/videos
+      - ./users_data:/app/users_data
+      - ./token.json:/app/token.json
+      - ./client_secret.json:/app/client_secret.json
+      - ./video_mappings.json:/app/video_mappings.json
+      - ./stats_cache.json:/app/stats_cache.json
+      - ./usage_tracker.json:/app/usage_tracker.json
+      - ./gemini_api_key.txt:/app/gemini_api_key.txt
+      - ./server.py:/app/server.py
+      - ./shorts_engine:/app/shorts_engine
+      - ./tools:/app/tools
+      - ./dashboard/dist:/app/dashboard/dist
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
