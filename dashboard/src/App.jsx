@@ -375,10 +375,15 @@ export default function App() {
   const topBreakoutViews = topBreakout?.views || 0;
   const topBreakoutLabel = topBreakout && topBreakout.views > 0 ? (topBreakout.short_id?.replace('_', ' ') || 'Short') : 'None yet';
 
+  const isScheduledVideo = (v) => {
+    if (v.publish_at && new Date(v.publish_at) <= new Date()) return false;
+    return v.status === 'SCHEDULED' || (v.publish_at && new Date(v.publish_at) > new Date());
+  };
+
   const filteredTableVideos = allTableVideos
     .filter((v) => {
-      if (tableTab === 'live') return v.status === 'LIVE' || v.status === 'PRIVATE' || v.views > 0;
-      if (tableTab === 'scheduled') return v.status === 'SCHEDULED' || (v.publish_at && new Date(v.publish_at) > new Date());
+      if (tableTab === 'live') return !isScheduledVideo(v) && (v.status === 'LIVE' || v.status === 'PRIVATE' || v.views > 0 || (v.publish_at && new Date(v.publish_at) <= new Date()));
+      if (tableTab === 'scheduled') return isScheduledVideo(v);
       return true;
     })
     .sort((a, b) => {
@@ -801,14 +806,18 @@ export default function App() {
     }
   };
 
-  const handleGenerateIdea = async (overrideNiche = null) => {
+  const handleGenerateIdea = async (overrideNiche = null, isSurprise = false) => {
     setGeneratingIdea(true);
     try {
       const targetNiche = overrideNiche || selectedNiche;
       const res = await authFetch('/api/ideas/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ niche: targetNiche, concept: overrideNiche === 'random' ? '' : ideaConcept })
+        body: JSON.stringify({
+          niche: targetNiche,
+          concept: isSurprise ? '' : ideaConcept,
+          surprise: isSurprise
+        })
       });
       if (res.ok) {
         const data = await res.json();
@@ -887,7 +896,8 @@ export default function App() {
           title: idea.title || `${idea.next_id || studioVideoId} #shorts`,
           description: idea.description,
           pinned_comment: idea.pinned_comment,
-          voice: idea.voice || studioVoice
+          voice: idea.voice || studioVoice,
+          niche: idea.niche || selectedNiche
         })
       });
 
@@ -926,7 +936,8 @@ export default function App() {
           title: studioTitle || `${studioVideoId} #shorts`,
           description: studioDesc,
           pinned_comment: studioComment,
-          voice: studioVoice
+          voice: studioVoice,
+          niche: selectedNiche
         })
       });
 
@@ -1412,7 +1423,7 @@ export default function App() {
                       <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
                       <span>Live Tracked</span>
                       <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-black/40 text-emerald-200">
-                        {allTableVideos.filter(v => v.status === 'LIVE' || v.status === 'PRIVATE' || v.views > 0).length}
+                        {allTableVideos.filter(v => !isScheduledVideo(v) && (v.status === 'LIVE' || v.status === 'PRIVATE' || v.views > 0 || (v.publish_at && new Date(v.publish_at) <= new Date()))).length}
                       </span>
                     </button>
 
@@ -1427,7 +1438,7 @@ export default function App() {
                       <Clock className="w-3 h-3 text-blue-300" />
                       <span>Scheduled Pipeline</span>
                       <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-black/40 text-blue-200">
-                        {allTableVideos.filter(v => v.status === 'SCHEDULED').length}
+                        {allTableVideos.filter(isScheduledVideo).length}
                       </span>
                     </button>
 
@@ -1494,7 +1505,7 @@ export default function App() {
                           const maxViews = 1100;
                           const pct = Math.min(100, Math.max(5, (item.views / maxViews) * 100));
                           const isMotion = item.motion_type === 'Real-Motion HD' || (!item.short_id?.startsWith('short_01') && !item.short_id?.startsWith('short_02') && !item.short_id?.startsWith('short_03'));
-                          const isScheduled = item.status === 'SCHEDULED';
+                          const isScheduled = isScheduledVideo(item);
 
                           return (
                             <tr key={item.short_id} className="hover:bg-slate-900/40 transition">
@@ -1547,12 +1558,12 @@ export default function App() {
                                 )}
                               </td>
                               <td className="py-3 px-4">
-                                {item.status === 'LIVE' ? (
+                                {item.status === 'LIVE' || (!isScheduled && item.publish_at && new Date(item.publish_at) <= new Date()) ? (
                                   <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60 flex items-center space-x-1 w-fit">
                                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                                     <span>LIVE</span>
                                   </span>
-                                ) : item.status === 'SCHEDULED' ? (
+                                ) : isScheduled ? (
                                   <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/60 flex items-center space-x-1 w-fit">
                                     <Clock className="w-2.5 h-2.5 text-blue-400" />
                                     <span>SCHEDULED</span>
@@ -1803,7 +1814,7 @@ export default function App() {
                   </button>
 
                   <button
-                    onClick={() => handleGenerateIdea('random')}
+                    onClick={() => handleGenerateIdea(selectedNiche, true)}
                     disabled={generatingIdea}
                     className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-50 text-black font-extrabold text-sm flex items-center space-x-2 transition shadow-lg shadow-amber-500/20"
                   >

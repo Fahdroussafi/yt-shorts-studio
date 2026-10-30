@@ -234,7 +234,9 @@ def get_user_paths(user: dict) -> dict:
         "key_file": os.path.join(u_dir, "gemini_api_key.txt"),
         "token_file": os.path.join(u_dir, "token.json"),
         "client_secret_file": os.path.join(u_dir, "client_secret.json"),
-        "channel_file": ch_path
+        "channel_file": ch_path,
+        "topic_history_file": os.path.join(u_dir, "topic_history.json"),
+        "clip_history_file": os.path.join(u_dir, "clip_history.json")
     }
 
 def load_user_stats_cache(stats_file: str) -> dict:
@@ -332,6 +334,7 @@ class ProduceRequest(BaseModel):
     description: str
     pinned_comment: str
     voice: Optional[str] = "en-US-ChristopherNeural"
+    niche: Optional[str] = "dark_psychology"
 
 
 class UploadRequest(BaseModel):
@@ -347,6 +350,7 @@ class AIKeyRequest(BaseModel):
 class IdeaGenerateRequest(BaseModel):
     niche: str
     concept: Optional[str] = None
+    surprise: Optional[bool] = False
 
 
 class ChannelSettingsRequest(BaseModel):
@@ -461,6 +465,7 @@ def get_channel_stats(user: dict = Depends(require_auth)):
     stats_cache = load_user_stats_cache(paths["stats_cache_file"])
     channel_info = get_user_channel_info(paths["channel_file"])
     updated_cache = False
+    updated_mappings = False
 
     for short_key, info in mappings.items():
         yt_id = info["yt_id"]
@@ -471,6 +476,7 @@ def get_channel_stats(user: dict = Depends(require_auth)):
         likes = cached.get("likes", "0")
         title = ""
         is_live = (info.get("default_status") == "LIVE")
+        is_unplayable = False
 
         url = f"https://www.youtube.com/watch?v={yt_id}"
         req = urllib.request.Request(url, headers={
@@ -486,8 +492,6 @@ def get_channel_stats(user: dict = Depends(require_auth)):
                     new_views = int(v_match.group(1))
                     if new_views >= views:
                         views = new_views
-                        stats_cache[short_key] = {"views": views, "likes": likes, "status": "LIVE"}
-                        updated_cache = True
 
                 l_match = re.search(r'"accessibility":\{"accessibilityData":\{"label":"(\d+[\d,]*\s*likes?)"\}\}', html)
                 if l_match:
@@ -499,8 +503,8 @@ def get_channel_stats(user: dict = Depends(require_auth)):
                 if t_match:
                     title = t_match.group(1).replace(" - YouTube", "").strip()
 
-                is_unplayable = "Video unavailable" in html or '"status":"UNPLAYABLE"' in html or "LOGIN_REQUIRED" in html
-                if not is_unplayable and views > 0:
+                is_unavailable = "Video unavailable" in html or '"status":"UNPLAYABLE"' in html
+                if not is_unavailable and ('"viewCount"' in html or views > 0):
                     is_live = True
         except Exception:
             # Fall back to stats_cache on 429 rate limit or timeout
@@ -530,20 +534,31 @@ def get_channel_stats(user: dict = Depends(require_auth)):
         motion_type = "Real-Motion HD" if file_size_mb > 10 else "Still Pilot"
 
         # Check if scheduled for future
-        is_scheduled = (info.get("default_status") == "SCHEDULED")
-        if not is_scheduled and info.get("publish_at"):
+        has_future_publish = False
+        if info.get("publish_at"):
             try:
                 from datetime import datetime, timezone
                 dt = datetime.fromisoformat(info["publish_at"].replace("Z", "+00:00"))
                 if dt > datetime.now(timezone.utc):
-                    is_scheduled = True
+                    has_future_publish = True
             except Exception:
                 pass
 
+        if has_future_publish:
+            is_scheduled = True
+        elif info.get("default_status") == "SCHEDULED":
+            # If marked SCHEDULED but publish_at is past, it is no longer scheduled
+            is_scheduled = not bool(info.get("publish_at"))
+        else:
+            is_scheduled = False
+
         if is_scheduled:
             status_val = "SCHEDULED"
-        elif is_live or info.get("default_status") == "LIVE":
+        elif is_live or info.get("default_status") == "LIVE" or (info.get("publish_at") and not has_future_publish):
             status_val = "LIVE"
+            if info.get("default_status") != "LIVE":
+                info["default_status"] = "LIVE"
+                updated_mappings = True
         else:
             status_val = info.get("default_status", "LOCAL_READY")
 
@@ -558,6 +573,13 @@ def get_channel_stats(user: dict = Depends(require_auth)):
             "publish_at": info.get("publish_at"),
             "url": f"https://youtube.com/shorts/{yt_id}"
         })
+
+    if updated_mappings:
+        try:
+            with open(paths["mappings_file"], "w", encoding="utf-8") as f:
+                json.dump(mappings, f, indent=2)
+        except Exception:
+            pass
 
     if updated_cache:
         save_user_stats_cache(stats_cache, paths["stats_cache_file"])
@@ -772,78 +794,20 @@ def delete_video(short_id: str, user: dict = Depends(require_auth)):
 @app.get("/api/niches")
 def get_niches(_user: dict = Depends(require_auth)):
     """Returns curated viral shorts niches with templates, hooks, and RPM metrics."""
-    return [
-        {
-            "id": "dark_psychology",
-            "name": "Dark Psychology & Human Behavior",
-            "rpm_range": "$0.18 - $0.32",
-            "retention_rate": "55% - 65%",
-            "voice_recommended": "en-US-ChristopherNeural",
-            "description": "Named psychological techniques, body language detection, social power dynamics, and manipulation counters.",
-            "hook_formulas": [
-                "If someone does [X], they are secretly trying to [Y]...",
-                "Never look someone in the eye like this unless you want to [Z]...",
-                "In psychology, this is known as [Named Effect]..."
-            ],
-            "sample_keywords": ["dark-psychology", "mystery", "thinking", "night-city", "shadows"]
-        },
-        {
-            "id": "dark_history",
-            "name": "The Monster Study & Dark History",
-            "rpm_range": "$0.15 - $0.25",
-            "retention_rate": "58% - 70%",
-            "voice_recommended": "en-US-ChristopherNeural",
-            "description": "Disturbing historical experiments, forbidden psychological studies, ancient brutal punishments.",
-            "hook_formulas": [
-                "In [Year], a psychologist conducted an experiment so unethical it was hidden for decades...",
-                "This is the horrifying true story of [Experiment Name]...",
-                "The government officially classified this study until [Year]..."
-            ],
-            "sample_keywords": ["vintage", "laboratory", "hallway", "cold-light", "whisper"]
-        },
-        {
-            "id": "frontier_tech",
-            "name": "Humanoid Robotics & AI Future",
-            "rpm_range": "$0.25 - $0.45",
-            "retention_rate": "60% - 72%",
-            "voice_recommended": "en-US-ChristopherNeural",
-            "description": "Bipedal robot factories, autonomous surveillance, neural implants, technological singularity.",
-            "hook_formulas": [
-                "Right now, the first factories run 100% by humanoid robots have officially gone live...",
-                "Within 5 years, this new AI machine will permanently replace millions of...",
-                "This technology was just approved and nobody is talking about it..."
-            ],
-            "sample_keywords": ["robot", "factory", "technology", "artificial-intelligence", "future"]
-        },
-        {
-            "id": "skincare_science",
-            "name": "Skincare Chemistry & Luxury Dupes",
-            "rpm_range": "$0.20 - $0.40",
-            "retention_rate": "50% - 62%",
-            "voice_recommended": "en-US-JennyNeural",
-            "description": "Ingredient science, active chemical interactions, high visual weight analysis, French pharmacy secrets.",
-            "hook_formulas": [
-                "Stop mixing [Ingredient A] with [Ingredient B]—here is why it ruins your skin barrier...",
-                "Are you high visual weight or low visual weight? Take the 30-second test...",
-                "Why this $12 drugstore cream beats $350 luxury serums in clinical trials..."
-            ],
-            "sample_keywords": ["serum", "skincare", "cosmetics", "water-drop", "luxury"]
-        },
-        {
-            "id": "gaming_lore",
-            "name": "Gaming Mysteries & Iceberg Lore",
-            "rpm_range": "$0.10 - $0.22",
-            "retention_rate": "52% - 65%",
-            "voice_recommended": "en-US-GuyNeural",
-            "description": "Creepiest unsolved easter eggs, disturbing vault experiments in Fallout, hidden horror details.",
-            "hook_formulas": [
-                "The creepiest easter egg ever discovered in [Game Title]...",
-                "Inside Vault [Number], scientists conducted a terrifying experiment on...",
-                "99% of players walked right past this disturbing detail without noticing..."
-            ],
-            "sample_keywords": ["gaming", "dark-room", "console", "cyberpunk", "hacker"]
-        }
-    ]
+    from idea_bank import NICHE_PROFILES
+    out = []
+    for p in NICHE_PROFILES.values():
+        out.append({
+            "id": p["id"],
+            "name": p["name"],
+            "rpm_range": p.get("rpm_range", "$0.18 - $0.35"),
+            "retention_rate": p.get("retention_rate", "60% - 75%"),
+            "voice_recommended": p.get("voice_recommended", "en-US-ChristopherNeural"),
+            "description": p.get("description", ""),
+            "hook_formulas": p.get("hook_formulas", []),
+            "sample_keywords": p.get("visual_bank", [])[:5]
+        })
+    return out
 
 
 def verify_gemini_api_key(key: str) -> tuple:
@@ -1161,42 +1125,38 @@ def get_next_id(user: dict = Depends(require_auth)):
 def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
     """Generates dynamic viral script structure, SEO metadata, and clip keywords."""
     paths = get_user_paths(user)
-    from idea_bank import CONCEPTS_DATABASE, get_next_short_id, customize_concept_for_brand
+    from idea_bank import NICHE_PROFILES, CONCEPTS_DATABASE, get_next_short_id, pick_concept_without_repeats, record_topic_history
     from gemini_generator import generate_with_gemini_flash
     from usage_tracker import record_gemini_request
 
     niche = req.niche
-    if not niche or niche == "random" or niche not in CONCEPTS_DATABASE:
-        niche = random.choice(list(CONCEPTS_DATABASE.keys()))
+    # If user selected Surprise Me, preserve their selected niche! Only pick random if explicitly empty or 'random'
+    if not niche or niche == "random" or (niche not in NICHE_PROFILES and niche not in CONCEPTS_DATABASE):
+        niche = random.choice(list(NICHE_PROFILES.keys()))
 
     next_id = get_next_short_id(paths["videos_dir"])
     brand_name, brand_handle = get_user_brand(paths, user)
-
     is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
 
     # 1. Try Gemini Flash AI first with user's key (fallback to system pre-configured key for admin only)
     ai_result = generate_with_gemini_flash(
-        niche,
-        req.concept,
-        paths["key_file"],
+        niche=niche,
+        concept=req.concept,
+        user_key_file=paths["key_file"],
         brand_name=brand_name,
         brand_handle=brand_handle,
         allow_fallback=is_owner,
-        user_tracker_file=paths["usage_file"]
+        user_tracker_file=paths["usage_file"],
+        surprise=bool(req.surprise),
+        topic_history_file=paths.get("topic_history_file")
     )
     if ai_result:
         record_gemini_request(tracker_file=paths["usage_file"])
         final_script = ai_result.get("script", "").strip()
+        profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
+        outro_mandate = profile.get("outro_phrase", f"Follow {brand_name} for psychological rules that put you five steps ahead.").format(brand_name=brand_name)
         if brand_name.lower() not in final_script.lower():
-            final_script = final_script.rstrip(" .,!?:;-")
-            outro_map = {
-                "dark_psychology": f"Follow {brand_name} for daily human psychology.",
-                "forbidden_history": f"Follow {brand_name} for dark historical breakthroughs.",
-                "future_tech": f"Follow {brand_name} for the hidden realities shaping tomorrow.",
-                "skincare_science": f"Follow {brand_name} for science-backed truths.",
-                "gaming_lore": f"Follow {brand_name} for dark gaming lore."
-            }
-            final_script = f"{final_script}. {outro_map.get(niche, f'Follow {brand_name} to stay ahead.')}"
+            final_script = final_script.rstrip(" .,!?:;-") + f". {outro_mandate}"
 
         return {
             "source": ai_result.get("model_used", "gemini-3.5-flash-lite"),
@@ -1204,19 +1164,25 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
             "niche": niche,
             "title": ai_result.get("title", ""),
             "script": final_script,
-            "keywords": ai_result.get("keywords", ["dark", "mystery"]),
+            "keywords": ai_result.get("keywords", profile.get("visual_bank", ["dark", "mystery"])[:8]),
             "description": ai_result.get("description", ""),
             "pinned_comment": ai_result.get("pinned_comment", "Drop your thoughts below. 👇"),
-            "voice": ai_result.get("voice", "en-US-ChristopherNeural")
+            "voice": ai_result.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural"))
         }
 
-    # 2. Smooth fallback to rich local combinatorial generator
-    pool = CONCEPTS_DATABASE.get(niche, CONCEPTS_DATABASE["dark_psychology"])
-    chosen = random.choice(pool).copy()
-    chosen = customize_concept_for_brand(chosen, brand_name, brand_handle)
+    # 2. Smooth fallback to rich local combinatorial generator (History-aware)
+    chosen = pick_concept_without_repeats(
+        niche=niche,
+        history_file=paths.get("topic_history_file"),
+        brand_name=brand_name,
+        brand_handle=brand_handle
+    )
 
     if req.concept and req.concept.strip():
         chosen["title"] = f"{req.concept.strip().title()} #shorts"
+
+    profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
+    record_topic_history(paths.get("topic_history_file"), chosen["title"], niche, req.concept or "")
 
     return {
         "source": "local-generator",
@@ -1227,7 +1193,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
         "keywords": chosen["keywords"],
         "description": chosen["description"],
         "pinned_comment": chosen["pinned_comment"],
-        "voice": chosen.get("voice", "en-US-ChristopherNeural")
+        "voice": chosen.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural"))
     }
 
 
@@ -1269,7 +1235,8 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             PRODUCTION_TASKS[task_id]["log"].append("[1/5] Synthesizing voiceover with edge-tts...")
 
             from engine import generate_voice, get_audio_duration, build_ass_subtitles, strip_watermarks
-            from produce_motion_short import download_clip_by_keyword, render_motion_video
+            from produce_motion_short import download_clip_with_smart_fallback, load_clip_history, record_clip_usage, render_motion_video
+            from idea_bank import NICHE_PROFILES
 
             target_dir = os.path.join(target_videos_dir, req.video_id)
             os.makedirs(target_dir, exist_ok=True)
@@ -1303,17 +1270,45 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             # 2. Subtitles
             build_ass_subtitles(words, ass_file)
             PRODUCTION_TASKS[task_id]["progress"] = 50
-            PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Scraping {len(req.clip_keywords)} real motion stock clips...")
 
-            # 3. Clips (Non-blocking async execution)
+            # 3. Dynamic clip expansion & no-repeat selection
+            niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
+            profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
+            niche_bank = profile.get("visual_bank", ["thinking", "shadows", "mirror", "dark-street", "candle"])
+
+            # Target 8 to 10 cuts (~4 to 4.5s per scene for viral pacing)
+            target_cuts = max(6, min(10, round(dur / 4.2)))
+            expanded_keywords = list(req.clip_keywords) if req.clip_keywords else []
+            while len(expanded_keywords) < target_cuts:
+                fresh = random.choice([k for k in niche_bank if k not in expanded_keywords] or niche_bank)
+                expanded_keywords.append(fresh)
+            expanded_keywords = expanded_keywords[:target_cuts]
+
+            PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Scraping & downloading {len(expanded_keywords)} unique stock clips (No-Repeat Algorithm)...")
+
+            clip_history_file = os.path.join(u_dir, "clip_history.json")
+            clip_history = load_clip_history(clip_history_file)
+            used_in_video = set()
+            chosen_urls = []
             clip_paths = []
-            for idx, kw in enumerate(req.clip_keywords):
+
+            for idx, kw in enumerate(expanded_keywords):
                 clip_path = os.path.join(target_dir, f"clip_{idx}.mp4")
-                await asyncio.to_thread(download_clip_by_keyword, kw, clip_path)
+                _, chosen_url = await asyncio.to_thread(
+                    download_clip_with_smart_fallback,
+                    kw,
+                    clip_path,
+                    niche,
+                    used_in_video,
+                    clip_history
+                )
+                chosen_urls.append(chosen_url)
                 clip_paths.append(clip_path)
 
+            record_clip_usage(clip_history_file, chosen_urls)
+
             PRODUCTION_TASKS[task_id]["progress"] = 70
-            PRODUCTION_TASKS[task_id]["log"].append("[4/5] Rendering 1080x1920 vertical video with FFmpeg...")
+            PRODUCTION_TASKS[task_id]["log"].append(f"[4/5] Rendering 1080x1920 vertical video ({len(clip_paths)} dynamic cuts with random offsets & flips)...")
 
             # 4. Render (Non-blocking async execution)
             await asyncio.to_thread(render_motion_video, clip_paths, audio_file, ass_file, output_mp4, dur)
