@@ -562,6 +562,9 @@ def get_channel_stats(user: dict = Depends(require_auth)):
         else:
             status_val = info.get("default_status", "LOCAL_READY")
 
+        local_exists = os.path.exists(dir_path) and bool(mp4_files)
+        storage_status = "LOCAL_AND_CLOUD" if local_exists else "CLOUD_ARCHIVED"
+
         audit_results.append({
             "short_id": short_key,
             "yt_id": yt_id,
@@ -571,7 +574,9 @@ def get_channel_stats(user: dict = Depends(require_auth)):
             "motion_type": motion_type,
             "status": status_val,
             "publish_at": info.get("publish_at"),
-            "url": f"https://youtube.com/shorts/{yt_id}"
+            "url": f"https://youtube.com/shorts/{yt_id}",
+            "local_exists": local_exists,
+            "storage_status": storage_status
         })
 
     if updated_mappings:
@@ -758,36 +763,144 @@ def stream_video(short_id: str, req: Request, range: Optional[str] = Header(None
 
 @app.delete("/api/videos/{short_id}")
 def delete_video(short_id: str, user: dict = Depends(require_auth)):
-    """Deletes a short directory and all its files from disk (User Scoped)."""
+    """Deletes a short directory and all its local files from disk to free VPS storage, keeping YouTube tracking intact."""
     paths = get_user_paths(user)
     dir_path = os.path.join(paths["videos_dir"], short_id)
-    if not os.path.exists(dir_path):
-        raise HTTPException(status_code=404, detail="Short directory not found")
-    try:
-        shutil.rmtree(dir_path)
-    except Exception as e:
-        import gc
-        gc.collect()
-        time.sleep(0.3)
+    if os.path.exists(dir_path):
         try:
             shutil.rmtree(dir_path)
-        except Exception:
-            # Force delete via shell
-            subprocess.run(["cmd", "/c", "rd", "/s", "/q", dir_path], capture_output=True)
-            if os.path.exists(dir_path):
-                raise HTTPException(status_code=500, detail=f"Failed to delete short: {str(e)}")
+        except Exception as e:
+            import gc
+            gc.collect()
+            time.sleep(0.3)
+            try:
+                shutil.rmtree(dir_path)
+            except Exception:
+                # Force delete via shell
+                subprocess.run(["cmd", "/c", "rd", "/s", "/q", dir_path], capture_output=True)
+                if os.path.exists(dir_path):
+                    raise HTTPException(status_code=500, detail=f"Failed to delete short: {str(e)}")
 
-    # Remove from user's mappings
+    # Crucial: If this video was mapped to a YouTube video, do NOT erase it from mappings!
+    # Mark it as local_purged so Telemetry & KPIs continue tracking the live/scheduled YouTube video.
     mappings = get_user_video_mappings(paths["mappings_file"])
     if short_id in mappings:
-        del mappings[short_id]
+        entry = mappings[short_id]
+        if isinstance(entry, dict) and entry.get("yt_id"):
+            entry["local_purged"] = True
+            mappings[short_id] = entry
+        elif isinstance(entry, str) and entry:
+            mappings[short_id] = {"yt_id": entry, "local_purged": True, "default_status": "LIVE"}
+        else:
+            del mappings[short_id]
         try:
             with open(paths["mappings_file"], "w", encoding="utf-8") as f:
                 json.dump(mappings, f, indent=2)
         except Exception:
             pass
 
-    return {"success": True, "message": f"Short '{short_id}' deleted successfully."}
+    return {"success": True, "message": f"Short '{short_id}' local files removed from disk. Channel tracking preserved."}
+
+
+@app.post("/api/channel/sync")
+def sync_channel_videos(user: dict = Depends(require_auth)):
+    """Scrapes the user's YouTube channel to discover published shorts, restoring missing or pruned mappings."""
+    paths = get_user_paths(user)
+    channel_info = get_user_channel_info(paths["channel_file"])
+    handle = channel_info.get("channel_handle") or ""
+    if not handle:
+        raise HTTPException(status_code=400, detail="Channel handle not configured. Please set channel handle first.")
+
+    handle_clean = handle if handle.startswith("@") else f"@{handle}"
+    url = f"https://www.youtube.com/{handle_clean}/shorts"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+    })
+
+    discovered_ids = []
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+            # Extract 11-char YouTube video IDs in order of appearance
+            raw_ids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
+            discovered_ids = list(dict.fromkeys(raw_ids))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to query YouTube channel: {str(e)}")
+
+    mappings = get_user_video_mappings(paths["mappings_file"])
+    existing_yt_ids = set()
+    for k, v in mappings.items():
+        yid = v.get("yt_id") if isinstance(v, dict) else v
+        if yid:
+            existing_yt_ids.add(yid)
+
+    # Known historical seed mappings (e.g. for restored admin shorts)
+    KNOWN_SEEDS = {
+        "nyU_NsIkodA": "short_01",
+        "NIC6gw6P-UY": "short_02",
+        "_PdvMHyd5v8": "short_03",
+        "hb_Dc-lvWE4": "short_04",
+        "Fl0KjYnNK8c": "short_05",
+        "b2iNWCbHkVQ": "short_06",
+        "wukiGKM0ajo": "short_07",
+        "rKtARt8ly8s": "short_08"
+    }
+
+    restored_count = 0
+    # Process discovered YouTube IDs
+    for yt_id in discovered_ids:
+        if yt_id not in existing_yt_ids:
+            # Check if it has a known seed short key
+            short_key = KNOWN_SEEDS.get(yt_id)
+            if not short_key or short_key in mappings:
+                # Find next short_XX ID
+                max_num = 0
+                for k in mappings.keys():
+                    m = re.match(r"short_0*(\d+)", k.lower())
+                    if m:
+                        max_num = max(max_num, int(m.group(1)))
+                short_key = f"short_{max_num + 1:02d}"
+
+            mappings[short_key] = {
+                "yt_id": yt_id,
+                "default_status": "LIVE",
+                "local_purged": True,
+                "synced_from_channel": True
+            }
+            existing_yt_ids.add(yt_id)
+            restored_count += 1
+
+    # Also ensure any seeds are restored if they were missing
+    for yt_id, short_key in KNOWN_SEEDS.items():
+        if yt_id not in existing_yt_ids and short_key not in mappings:
+            mappings[short_key] = {
+                "yt_id": yt_id,
+                "default_status": "LIVE",
+                "local_purged": True,
+                "synced_from_channel": True
+            }
+            existing_yt_ids.add(yt_id)
+            restored_count += 1
+
+    # Sort mappings by numeric short key
+    sorted_mappings = {}
+    for k in sorted(mappings.keys(), key=lambda x: int(re.search(r'\d+', x).group(0)) if re.search(r'\d+', x) else 999):
+        sorted_mappings[k] = mappings[k]
+
+    try:
+        with open(paths["mappings_file"], "w", encoding="utf-8") as f:
+            json.dump(sorted_mappings, f, indent=2)
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "message": f"Channel sync complete. Discovered {len(discovered_ids)} shorts on channel. Restored {restored_count} videos.",
+        "discovered_ids": discovered_ids,
+        "restored_count": restored_count,
+        "total_tracked": len(sorted_mappings)
+    }
 
 
 
@@ -1151,7 +1264,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
         topic_history_file=paths.get("topic_history_file")
     )
     if ai_result:
-        record_gemini_request(tracker_file=paths["usage_file"])
+        # Note: gemini_generator.py already logs request against usage_tracker.json directly upon HTTP 200
         final_script = ai_result.get("script", "").strip()
         profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
         outro_mandate = profile.get("outro_phrase", f"Follow {brand_name} for psychological rules that put you five steps ahead.").format(brand_name=brand_name)
@@ -1167,7 +1280,9 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
             "keywords": ai_result.get("keywords", profile.get("visual_bank", ["dark", "mystery"])[:8]),
             "description": ai_result.get("description", ""),
             "pinned_comment": ai_result.get("pinned_comment", "Drop your thoughts below. 👇"),
-            "voice": ai_result.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural"))
+            "voice": ai_result.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
+            "chosen_angle": ai_result.get("chosen_angle", req.concept or "Viral Psychology Hook"),
+            "generation_type": "surprise_seed" if req.surprise else "custom_concept"
         }
 
     # 2. Smooth fallback to rich local combinatorial generator (History-aware)
@@ -1193,7 +1308,9 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
         "keywords": chosen["keywords"],
         "description": chosen["description"],
         "pinned_comment": chosen["pinned_comment"],
-        "voice": chosen.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural"))
+        "voice": chosen.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
+        "chosen_angle": req.concept or chosen.get("title", "Curated Niche Angle"),
+        "generation_type": "surprise_seed" if req.surprise else "custom_concept"
     }
 
 

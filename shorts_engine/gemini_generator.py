@@ -176,6 +176,7 @@ Respond ONLY with valid JSON using this exact schema:
                     parsed["script"] = script
 
                 parsed["voice"] = profile.get("voice_recommended", "en-US-ChristopherNeural")
+                parsed["chosen_angle"] = chosen_angle
 
                 # Record in topic history
                 record_topic_history(topic_history_file, parsed.get("title", ""), niche, chosen_angle)

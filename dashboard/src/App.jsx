@@ -361,6 +361,7 @@ export default function App() {
   const [tokenUploadError, setTokenUploadError] = useState('');
   const [showManualJson, setShowManualJson] = useState(false);
   const [showChangeCredentials, setShowChangeCredentials] = useState(false);
+  const [syncingChannel, setSyncingChannel] = useState(false);
 
   // Table Subtab & Pagination State
   const [tableTab, setTableTab] = useState('live'); // 'live' | 'scheduled' | 'all'
@@ -986,6 +987,25 @@ export default function App() {
     }
   };
 
+  const handleSyncChannel = async () => {
+    setSyncingChannel(true);
+    showToast("Scanning YouTube channel for published shorts...", "info");
+    try {
+      const res = await authFetch('/api/channel/sync', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(data.message || `Channel sync complete! Restored ${data.restored_count || 0} videos.`, "success");
+        await fetchStats();
+      } else {
+        showToast(`Sync failed: ${data.detail || 'Could not query channel.'}`, "error");
+      }
+    } catch (e) {
+      showToast(`Network error syncing channel: ${e.message}`, "error");
+    } finally {
+      setSyncingChannel(false);
+    }
+  };
+
   const copyMetadata = (v) => {
     const text = `TITLE:\n${v.title}\n\nDESCRIPTION:\n${v.description}\n\nPINNED COMMENT:\n${v.pinned_comment}`;
     navigator.clipboard.writeText(text);
@@ -995,14 +1015,14 @@ export default function App() {
   };
 
   const handleDeleteVideo = async (videoId) => {
-    if (!window.confirm(`Are you sure you want to permanently delete '${videoId}' and all its media files?`)) {
+    if (!window.confirm(`Delete local media files for '${videoId}' from server disk?\n\nNote: If this video is already published or scheduled on YouTube, its view tracking, channel stats, and telemetry history will be safely preserved in your dashboard.`)) {
       return;
     }
     try {
       const res = await authFetch(`/api/videos/${videoId}`, { method: 'DELETE' });
       const data = await res.json();
       if (res.ok) {
-        showToast(data.message || `Deleted ${videoId}`, "success");
+        showToast(data.message || `Local files for ${videoId} purged from disk.`, "success");
         if (previewVideo?.id === videoId) {
           setPreviewVideo(null);
         }
@@ -1410,8 +1430,8 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Sub-tabs: Live Tracked, Scheduled Pipeline, All */}
-                  <div className="flex items-center space-x-1.5 p-1 bg-slate-900/90 rounded-xl border border-slate-800 self-start md:self-auto">
+                  {/* Sub-tabs: Live Tracked, Scheduled Pipeline, All + Channel Sync */}
+                  <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-900/90 rounded-xl border border-slate-800 self-start md:self-auto">
                     <button
                       onClick={() => { setTableTab('live'); setTablePage(1); }}
                       className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition ${
@@ -1451,6 +1471,18 @@ export default function App() {
                       }`}
                     >
                       <span>All ({allTableVideos.length})</span>
+                    </button>
+
+                    <div className="w-[1px] h-4 bg-slate-800 mx-0.5 hidden sm:block"></div>
+
+                    <button
+                      onClick={handleSyncChannel}
+                      disabled={syncingChannel || loadingStats}
+                      className="px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition text-cyan-300 hover:text-white bg-cyan-950/60 hover:bg-cyan-900/80 border border-cyan-800/60 disabled:opacity-50"
+                      title="Direct scan of your YouTube channel @TheShadowMindHQ-Hub: auto-discovers and restores all live published shorts"
+                    >
+                      <RefreshCw className={`w-3 h-3 text-cyan-300 ${syncingChannel ? 'animate-spin' : ''}`} />
+                      <span>{syncingChannel ? 'Syncing...' : 'Sync Channel'}</span>
                     </button>
                   </div>
                 </div>
@@ -1510,7 +1542,14 @@ export default function App() {
                           return (
                             <tr key={item.short_id} className="hover:bg-slate-900/40 transition">
                               <td className="py-3 px-4 font-mono font-bold text-violet-300">
-                                {item.short_id.toUpperCase()}
+                                <div className="flex items-center space-x-1.5">
+                                  <span>{item.short_id.toUpperCase()}</span>
+                                  {item.storage_status === 'CLOUD_ARCHIVED' && (
+                                    <span className="text-[9px] font-sans font-medium px-1.5 py-0.2 rounded bg-sky-950 text-sky-300 border border-sky-800/60" title="Tracked directly from YouTube channel (local MP4 purged to save VPS disk space)">
+                                      ☁️ Cloud
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                               <td className="py-3 px-4 text-slate-200 max-w-xs truncate" title={item.title}>
                                 {item.title || "Scheduled Short"}
@@ -1795,32 +1834,51 @@ export default function App() {
 
               {/* Concept Generator Card */}
               <div className="p-5 rounded-2xl bg-[#12121a] border border-slate-800/80 space-y-4">
-                <h3 className="font-bold text-sm text-white">Generate Viral Script Structure</h3>
-                <div className="flex space-x-3">
-                  <input
-                    type="text"
-                    value={ideaConcept}
-                    onChange={(e) => setIdeaConcept(e.target.value)}
-                    placeholder="Enter custom angle or keyword (e.g. 'Door in the face technique', 'Robot factories', 'Niacinamide')"
-                    className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white"
-                  />
-                  <button
-                    onClick={() => handleGenerateIdea()}
-                    disabled={generatingIdea}
-                    className="px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-bold text-sm flex items-center space-x-2 transition shadow-lg shadow-violet-600/20"
-                  >
-                    {generatingIdea ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                    <span>Generate Concept</span>
-                  </button>
-
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800/60 pb-3">
+                  <div>
+                    <h3 className="font-bold text-sm text-white">Generate Viral Script Structure</h3>
+                    <p className="text-xs text-slate-400">Choose between custom concept drafting or 1-click curated viral hook discovery</p>
+                  </div>
                   <button
                     onClick={() => handleGenerateIdea(selectedNiche, true)}
                     disabled={generatingIdea}
-                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-50 text-black font-extrabold text-sm flex items-center space-x-2 transition shadow-lg shadow-amber-500/20"
+                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-50 text-black font-extrabold text-xs flex items-center space-x-2 transition shadow-lg shadow-amber-500/20 self-start md:self-auto shrink-0"
+                    title="1-Click: Rolls a random psychological angle from our 35+ viral angle matrix"
                   >
                     <Sparkles className="w-4 h-4 fill-current" />
-                    <span>🎲 Surprise Me</span>
+                    <span>🎲 Surprise Me (Roll Viral Hook)</span>
                   </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
+                    <span>Or enter a specific topic/angle to draft:</span>
+                    <span className="text-[10px] text-slate-500 font-normal">Type an angle or keyword</span>
+                  </div>
+                  <div className="flex space-x-3">
+                    <input
+                      type="text"
+                      value={ideaConcept}
+                      onChange={(e) => setIdeaConcept(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && ideaConcept.trim()) handleGenerateIdea(); }}
+                      placeholder="e.g. 'Door in the face technique', '4-second silence rule', 'Gaslighting counters'..."
+                      className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white placeholder:text-slate-600"
+                    />
+                    <button
+                      onClick={() => {
+                        if (!ideaConcept.trim()) {
+                          showToast("Please enter a custom topic/angle first, or click '🎲 Surprise Me' to roll a viral hook.", "info");
+                          return;
+                        }
+                        handleGenerateIdea();
+                      }}
+                      disabled={generatingIdea || !ideaConcept.trim()}
+                      className="px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center space-x-2 transition shadow-lg shadow-violet-600/20 shrink-0"
+                    >
+                      {generatingIdea ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      <span>Draft Custom Concept</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Skeleton Loader during Generation */}
@@ -1853,7 +1911,7 @@ export default function App() {
                 {generatedIdea && !generatingIdea && (
                   <div className="mt-4 p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                         <span className="text-xs font-mono font-bold text-cyan-400 uppercase">Generated Concept</span>
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
                           generatedIdea.source && generatedIdea.source.startsWith('gemini')
@@ -1862,6 +1920,11 @@ export default function App() {
                         }`}>
                           {generatedIdea.source && generatedIdea.source.startsWith('gemini') ? `⚡ ${generatedIdea.source.toUpperCase()}` : '🤖 Built-in Matrix'}
                         </span>
+                        {generatedIdea.chosen_angle && (
+                          <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-800/60 max-w-xs truncate" title={generatedIdea.chosen_angle}>
+                            {generatedIdea.generation_type === 'surprise_seed' ? '🎲 ' : '🎯 '} {generatedIdea.chosen_angle}
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center space-x-2">
                         <button
