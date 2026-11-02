@@ -74,54 +74,20 @@ export default function DispatcherPage() {
         </div>
 
         {dispatchMode === 'scheduled' && (
-          <div className="space-y-3 p-3.5 bg-slate-900/60 rounded-xl border border-slate-800">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-mono uppercase text-slate-300 font-semibold flex items-center space-x-1.5">
-                <Clock className="w-3.5 h-3.5 text-blue-400" />
-                <span>Release Slot (19:00 UTC Peak Window)</span>
-              </label>
-              <span className="text-[10px] text-blue-400 font-mono">1 Video/Day Spacing</span>
-            </div>
-
-            {/* Quick Pick US Peak Slots */}
-            {scheduleRec?.available_slots?.length > 0 && (
-              <div className="space-y-1.5">
-                <div className="text-[11px] text-slate-400 font-mono">Recommended Open Peak Slots:</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {scheduleRec.available_slots.map((slot, idx) => {
-                    const isSelected = dispatchTime === slot.input_val || (dispatchTime && dispatchTime.startsWith(slot.input_val.slice(0, 10)));
-                    return (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setDispatchTime(slot.input_val)}
-                        className={`px-2.5 py-1.5 rounded-lg border text-left text-xs transition ${
-                          isSelected
-                            ? 'bg-blue-600/30 border-blue-400 text-blue-200 font-bold shadow-sm shadow-blue-500/20'
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
-                        }`}
-                      >
-                        <div className="truncate">{slot.display}</div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div className="space-y-1">
-              <div className="text-[11px] text-slate-400 font-mono">Exact Release Date & Time (UTC):</div>
-              <input
-                type="datetime-local"
-                value={dispatchTime}
-                onChange={(e) => setDispatchTime(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white font-mono"
-              />
-            </div>
-
-            <div className="p-2.5 rounded-lg bg-blue-950/30 border border-blue-900/40 text-[11px] text-blue-300/90 leading-relaxed">
-              💡 <strong>Algorithm Rule:</strong> YouTube tests Shorts in 24h seed batches. Spacing uploads $\ge$20 hours apart during US peak (18:00–21:00 UTC) avoids cannibalizing audience impressions.
-            </div>
+          <div className="space-y-2.5 p-4 bg-slate-900/60 rounded-xl border border-slate-800">
+            <label className="text-xs font-mono uppercase text-slate-300 font-semibold flex items-center space-x-1.5">
+              <Clock className="w-3.5 h-3.5 text-blue-400" />
+              <span>Exact Release Date & Time (UTC)</span>
+            </label>
+            <input
+              type="datetime-local"
+              value={dispatchTime}
+              onChange={(e) => setDispatchTime(e.target.value)}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-blue-500 outline-none text-sm text-white font-mono"
+            />
+            <p className="text-[11px] text-slate-500 font-mono">
+              Short will remain private until this exact UTC timestamp, then automatically switch to public.
+            </p>
           </div>
         )}
 
