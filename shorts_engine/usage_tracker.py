@@ -8,7 +8,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TRACKER_FILE = os.path.join(BASE_DIR, "usage_tracker.json")
 
 # Official Google Quota Limits
-GEMINI_DAILY_LIMIT = 1500  # Google AI Studio Free Tier RPD (Requests Per Day)
+GEMINI_DAILY_LIMIT = 500   # Google AI Studio Free Tier RPD (Requests Per Day for Flash Lite)
 GEMINI_RPM_LIMIT = 15      # 15 Requests Per Minute
 YOUTUBE_DAILY_LIMIT = 10000  # YouTube Data API v3 units/day (Google Cloud Project)
 YOUTUBE_UPLOAD_COST = 1600  # Cost per videos.insert (Max 6 uploads/day on 10k quota)
