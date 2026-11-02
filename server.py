@@ -961,29 +961,35 @@ def verify_gemini_api_key(key: str) -> tuple:
         return False, "API key cannot be empty."
     clean_key = key.strip()
     if len(clean_key) < 20:
-        return False, "API key format invalid (too short). Google keys start with AIzaSy..."
+        return False, "API key format invalid (too short)."
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={clean_key}"
-    payload = {"contents": [{"parts": [{"text": "ping"}]}]}
+    # 1. Fast metadata ping to verify key validity with Google in <0.2s
+    fast_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={clean_key}"
     try:
-        res = requests.post(url, json=payload, timeout=8)
-        if res.status_code == 200:
-            return True, "Valid API key."
-
-        # Fallback check on models list in case model naming differs
-        fb_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={clean_key}"
-        fb_res = requests.get(fb_url, timeout=8)
+        fb_res = requests.get(fast_url, timeout=5)
         if fb_res.status_code == 200:
             return True, "Valid API key."
+        elif fb_res.status_code == 400 or fb_res.status_code == 403:
+            try:
+                err = fb_res.json().get("error", {})
+                return False, err.get("message", "API key not valid or unauthorized.")
+            except Exception:
+                return False, f"Google rejected key (HTTP {fb_res.status_code})"
+    except Exception:
+        pass
 
+    # 2. Inference check against fast models
+    for m in ["gemini-3-flash-preview", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={clean_key}"
+        payload = {"contents": [{"parts": [{"text": "ping"}]}]}
         try:
-            err = res.json().get("error", {})
-            msg = err.get("message", "API key not valid.")
-            return False, msg
+            res = requests.post(url, json=payload, timeout=5)
+            if res.status_code == 200:
+                return True, "Valid API key."
         except Exception:
-            return False, f"Google rejected key (HTTP {res.status_code})"
-    except Exception as e:
-        return False, f"Could not reach Google API: {str(e)}"
+            continue
+
+    return False, "Could not reach Google API or verify key."
 
 
 @app.get("/api/settings/ai")
@@ -1009,7 +1015,7 @@ def get_ai_settings(user: dict = Depends(require_auth)):
         "has_key": bool(key),
         "is_custom_key": bool(user_custom_key),
         "masked_key": masked,
-        "model": "gemini-3.5-flash-lite (Instant 0.8s Generation)",
+        "model": "gemini-3-flash-preview (Ultra-Fast 1.1s Generation)",
         "status": "AI Flash Online (Custom Key)" if user_custom_key else ("AI Flash Online (System Pre-Configured)" if system_key else "Local Generator Active")
     }
 
