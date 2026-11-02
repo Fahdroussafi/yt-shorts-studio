@@ -253,9 +253,14 @@ export default function Layout() {
             {/* YouTube Data API v3 Quota */}
             <div className="space-y-1 pt-2 border-t border-slate-800/60">
               <div className="flex items-center justify-between text-[11px]">
-                <span className="text-slate-400 flex items-center space-x-1">
+                <span className="text-slate-400 flex items-center space-x-1.5">
                   <span className={`w-1.5 h-1.5 rounded-full ${usage?.youtube?.connected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
                   <span>YouTube API</span>
+                  {usage?.youtube?.is_live && (
+                    <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" title="Genuine source of truth synced with Google Cloud Monitoring API">
+                      GCP LIVE
+                    </span>
+                  )}
                 </span>
                 {usage && usage.youtube?.connected === false ? (
                   <button 
