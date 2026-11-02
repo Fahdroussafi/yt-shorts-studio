@@ -24,8 +24,8 @@ export default function AiModal({
               <Cpu className="w-5 h-5 text-cyan-400" />
             </div>
             <div>
-              <h3 className="font-extrabold text-white text-base">Gemini 3 Flash Setup</h3>
-              <p className="text-[11px] text-cyan-400 font-mono">Ultra-Fast 1.1s Speed • Zero Cost • Free Tier</p>
+              <h3 className="font-extrabold text-white text-base">Gemini 3.1 Flash Lite Setup</h3>
+              <p className="text-[11px] text-cyan-400 font-mono">500 Free Requests/Day • 1.0s Speed • Zero Cost</p>
             </div>
           </div>
           <button 

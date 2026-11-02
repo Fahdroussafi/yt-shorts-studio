@@ -223,7 +223,7 @@ export default function Layout() {
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-slate-400 flex items-center space-x-1">
                   <span className={`w-1.5 h-1.5 rounded-full ${usage?.gemini?.has_key ? 'bg-cyan-400 animate-pulse' : 'bg-slate-600'}`}></span>
-                  <span>Gemini 3 Flash</span>
+                  <span>Gemini 3.1 Flash Lite</span>
                 </span>
                 {usage && usage.gemini?.has_key === false ? (
                   <button 
@@ -246,7 +246,7 @@ export default function Layout() {
               </div>
               <div className="flex justify-between text-[10px] text-slate-500 font-mono">
                 <span>Used: {usage ? usage.gemini.used.toLocaleString() : 0}</span>
-                <span>Cap: {usage?.gemini?.limit ? `${usage.gemini.limit.toLocaleString()}/day` : '1,500/day'}</span>
+                <span>Cap: {usage?.gemini?.limit ? `${usage.gemini.limit.toLocaleString()}/day` : '500/day'}</span>
               </div>
             </div>
 

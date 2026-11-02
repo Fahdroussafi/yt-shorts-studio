@@ -978,8 +978,8 @@ def verify_gemini_api_key(key: str) -> tuple:
     except Exception:
         pass
 
-    # 2. Inference check against fast models
-    for m in ["gemini-3-flash-preview", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]:
+    # 2. Inference check against fast models (prioritize Flash-Lite 500 RPD)
+    for m in ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3-flash-preview"]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={clean_key}"
         payload = {"contents": [{"parts": [{"text": "ping"}]}]}
         try:
@@ -1015,7 +1015,7 @@ def get_ai_settings(user: dict = Depends(require_auth)):
         "has_key": bool(key),
         "is_custom_key": bool(user_custom_key),
         "masked_key": masked,
-        "model": "gemini-3-flash-preview (Ultra-Fast 1.1s Generation)",
+        "model": "gemini-3.1-flash-lite (500 RPD Free Tier • 1.0s Speed)",
         "status": "AI Flash Online (Custom Key)" if user_custom_key else ("AI Flash Online (System Pre-Configured)" if system_key else "Local Generator Active")
     }
 

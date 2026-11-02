@@ -218,9 +218,9 @@ Respond ONLY with valid JSON using this exact schema:
 """
 
     MODELS_TO_TRY = [
-        "gemini-3-flash-preview",
         "gemini-3.1-flash-lite",
         "gemini-3.5-flash-lite",
+        "gemini-3-flash-preview",
         "gemini-flash-latest"
     ]
 
