@@ -38,3 +38,4 @@ export default function VideoPreviewModal({ previewVideo, authToken, onClose }) 
     </div>
   );
 }
+
