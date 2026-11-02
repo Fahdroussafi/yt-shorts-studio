@@ -118,6 +118,11 @@ def validate_viral_script(payload: Dict[str, Any], niche: str) -> Tuple[bool, st
     if '"' not in act3 and "'" not in act3:
         return False, "Act 3 Directive must contain an exact spoken phrase in quotation marks."
 
+    # 6. Act 4 Dynamic Branded Outro Check (must contain 'follow')
+    act4_lower = act4.lower()
+    if "follow" not in act4_lower:
+        return False, f"Act 4 must contain a dynamic 'Follow {niche}' branded outro: '{act4}'"
+
     return True, "PASSED"
 
 def generate_with_gemini_flash(
@@ -165,7 +170,7 @@ OUR EMPIRICAL GOLD STANDARD (1,200+ VIEWS, >78% VVSA):
 - Act 1 Hook (0-4s): "If you collapse in front of a crowd of one hundred people, you are five times more likely to die than in front of a single stranger."
 - Act 2 Mechanism (4-21s): Explains why everyone waits for someone else to act (diffusion of responsibility) while you bleed out.
 - Act 3 Directive (21-37s): "Never shout for help into a crowd. Look at one specific person, point directly at them, and say: 'You in the blue jacket, call an ambulance right now!'"
-- Act 4 Seal (37-41s): "Calling out their clothing destroys their anonymity and forces their brain out of the trance."
+- Act 4 Dynamic Branded Outro (37-41s): "Follow ShadowMind for human survival instincts that keep you alive."
 
 MANDATORY 4-ACT ARCHITECTURE (STRICT RULES):
 1. ACT 1 HOOK (0-4s | 18-24 words):
@@ -181,10 +186,16 @@ MANDATORY 4-ACT ARCHITECTURE (STRICT RULES):
    - Explain the evolutionary brain trap, predator tactic, or cognitive betrayal causing this danger. Keep it visceral and cinematic.
 3. ACT 3 DIRECTIVE (21-37s | 38-46 words):
    - Give the viewer an exact physical counter-move AND a verbatim spoken script in quotation marks ("...") they can use to break the trap.
-4. ACT 4 SEAL (37-41s | 8-12 words):
-   - A chilling punchline explaining why that command works, or a seamless loop into the theme.
+4. ACT 4 DYNAMIC BRANDED OUTRO (37-41s | 10-14 words - MANDATORY):
+   - MUST call out your channel name using this dynamic formula tailored to the topic:
+     "Follow {brand_name} for [dynamic, context-specific reason tailored directly to this topic]."
+   - NEVER use the exact same wording every time. Dynamically adapt it:
+     * Survival/Emergency: "Follow {brand_name} for human instincts that keep you alive in an emergency."
+     * Predatory Defense: "Follow {brand_name} for psychological defense rules that protect your safety."
+     * Deception Detection: "Follow {brand_name} for behavioral tells that expose hidden deception instantly."
+     * Manipulation Defense: "Follow {brand_name} for verbal counters that protect your mind."
 5. TOTAL SPOKEN WORDS:
-   - Strictly between 108 and 128 words total across all acts.
+   - Strictly between 108 and 132 words total across all acts.
 
 NEGATIVE FILTER:
 - Never mention or draw from: [{forbidden}].
@@ -197,7 +208,7 @@ Respond ONLY with valid JSON using this exact schema:
     "act1_hook": "0-4s visceral second-person paradox hook with 'you' in first 6 words (18-24 words)",
     "act2_mechanism": "4-21s explanation of the brain betrayal or trap (45-52 words)",
     "act3_directive": "21-37s physical counter-move + exact spoken script in quotation marks (38-46 words)",
-    "act4_seal": "37-41s punchy final line (8-12 words)"
+    "act4_seal": "37-41s dynamic branded outro: Follow {brand_name} for [dynamic topic-specific promise] (10-14 words)"
   }},
   "keywords": ["dark-crowd", "interrogation", "cctv-footage", "eye-contact", "shadows", "emergency-light", "tunnel", "subway"],
   "description": "2-sentence high-stakes description with Subscribe to {brand_handle}, #shorts and 5 hashtags",
