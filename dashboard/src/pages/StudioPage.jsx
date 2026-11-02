@@ -68,10 +68,10 @@ export default function StudioPage() {
               onChange={(e) => setStudioVoice(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white"
             >
-              <option value="en-US-ChristopherNeural">Christopher (Deep Authoritative Male - Psychology)</option>
-              <option value="en-US-JennyNeural">Jenny (Warm Aesthetic Female - Skincare / Beauty)</option>
-              <option value="en-US-GuyNeural">Guy (Casual Storyteller - Tech / Gaming)</option>
-              <option value="en-US-AvaNeural">Ava (Modern Confident Female)</option>
+              <option value="en-US-ChristopherNeural">Christopher (Deep Authoritative Male - Dark Psychology Default)</option>
+              <option value="en-US-GuyNeural">Guy (Engaging Storyteller - Historical Archives)</option>
+              <option value="en-US-AvaNeural">Ava (Sharp Analytical Female - Deception Profiling)</option>
+              <option value="en-US-JennyNeural">Jenny (Calm Intimate Female - Non-Verbal Dynamics)</option>
             </select>
           </div>
         </div>

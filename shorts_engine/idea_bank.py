@@ -77,83 +77,88 @@ NICHE_PROFILES = {
             "forest", "night-camp", "fire", "smoke", "shadows", "corridor", "institution"
         ]
     },
-    "frontier_tech": {
-        "id": "frontier_tech",
-        "name": "Humanoid Robotics & AI Future",
-        "rpm_range": "$0.25 - $0.45",
-        "retention_rate": "60% - 72%",
-        "voice_recommended": "en-US-ChristopherNeural",
-        "description": "Bipedal robot factories, autonomous surveillance, neural implants, technological singularity.",
-        "outro_phrase": "Follow {brand_name} for the unseen technologies reshaping our future.",
-        "forbidden_terms": ["skincare", "makeup", "serum", "cream", "ancient history", "pratfall effect"],
-        "hook_formulas": [
-            "Right now, the first factories run 100% by humanoid robots have officially gone live...",
-            "Intelligence agencies have begun preparing for the [Tech Event] threshold...",
-            "In five years, this single machine will permanently replace millions of jobs..."
-        ],
-        "angles": [
-            "Autonomous AI Drone Swarms That Hunt Without GPS",
-            "Quantum Encryption Collapse: The Death of All Passwords",
-            "Dark Factories: Bipedal Humanoids Working 24/7 Without Lights",
-            "Brain-Computer Interfaces: Reading Sub-Vocal Thoughts in Real Time",
-            "Synthetic Biology: Self-Replicating Micro-Robots in Medicine"
-        ],
-        "visual_bank": [
-            "drone", "night-sky", "military", "technology", "artificial-intelligence",
-            "server", "matrix", "binary", "cyberpunk", "robot", "factory", "laser",
-            "microchip", "futuristic-city", "hologram", "code", "neon"
-        ]
-    },
-    "skincare_science": {
-        "id": "skincare_science",
-        "name": "Skincare Science & Formulation Secrets",
-        "rpm_range": "$0.22 - $0.38",
-        "retention_rate": "55% - 68%",
-        "voice_recommended": "en-US-JennyNeural",
-        "description": "Lipid barrier biochemistry, active ingredients, cosmetic chemistry, and drugstore dupes.",
-        "outro_phrase": "Follow {brand_name} for verified skincare chemistry secrets.",
-        "forbidden_terms": ["dark psychology", "manipulation", "drone swarm", "vault 77", "tribal warfare"],
-        "hook_formulas": [
-            "If your skin barrier is damaged, stop using [Product] immediately...",
-            "Before spending $300 on luxury face cream, look at this $14 pharmacy formulation...",
-            "The 30-second facial geometry test that tells you your real visual weight..."
-        ],
-        "angles": [
-            "High vs Low Visual Weight: The 30-Second Face Test",
-            "The $14 French Pharmacy Cream That Beats $380 Luxury Jars",
-            "Why Niacinamide and Pure Vitamin C Shouldn't Be Layered Incorrectly",
-            "The Transepidermal Water Loss Trick Every Dermatologist Uses",
-            "Ceramides vs Hyaluronic Acid: Why Dry Climates Make Hyaluronic Backfire"
-        ],
-        "visual_bank": [
-            "mirror", "face", "makeup", "luxury", "aesthetic", "cream", "serum",
-            "clean", "skincare", "water-drop", "glass-bottle", "dropper", "glow"
-        ]
-    },
-    "gaming_lore": {
-        "id": "gaming_lore",
-        "name": "Dark Gaming Lore & Iceberg Mysteries",
-        "rpm_range": "$0.14 - $0.22",
+    "body_language": {
+        "id": "body_language",
+        "name": "Body Language & Non-Verbal Dominance",
+        "rpm_range": "$0.20 - $0.36",
         "retention_rate": "65% - 78%",
-        "voice_recommended": "en-US-GuyNeural",
-        "description": "Disturbing game lore, unsolved easter eggs, terrifying cut content, and deep iceberg theories.",
-        "outro_phrase": "Follow {brand_name} for dark gaming lore and iceberg mysteries.",
-        "forbidden_terms": ["skincare", "serum", "moisturizer", "makeup", "corporate persuasion"],
+        "voice_recommended": "en-US-ChristopherNeural",
+        "description": "Subconscious physical tells, eye stillness, baseline micro-expressions, posture gravity, and non-verbal intimidation counters.",
+        "outro_phrase": "Follow {brand_name} for non-verbal cues that expose what people hide.",
+        "forbidden_terms": ["skincare", "serum", "cream", "makeup", "robot factory", "quantum", "gaming", "loot box"],
         "hook_formulas": [
-            "Inside the wasteland of [Game], developers hid an experiment so dark it was censored...",
-            "This is the creepiest unsolved mystery in [Game Name]...",
-            "Players spent ten years trying to find this secret room, and what they found shocked everyone..."
+            "If someone blinks more than fifty times in a single minute while talking to you, their autonomic nervous system is hiding something...",
+            "When walking into an unfamiliar room, the first spot your eyes land determines whether people view you as prey or authority...",
+            "If someone crosses their legs while talking to you, the direction their top foot points reveals their unspoken true intention...",
+            "The three-second eye triangle rule that causes people to feel subconscious intimidation without you uttering a single word..."
         ],
         "angles": [
-            "The Darkest Vault in Fallout History: Vault 77",
-            "The Lavender Town Audio Mystery: Frequencies That Disturbed Players",
-            "The Mount Chiliad Mystery in GTA V: What Rockstar Never Explained",
-            "PT Silent Hills: The Terrifying Phantom That Still Haunts Players",
-            "Subnautica: The Dead Zone and Why Deep Ocean Horrors Break Sanity"
+            "The Eye Stillness Trap (Why blinking less than 12 times a minute triggers predator freeze in adversaries)",
+            "The Feet Direction Tell (The subconscious biological compass that reveals who someone really cares about)",
+            "The Suprasternal Notch Cover (The primal throat-clasp reflex that exposes hidden panic)",
+            "The Asymmetrical Smirk (Spotting contempt: the only universal facial expression that predicts betrayal)",
+            "The Hand Gravity Anchor (How holding your hands below chest level projects unshakeable authority)",
+            "The 4-Second Gaze Break Rule (How looking sideways vs looking down determines your social status)"
         ],
         "visual_bank": [
-            "dark-room", "puppet", "shadows", "gaming", "neon", "cyberpunk",
-            "console", "controller", "screen-glow", "mysterious-room", "fog", "arcade"
+            "eye-contact", "stare", "silhouette", "interrogation-room", "dark-room", "shadows",
+            "walking-alone", "cctv-camera", "mirror", "whisper", "handshake", "crowd"
+        ]
+    },
+    "power_dynamics": {
+        "id": "power_dynamics",
+        "name": "Machiavellian Power & Frame Control",
+        "rpm_range": "$0.22 - $0.40",
+        "retention_rate": "64% - 76%",
+        "voice_recommended": "en-US-ChristopherNeural",
+        "description": "48 Laws of Power analysis, stoic emotional detachment, boundary defense, public insult counters, and corporate political leverage.",
+        "outro_phrase": "Follow {brand_name} for cold strategic power laws that keep you untouchable.",
+        "forbidden_terms": ["skincare", "serum", "cream", "makeup", "robot factory", "quantum", "gaming", "dupes"],
+        "hook_formulas": [
+            "When a superior or rival attempts to embarrass you publicly, reacting with anger transfers one hundred percent of the power into their hands...",
+            "If someone offers you an unsolicited favor before asking for something, accepting it instantly puts your psychological boundaries into debt...",
+            "The most dangerous conversational trap is when someone repeats your exact words back to you with a slight distortion...",
+            "Never explain yourself when someone intentionally misunderstands you. Do this five-word counter instead..."
+        ],
+        "angles": [
+            "The Cold Mirror Insult Neutralizer (How asking 'Are you okay?' disarms aggressive public humiliations)",
+            "Law 4: Always Say Less Than Necessary (Why silence creates psychological paranoia in opponents)",
+            "The Manufactured Urgency Refusal (Breaking forced concession tactics by introducing arbitrary friction)",
+            "Frame Control: Never Defend Their Premise (Why defending accusations validates the attacker's territory)",
+            "The Strategic Vulnerability Trap (How adversaries bait personal confessions to weaponize them later)",
+            "The Benign Violation Defense (Neutralizing backhanded compliments with absolute literal agreement)"
+        ],
+        "visual_bank": [
+            "chess", "interrogation-room", "dramatic-lighting", "silhouette", "dark-room",
+            "boardroom", "whisper", "smoke", "corridor", "tunnel", "rain-window"
+        ]
+    },
+    "dark_profiling": {
+        "id": "dark_profiling",
+        "name": "Dark Personality Profiling & Deception",
+        "rpm_range": "$0.20 - $0.38",
+        "retention_rate": "66% - 80%",
+        "voice_recommended": "en-US-ChristopherNeural",
+        "description": "Dark Triad traits, covert narcissist identification, boundary testing cycles, emotional vampire neutralization, and deception forensics.",
+        "outro_phrase": "Follow {brand_name} to decode covert predators before they get close.",
+        "forbidden_terms": ["skincare", "serum", "cream", "makeup", "robot", "quantum", "gaming", "minecraft"],
+        "hook_formulas": [
+            "A covert narcissist will never insult your intelligence directly. Instead, they will test your boundaries using this subtle three-phase cycle...",
+            "If someone shares an intensely intimate trauma with you within the first twenty minutes of meeting, you are not bonding, you are being mapped...",
+            "The single question that causes a pathological liar to freeze and contradict their own backstory within twenty seconds...",
+            "How to recognize the predatory grooming technique known as 'artificial commonality' before you let your guard down..."
+        ],
+        "angles": [
+            "The Premature Vulnerability Trap (Why predatory manipulators share fast secrets to extract yours)",
+            "The 3-Phase Covert Narcissist Cycle (Idealize, devalue, discard: spotting the exact inflection point)",
+            "The Triangulation Strategy (How manipulators manufacture jealousy using invisible third parties)",
+            "The Pity Play Defense (Recognizing weaponized helplessness designed to bypass emotional defense)",
+            "Micro-Testing Boundaries (Why small infractions are deliberate probes for future exploitation)",
+            "The Cognitive Overload Interview (Asking questions out of chronological sequence to shatter alibis)"
+        ],
+        "visual_bank": [
+            "mirror", "silhouette", "dark-room", "interrogation-room", "shadows",
+            "whisper", "cctv-camera", "eye-contact", "stare", "dark-street", "rain-window"
         ]
     }
 }
@@ -329,85 +334,98 @@ CONCEPTS_DATABASE = {
             "voice": "en-US-ChristopherNeural"
         }
     ],
-    "frontier_tech": [
+    "body_language": [
         {
-            "title": "The Autonomous AI Drone Swarms That Hunt Without GPS #shorts #technology",
+            "title": "The 3-Second Eye Stillness Trick That Terrifies Liars #shorts #darkpsychology",
             "script": (
-                "Military contractors have officially deployed autonomous drone swarms that operate without satellite signals or human pilots. "
-                "Equipped with decentralized edge AI vision, hundreds of miniature quadcopters communicate with each other like a school of piranhas. "
-                "If fifty drones are shot down, the remaining machines automatically recalculate attack trajectories and divide target coordinates in real-time. "
-                "Because they rely on localized optical landmarks rather than GPS, electronic jamming frequencies are completely useless against them. "
-                "The era of human soldiers deciding the front line has quietly come to an end. "
-                "Follow ShadowMind for the unseen technologies reshaping our future."
+                "If you suspect someone is lying or attempting to intimidate you, never look away or blink rapidly. Do this non-verbal move instead. "
+                "Lock your gaze directly on the bridge between their eyebrows, relax your facial muscles, and reduce your blink rate to zero for three full seconds. "
+                "In human evolutionary biology, unblinking predatory stillness signals absolute zero fear and overwhelming status dominance. "
+                "Their autonomic nervous system will perceive an unpredictable threat, triggering an immediate spike in cortisol and cognitive collapse. "
+                "Within four seconds, they will break eye contact downward and nervously touch their neck. "
+                "Follow ShadowMind for non-verbal cues that expose what people hide."
             ),
-            "keywords": ["drone", "night-sky", "military", "technology", "artificial-intelligence"],
-            "description": "Decentralized drone flocks that hunt autonomously with zero GPS.\n\nSubscribe to @ShadowMind.\n\n#drones #ai #futuretech #militarytech #robotics #shorts",
-            "pinned_comment": "Can human laws keep up with autonomous warfare? Drop your thoughts. 👇",
+            "keywords": ["eye-contact", "stare", "interrogation-room", "silhouette", "dark-room"],
+            "description": "How unblinking eye stillness shatters psychological intimidation.\n\nSubscribe to @ShadowMind.\n\n#bodylanguage #darkpsychology #mindset #manipulation #shorts",
+            "pinned_comment": "Have you ever held eye contact long enough to make someone nervous? 👇",
             "voice": "en-US-ChristopherNeural"
         },
         {
-            "title": "Quantum Encryption Collapse: The Death of All Passwords #shorts #technology",
+            "title": "The Feet Direction Tell: What Their Body Really Wants #shorts #psychology",
             "script": (
-                "Right now, intelligence agencies around the world are intercepting and storing millions of terabytes of encrypted civilian data. "
-                "They call this strategy 'Harvest Now, Decrypt Later.' "
-                "Even though modern 256-bit encryption would take a standard supercomputer trillions of years to break, quantum computers will dissolve these algorithms in less than four minutes. "
-                "Every banking password, medical history record, and private conversation you have ever sent is already archived, waiting for the quantum threshold. "
-                "When the key turns, privacy as humanity knows it permanently vanishes. "
-                "Follow ShadowMind for the unseen technologies reshaping our future."
+                "While people can easily fake their facial smiles and words, their feet are controlled by the limbic survival brain and almost never lie. "
+                "When you are having a conversation with someone, glance briefly at where their feet are pointing. "
+                "If their torso is facing you but their feet are angled toward the door or another person, their subconscious mind has already left the conversation. "
+                "Never force the conversation when you spot this physical cue. Stop talking, take one step backward, and let the silence create tension. "
+                "Follow ShadowMind for non-verbal cues that expose what people hide."
             ),
-            "keywords": ["server", "matrix", "binary", "cyberpunk", "lock"],
-            "description": "Why intelligence agencies are saving encrypted data today for quantum computers.\n\nSubscribe to @ShadowMind.\n\n#quantum #cybersecurity #darkweb #futuretech #shorts",
-            "pinned_comment": "Do you believe any digital data is truly private? Comment below. 👇",
+            "keywords": ["walking-alone", "shadows", "meeting", "silhouette", "whisper"],
+            "description": "Why feet position reveals true subconscious intent before words do.\n\nSubscribe to @ShadowMind.\n\n#bodylanguage #psychologyfacts #humanbehavior #mindhacks #shorts",
+            "pinned_comment": "Check where people point their feet today. What did you notice? 👇",
             "voice": "en-US-ChristopherNeural"
         }
     ],
-    "skincare_science": [
+    "power_dynamics": [
         {
-            "title": "High vs Low Visual Weight: The 30-Second Face Test #shorts #beauty",
+            "title": "How to Silence Someone Who Insults You in Public #shorts #darkpsychology",
             "script": (
-                "If your makeup always looks cakey or overpowering, you might be wearing the complete wrong visual weight for your facial structure. "
-                "To find your visual weight, look in the mirror. High visual weight faces have prominent, defined bone structure, large eyes, or intense lip borders. "
-                "Low visual weight faces have softer, delicate, and evenly dispersed facial contours. "
-                "If you have high visual weight, bold winged eyeliner and deep lip colors harmonize your proportions. "
-                "If you have low visual weight, heavy glam overpowers you, and soft watercolor tints make you look ethereal. "
-                "Follow ShadowMind for verified skincare chemistry secrets."
+                "When someone drops a sly, humiliating insult disguised as a joke in front of a group, getting angry or firing back instantly makes you look defensive. Do this cold counter instead. "
+                "Look them dead in the eyes with zero expression, pause for two seconds, and say calmly: 'Are you okay?' "
+                "This single psychological maneuver completely reframes the entire dynamic in the room. "
+                "You shift the attention from their witty jab to their emotional stability, making them appear unhinged and desperate. "
+                "Follow ShadowMind for cold strategic power laws that keep you untouchable."
             ),
-            "keywords": ["mirror", "face", "makeup", "luxury", "aesthetic"],
-            "description": "Find your visual weight in 30 seconds to never look over-done again.\n\n#visualweight #beautyhacks #glowup #makeuptips #shorts",
-            "pinned_comment": "Are you high visual weight or low visual weight? Comment below! 👇",
-            "voice": "en-US-JennyNeural"
+            "keywords": ["chess", "interrogation-room", "dark-room", "dramatic-lighting", "silhouette"],
+            "description": "The cold 3-word phrase that completely disarms public disrespect.\n\nSubscribe to @ShadowMind.\n\n#powerdynamics #48lawsofpower #darkpsychology #stoicism #shorts",
+            "pinned_comment": "How do you handle disrespect in front of other people? Drop your rule below. 👇",
+            "voice": "en-US-ChristopherNeural"
         },
         {
-            "title": "The $14 French Pharmacy Cream That Beats $380 Luxury Jars #shorts #beauty",
+            "title": "Law 4: Why Always Saying Less Than Necessary Terrifies Opponents #shorts #power",
             "script": (
-                "Before spending three hundred dollars on luxury face crèmes with gold leaf packaging, you need to understand cosmetic formulation. "
-                "Most prestige moisturizers spend eighty percent of their budget on bespoke jars, celebrity endorsements, and fragrance additives. "
-                "Behind the counter in French pharmacies, dermatologist-grade barrier creams containing pure beeswax, soy protein, and shea butter cost less than fourteen dollars. "
-                "Celebrity makeup artists keep tubes of Embryolisse and Biafine in their kits because they prep skin without pill-forming silicone barriers. "
-                "Stop paying for marketing luxury. Pay for lipid barrier science. "
-                "Follow ShadowMind for verified skincare chemistry secrets."
+                "When you try to impress people with words, the more you say, the more common you appear and the less in control you feel. "
+                "Powerful people impress and intimidate by saying less. "
+                "The human brain despises silence; in any negotiation or heated exchange, awkward silence creates unbearable psychological pressure. "
+                "When asked a probing or demanding question, give a brief, one-sentence answer and stay silent while holding eye contact. "
+                "The other person will scramble to fill the void, rambling nervously and accidentally surrendering critical leverage. "
+                "Follow ShadowMind for cold strategic power laws that keep you untouchable."
             ),
-            "keywords": ["cream", "serum", "clean", "skincare", "luxury"],
-            "description": "Why runway makeup artists use $14 French pharmacy creams instead of luxury jars.\n\n#skincare #dupes #beautysecrets #frenchpharmacy #shorts",
-            "pinned_comment": "What is your holy grail skincare budget product? Tell us below. 👇",
-            "voice": "en-US-JennyNeural"
+            "keywords": ["boardroom", "silhouette", "whisper", "smoke", "interrogation-room"],
+            "description": "Why silence in conversation forces rivals to surrender control.\n\nSubscribe to @ShadowMind.\n\n#48lawsofpower #machiavelli #influence #mindset #shorts",
+            "pinned_comment": "Do you speak first or wait for others to reveal their hand? Let us know below. 👇",
+            "voice": "en-US-ChristopherNeural"
         }
     ],
-    "gaming_lore": [
+    "dark_profiling": [
         {
-            "title": "The Darkest Vault in Fallout History: Vault 77 #shorts #gaming",
+            "title": "The Premature Vulnerability Trap Used by Covert Predators #shorts #psychology",
             "script": (
-                "Inside the radioactive wasteland of Fallout, Vault-Tec designed dozens of inhumane social experiments, but none were as disturbing as Vault 77. "
-                "While other vaults held hundreds of residents, Vault 77 was sealed with only one single man and a crate full of hand puppets. "
-                "For months, the solitary inhabitant slowly descended into severe psychosis, speaking through the puppets to preserve his sanity. "
-                "Eventually, the man came to believe the puppet on his hand was an autonomous living demon demanding blood sacrifices. "
-                "When the vault finally unsealed, the Puppet Man wandered into the wastes as one of the most feared legends in lore. "
-                "Follow ShadowMind for dark gaming lore and iceberg mysteries."
+                "If someone you just met shares a deeply traumatic, highly personal secret with you within the first thirty minutes, beware. "
+                "You are not experiencing a rare, magical connection; you are being profiled. "
+                "Covert manipulators use premature vulnerability to trigger the psychological rule of reciprocity. "
+                "By giving you an intimate confession first, they manufacture artificial trust and obligate you to reveal your own vulnerabilities. "
+                "Once you hand over your insecurities, they catalogue them to exploit months later when you least expect it. "
+                "Follow ShadowMind to decode covert predators before they get close."
             ),
-            "keywords": ["dark-room", "puppet", "shadows", "gaming", "neon"],
-            "description": "The terrifying story of Vault 77: One man and a crate of puppets.\n\nSubscribe to @ShadowMind.\n\n#fallout #gaminglore #creepygaming #iceberg #shorts",
-            "pinned_comment": "What is the creepiest vault experiment in Fallout history? Comment below. 👇",
-            "voice": "en-US-GuyNeural"
+            "keywords": ["mirror", "silhouette", "whisper", "interrogation-room", "shadows"],
+            "description": "Why fast emotional confessions are the #1 red flag of manipulative grooming.\n\nSubscribe to @ShadowMind.\n\n#darktriad #covertnarcissist #manipulation #psychology #shorts",
+            "pinned_comment": "Have you ever met someone who trauma-dumped immediately? What happened? 👇",
+            "voice": "en-US-ChristopherNeural"
+        },
+        {
+            "title": "How to Shatter a Deceptive Alibi with Reverse Chronology #shorts #darkpsychology",
+            "script": (
+                "When someone rehearses a fabricated story, they always practice it in strict chronological order: this happened, then that happened, then I went home. "
+                "Here is the interrogation technique federal agents use to expose the truth in thirty seconds. "
+                "Do not challenge their facts directly. Instead, ask them: 'Before you left the building, what was the exact conversation you had right before that?' "
+                "Fabricating a lie burns massive cognitive load. Forcing a liar to recount events backwards causes an immediate neurological bottleneck. "
+                "Watch their speech rhythm falter, their eyes freeze, and their details contradict. "
+                "Follow ShadowMind to decode covert predators before they get close."
+            ),
+            "keywords": ["cctv-camera", "interrogation-room", "stare", "dark-street", "silhouette"],
+            "description": "How the reverse timeline test instantly exposes rehearsed deception.\n\nSubscribe to @ShadowMind.\n\n#liebehavior #deception #interrogation #darkpsychology #shorts",
+            "pinned_comment": "Spotting a lie: What is your #1 giveaway tell? Tell us below. 👇",
+            "voice": "en-US-ChristopherNeural"
         }
     ]
 }
