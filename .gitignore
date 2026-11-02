@@ -15,6 +15,7 @@ video_mappings.json
 
 # User Data & Generated Media
 users_data/
+auth/users.json
 videos/
 branding/avatar.jpg
 branding/banner.jpg
