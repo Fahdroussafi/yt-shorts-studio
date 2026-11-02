@@ -330,6 +330,7 @@ export default function App() {
   const [dispatchVideoId, setDispatchVideoId] = useState('');
   const [dispatchMode, setDispatchMode] = useState('public');
   const [dispatchTime, setDispatchTime] = useState('');
+  const [scheduleRec, setScheduleRec] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
 
@@ -383,7 +384,8 @@ export default function App() {
 
   const filteredTableVideos = allTableVideos
     .filter((v) => {
-      if (tableTab === 'live') return !isScheduledVideo(v) && (v.status === 'LIVE' || v.status === 'PRIVATE' || v.views > 0 || (v.publish_at && new Date(v.publish_at) <= new Date()));
+      if (v.status === 'DELETED_ON_YOUTUBE') return false;
+      if (tableTab === 'live') return !isScheduledVideo(v) && (v.status === 'LIVE' || v.status === 'PRIVATE' || v.views > 0);
       if (tableTab === 'scheduled') return isScheduledVideo(v);
       return true;
     })
@@ -395,6 +397,15 @@ export default function App() {
         const timeB = isNaN(dateB) ? Infinity : dateB;
         if (timeA !== timeB) return timeA - timeB;
         return (a.short_id || '').localeCompare(b.short_id || '');
+      }
+      if (tableTab === 'live') {
+        // Sort LIVE videos NEWEST FIRST (newest published date & ID at top)
+        const dateA = a.publish_at ? new Date(a.publish_at).getTime() : 0;
+        const dateB = b.publish_at ? new Date(b.publish_at).getTime() : 0;
+        if (dateA !== dateB) return dateB - dateA;
+        const numA = parseInt((a.short_id || '').replace(/\D/g, '') || '0', 10);
+        const numB = parseInt((b.short_id || '').replace(/\D/g, '') || '0', 10);
+        return numB - numA;
       }
       return 0;
     });
@@ -503,6 +514,16 @@ export default function App() {
     fetchAiSettings();
     fetchChannelSettings();
     fetchUsage();
+    fetchScheduleRec();
+  }, [authToken]);
+
+  // Auto-sync channel telemetry every 45s so table is always 100% matched with YouTube
+  useEffect(() => {
+    if (!authToken) return;
+    const interval = setInterval(() => {
+      fetchStats();
+    }, 45000);
+    return () => clearInterval(interval);
   }, [authToken]);
 
   // Poll task status if producing
@@ -578,6 +599,21 @@ export default function App() {
       console.error("Usage fetch error:", e);
     } finally {
       setTimeout(() => setLoadingUsage(false), 500);
+    }
+  };
+
+  const fetchScheduleRec = async () => {
+    try {
+      const res = await authFetch('/api/schedule/recommendation');
+      if (res.ok) {
+        const data = await res.json();
+        setScheduleRec(data);
+        if (data.recommended_slot && !dispatchTime) {
+          setDispatchTime(data.recommended_slot.input_val);
+        }
+      }
+    } catch (e) {
+      console.error("Schedule recommendation fetch error:", e);
     }
   };
 
@@ -960,10 +996,17 @@ export default function App() {
     setUploading(true);
     setUploadResult(null);
     try {
+      const formatPublishAt = (t) => {
+        if (!t) return null;
+        if (t.includes('Z')) return t;
+        // Treat user input as UTC
+        return `${t.replace(' ', 'T')}${t.length === 16 ? ':00.000Z' : 'Z'}`;
+      };
+
       const payload = {
         video_id: dispatchVideoId,
         privacy_status: dispatchMode,
-        publish_at: dispatchMode === 'scheduled' && dispatchTime ? new Date(dispatchTime).toISOString() : null
+        publish_at: dispatchMode === 'scheduled' && dispatchTime ? formatPublishAt(dispatchTime) : null
       };
 
       const res = await authFetch('/api/upload', {
@@ -1475,6 +1518,11 @@ export default function App() {
 
                     <div className="w-[1px] h-4 bg-slate-800 mx-0.5 hidden sm:block"></div>
 
+                    <div className="hidden sm:flex items-center space-x-1.5 px-2 py-1 rounded-lg bg-slate-950 border border-slate-800/80 text-[10px] font-mono text-emerald-400" title="Continuously synced with YouTube feed every 45 seconds">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span>Auto-Sync Live</span>
+                    </div>
+
                     <button
                       onClick={handleSyncChannel}
                       disabled={syncingChannel || loadingStats}
@@ -1482,7 +1530,7 @@ export default function App() {
                       title="Direct scan of your YouTube channel @TheShadowMindHQ-Hub: auto-discovers and restores all live published shorts"
                     >
                       <RefreshCw className={`w-3 h-3 text-cyan-300 ${syncingChannel ? 'animate-spin' : ''}`} />
-                      <span>{syncingChannel ? 'Syncing...' : 'Sync Channel'}</span>
+                      <span>{syncingChannel ? 'Syncing...' : 'Sync Now'}</span>
                     </button>
                   </div>
                 </div>
@@ -1551,8 +1599,16 @@ export default function App() {
                                   )}
                                 </div>
                               </td>
-                              <td className="py-3 px-4 text-slate-200 max-w-xs truncate" title={item.title}>
-                                {item.title || "Scheduled Short"}
+                              <td className="py-3 px-4 text-slate-200 max-w-xs">
+                                <div className="truncate font-medium text-slate-100" title={item.title}>
+                                  {item.title || "Scheduled Short"}
+                                </div>
+                                {item.publish_at && (
+                                  <div className="text-[10px] text-slate-400 font-mono mt-0.5 flex items-center space-x-1">
+                                    <Calendar className="w-3 h-3 text-violet-400/80 shrink-0" />
+                                    <span>{item.status === 'LIVE' ? 'Published ' : 'Drops '}{formatScheduleDate(item.publish_at)}</span>
+                                  </div>
+                                )}
                               </td>
                               <td className="py-3 px-4">
                                 {isMotion ? (
@@ -2212,7 +2268,10 @@ export default function App() {
 
                     <button
                       type="button"
-                      onClick={() => setDispatchMode('scheduled')}
+                      onClick={() => {
+                        setDispatchMode('scheduled');
+                        fetchScheduleRec();
+                      }}
                       className={`p-3 rounded-xl border text-left transition ${
                         dispatchMode === 'scheduled'
                           ? 'bg-blue-950/40 border-blue-500 text-white shadow-lg shadow-blue-500/10'
@@ -2226,14 +2285,54 @@ export default function App() {
                 </div>
 
                 {dispatchMode === 'scheduled' && (
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-mono uppercase text-slate-400">Release Date & Time (UTC)</label>
-                    <input
-                      type="datetime-local"
-                      value={dispatchTime}
-                      onChange={(e) => setDispatchTime(e.target.value)}
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white font-mono"
-                    />
+                  <div className="space-y-3 p-3.5 bg-slate-900/60 rounded-xl border border-slate-800">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-mono uppercase text-slate-300 font-semibold flex items-center space-x-1.5">
+                        <Clock className="w-3.5 h-3.5 text-blue-400" />
+                        <span>Release Slot (19:00 UTC Peak Window)</span>
+                      </label>
+                      <span className="text-[10px] text-blue-400 font-mono">1 Video/Day Spacing</span>
+                    </div>
+
+                    {/* Quick Pick US Peak Slots */}
+                    {scheduleRec?.available_slots?.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="text-[11px] text-slate-400 font-mono">Recommended Open Peak Slots:</div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {scheduleRec.available_slots.map((slot, idx) => {
+                            const isSelected = dispatchTime === slot.input_val || (dispatchTime && dispatchTime.startsWith(slot.input_val.slice(0, 10)));
+                            return (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => setDispatchTime(slot.input_val)}
+                                className={`px-2.5 py-1.5 rounded-lg border text-left text-xs transition ${
+                                  isSelected
+                                    ? 'bg-blue-600/30 border-blue-400 text-blue-200 font-bold shadow-sm shadow-blue-500/20'
+                                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+                                }`}
+                              >
+                                <div className="truncate">{slot.display}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-1">
+                      <div className="text-[11px] text-slate-400 font-mono">Exact Release Date & Time (UTC):</div>
+                      <input
+                        type="datetime-local"
+                        value={dispatchTime}
+                        onChange={(e) => setDispatchTime(e.target.value)}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white font-mono"
+                      />
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-blue-950/30 border border-blue-900/40 text-[11px] text-blue-300/90 leading-relaxed">
+                      💡 <strong>Algorithm Rule:</strong> YouTube tests Shorts in 24h seed batches. Spacing uploads $\ge$20 hours apart during US peak (18:00–21:00 UTC) avoids cannibalizing audience impressions.
+                    </div>
                   </div>
                 )}
 

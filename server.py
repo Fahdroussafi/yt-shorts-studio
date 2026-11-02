@@ -455,62 +455,216 @@ def health():
     return {"status": "ok", "timestamp": time.time(), "engine": "ShadowMind Studio v1.0"}
 
 
+def parse_view_count(text: str) -> int:
+    if not text:
+        return 0
+    t = text.lower().replace(",", "").strip()
+    m_m = re.search(r'([\d.]+)\s*(m|million)', t)
+    if m_m:
+        return int(float(m_m.group(1)) * 1000000)
+    m_k = re.search(r'([\d.]+)\s*(k|thousand)', t)
+    if m_k:
+        return int(float(m_k.group(1)) * 1000)
+    m_num = re.search(r'(\d+)', t)
+    if m_num:
+        return int(m_num.group(1))
+    return 0
+
+def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False) -> dict:
+    """Scrapes channel's /shorts page directly, updating mappings and stats_cache in one fast 0.4s call."""
+    stats_cache = load_user_stats_cache(paths["stats_cache_file"])
+    now = time.time()
+    last_synced = stats_cache.get("_meta", {}).get("last_synced_at", 0)
+
+    # 60-second caching cooldown unless forced
+    if not force and (now - last_synced < 60):
+        return {"status": "cached", "last_synced_at": last_synced, "live_count": stats_cache.get("_meta", {}).get("live_count", 0)}
+
+    handle = channel_handle or DEFAULT_CHANNEL_HANDLE
+    handle_clean = handle if handle.startswith("@") else f"@{handle}"
+    url = f"https://www.youtube.com/{handle_clean}/shorts"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+    })
+
+    discovered_live = {}
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+            m = re.search(r'var ytInitialData\s*=\s*({.*?});</script>', html)
+            if m:
+                data = json.loads(m.group(1))
+                def find_items(obj):
+                    found = []
+                    if isinstance(obj, dict):
+                        if "shortsLockupViewModel" in obj:
+                            found.append(obj["shortsLockupViewModel"])
+                        for v in obj.values():
+                            found.extend(find_items(v))
+                    elif isinstance(obj, list):
+                        for it in obj:
+                            found.extend(find_items(it))
+                    return found
+
+                for it in find_items(data):
+                    entity_id = it.get("entityId", "")
+                    video_id = entity_id.replace("shorts-shelf-item-", "")
+                    if not video_id:
+                        continue
+                    meta = it.get("overlayMetadata", {})
+                    p_text = meta.get("primaryText", {}).get("content", "")
+                    s_text = meta.get("secondaryText", {}).get("content", "")
+                    acc = it.get("accessibilityText", "")
+                    if not s_text and acc:
+                        vm = re.search(r'(\d+[\d.,]*\s*(?:k|m|views|thousand|million)?)', acc.lower())
+                        if vm:
+                            s_text = vm.group(1)
+                    discovered_live[video_id] = {
+                        "title": p_text or (acc.split(",")[0] if acc else f"Short {video_id}"),
+                        "views": parse_view_count(s_text),
+                        "views_display": s_text or "0 views"
+                    }
+    except Exception as e:
+        print(f"Warning: Channel live scrape failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+    mappings = get_user_video_mappings(paths["mappings_file"])
+    KNOWN_SEEDS = {
+        "nyU_NsIkodA": "short_01",
+        "NIC6gw6P-UY": "short_02",
+        "_PdvMHyd5v8": "short_03",
+        "hb_Dc-lvWE4": "short_04",
+        "Fl0KjYnNK8c": "short_05",
+        "b2iNWCbHkVQ": "short_06",
+        "wukiGKM0ajo": "short_07",
+        "rKtARt8ly8s": "short_08"
+    }
+
+    from datetime import datetime, timezone
+    now_utc = datetime.now(timezone.utc)
+
+    # 1. Update existing mappings
+    for short_key, info in list(mappings.items()):
+        yt_id = info.get("yt_id")
+        if not yt_id:
+            continue
+
+        if yt_id in discovered_live:
+            item = discovered_live[yt_id]
+            info["default_status"] = "LIVE"
+            stats_cache[short_key] = {
+                "views": item["views"],
+                "views_display": item["views_display"],
+                "title": item["title"],
+                "likes": stats_cache.get(short_key, {}).get("likes", "0"),
+                "last_synced": now
+            }
+        else:
+            # Check if future scheduled
+            is_future_scheduled = False
+            if info.get("publish_at"):
+                try:
+                    dt = datetime.fromisoformat(info["publish_at"].replace("Z", "+00:00"))
+                    if dt > now_utc:
+                        is_future_scheduled = True
+                except Exception:
+                    pass
+
+            if not is_future_scheduled:
+                # Was supposed to be live (or scheduled drop time has passed) but is NOT on YouTube -> Marked as DELETED_ON_YOUTUBE
+                info["default_status"] = "DELETED_ON_YOUTUBE"
+                if short_key in stats_cache:
+                    stats_cache[short_key]["deleted"] = True
+                    stats_cache[short_key]["views"] = 0
+
+    # 2. Add any live video from YouTube that was missing in mappings
+    for yt_id, item in discovered_live.items():
+        already_mapped = any(info.get("yt_id") == yt_id for info in mappings.values())
+        if not already_mapped:
+            short_key = KNOWN_SEEDS.get(yt_id)
+            if not short_key or short_key in mappings:
+                max_num = 0
+                for k in mappings.keys():
+                    m = re.match(r"short_0*(\d+)", k.lower())
+                    if m:
+                        max_num = max(max_num, int(m.group(1)))
+                short_key = f"short_{max_num + 1:02d}"
+
+            mappings[short_key] = {
+                "yt_id": yt_id,
+                "default_status": "LIVE",
+                "local_purged": True,
+                "synced_from_channel": True
+            }
+            stats_cache[short_key] = {
+                "views": item["views"],
+                "views_display": item["views_display"],
+                "title": item["title"],
+                "likes": "0",
+                "last_synced": now
+            }
+
+    stats_cache["_meta"] = {"last_synced_at": now, "live_count": len(discovered_live)}
+    save_user_stats_cache(stats_cache, paths["stats_cache_file"])
+    with open(paths["mappings_file"], "w", encoding="utf-8") as f:
+        json.dump(mappings, f, indent=2)
+
+    return {
+        "status": "synced",
+        "live_count": len(discovered_live),
+        "last_synced_at": now
+    }
+
+
 @app.get("/api/stats")
 def get_channel_stats(user: dict = Depends(require_auth)):
     """Scrapes real-time public stats from YouTube with disk-backed caching fallback (User Scoped)."""
     paths = get_user_paths(user)
-    audit_results = []
-    total_views = 0
+    channel_info = get_user_channel_info(paths["channel_file"])
+    channel_handle = channel_info.get("channel_handle") or DEFAULT_CHANNEL_HANDLE
+
+    # 1. Automatically sync with channel live feed (60s cooldown cache)
+    sync_channel_live_feed(paths, channel_handle, force=False)
+
     mappings = get_user_video_mappings(paths["mappings_file"])
     stats_cache = load_user_stats_cache(paths["stats_cache_file"])
-    channel_info = get_user_channel_info(paths["channel_file"])
-    updated_cache = False
-    updated_mappings = False
+
+    audit_results = []
+    total_views = 0
+    from datetime import datetime, timezone
+    now_utc = datetime.now(timezone.utc)
 
     for short_key, info in mappings.items():
-        yt_id = info["yt_id"]
+        yt_id = info.get("yt_id", "")
         cached = stats_cache.get(short_key, {})
-        
-        # Start with cached values
-        views = cached.get("views", 0)
+
+        # Status resolution
+        has_future_publish = False
+        if info.get("publish_at"):
+            try:
+                dt = datetime.fromisoformat(info["publish_at"].replace("Z", "+00:00"))
+                if dt > now_utc:
+                    has_future_publish = True
+            except Exception:
+                pass
+
+        if info.get("default_status") == "DELETED_ON_YOUTUBE" or cached.get("deleted"):
+            status_val = "DELETED_ON_YOUTUBE"
+        elif has_future_publish:
+            status_val = "SCHEDULED"
+        elif info.get("default_status") == "LIVE":
+            status_val = "LIVE"
+        else:
+            status_val = info.get("default_status", "LOCAL_READY")
+
+        # Views and title
+        views = cached.get("views", 0) if status_val != "DELETED_ON_YOUTUBE" else 0
         likes = cached.get("likes", "0")
-        title = ""
-        is_live = (info.get("default_status") == "LIVE")
-        is_unplayable = False
+        title = cached.get("title", "")
 
-        url = f"https://www.youtube.com/watch?v={yt_id}"
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9"
-        })
-        
-        try:
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                html = resp.read().decode("utf-8", errors="ignore")
-                v_match = re.search(r'"viewCount":\s*"(\d+)"', html)
-                if v_match:
-                    new_views = int(v_match.group(1))
-                    if new_views >= views:
-                        views = new_views
-
-                l_match = re.search(r'"accessibility":\{"accessibilityData":\{"label":"(\d+[\d,]*\s*likes?)"\}\}', html)
-                if l_match:
-                    likes = l_match.group(1)
-
-                t_match = re.search(r'<meta name="title" content="(.*?)">', html)
-                if not t_match:
-                    t_match = re.search(r'<title>(.*?)</title>', html)
-                if t_match:
-                    title = t_match.group(1).replace(" - YouTube", "").strip()
-
-                is_unavailable = "Video unavailable" in html or '"status":"UNPLAYABLE"' in html
-                if not is_unavailable and ('"viewCount"' in html or views > 0):
-                    is_live = True
-        except Exception:
-            # Fall back to stats_cache on 429 rate limit or timeout
-            pass
-
-        total_views += views
+        if status_val == "LIVE":
+            total_views += views
 
         if not title:
             meta_path = os.path.join(paths["videos_dir"], short_key, "seo_metadata.txt")
@@ -533,35 +687,6 @@ def get_channel_stats(user: dict = Depends(require_auth)):
             file_size_mb = round(os.path.getsize(os.path.join(dir_path, target_mp4)) / (1024 * 1024), 2)
         motion_type = "Real-Motion HD" if file_size_mb > 10 else "Still Pilot"
 
-        # Check if scheduled for future
-        has_future_publish = False
-        if info.get("publish_at"):
-            try:
-                from datetime import datetime, timezone
-                dt = datetime.fromisoformat(info["publish_at"].replace("Z", "+00:00"))
-                if dt > datetime.now(timezone.utc):
-                    has_future_publish = True
-            except Exception:
-                pass
-
-        if has_future_publish:
-            is_scheduled = True
-        elif info.get("default_status") == "SCHEDULED":
-            # If marked SCHEDULED but publish_at is past, it is no longer scheduled
-            is_scheduled = not bool(info.get("publish_at"))
-        else:
-            is_scheduled = False
-
-        if is_scheduled:
-            status_val = "SCHEDULED"
-        elif is_live or info.get("default_status") == "LIVE" or (info.get("publish_at") and not has_future_publish):
-            status_val = "LIVE"
-            if info.get("default_status") != "LIVE":
-                info["default_status"] = "LIVE"
-                updated_mappings = True
-        else:
-            status_val = info.get("default_status", "LOCAL_READY")
-
         local_exists = os.path.exists(dir_path) and bool(mp4_files)
         storage_status = "LOCAL_AND_CLOUD" if local_exists else "CLOUD_ARCHIVED"
 
@@ -579,24 +704,14 @@ def get_channel_stats(user: dict = Depends(require_auth)):
             "storage_status": storage_status
         })
 
-    if updated_mappings:
-        try:
-            with open(paths["mappings_file"], "w", encoding="utf-8") as f:
-                json.dump(mappings, f, indent=2)
-        except Exception:
-            pass
-
-    if updated_cache:
-        save_user_stats_cache(stats_cache, paths["stats_cache_file"])
-
-    channel_handle = channel_info.get("channel_handle") or ""
+    channel_handle_display = channel_info.get("channel_handle") or ""
     channel_url = channel_info.get("channel_url") or ""
 
     # Fetch subscriber count for user's configured channel
     subscribers = "Not Connected"
-    if channel_handle:
+    if channel_handle_display:
         try:
-            handle_clean = channel_handle if channel_handle.startswith("@") else f"@{channel_handle}"
+            handle_clean = channel_handle_display if channel_handle_display.startswith("@") else f"@{channel_handle_display}"
             ch_req = urllib.request.Request(f"https://www.youtube.com/{handle_clean}", headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(ch_req, timeout=6) as resp:
                 ch_html = resp.read().decode("utf-8", errors="ignore")
@@ -607,7 +722,7 @@ def get_channel_stats(user: dict = Depends(require_auth)):
             subscribers = "Connected"
 
     return {
-        "channel_handle": channel_handle if channel_handle else "No Channel Connected",
+        "channel_handle": channel_handle_display if channel_handle_display else "No Channel Connected",
         "channel_url": channel_url,
         "subscribers": subscribers,
         "total_views": total_views,
@@ -804,102 +919,20 @@ def delete_video(short_id: str, user: dict = Depends(require_auth)):
 
 @app.post("/api/channel/sync")
 def sync_channel_videos(user: dict = Depends(require_auth)):
-    """Scrapes the user's YouTube channel to discover published shorts, restoring missing or pruned mappings."""
+    """Forces an immediate live feed synchronization with user's YouTube channel."""
     paths = get_user_paths(user)
     channel_info = get_user_channel_info(paths["channel_file"])
-    handle = channel_info.get("channel_handle") or ""
-    if not handle:
-        raise HTTPException(status_code=400, detail="Channel handle not configured. Please set channel handle first.")
+    handle = channel_info.get("channel_handle") or DEFAULT_CHANNEL_HANDLE
 
-    handle_clean = handle if handle.startswith("@") else f"@{handle}"
-    url = f"https://www.youtube.com/{handle_clean}/shorts"
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9"
-    })
-
-    discovered_ids = []
-    try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            html = resp.read().decode("utf-8", errors="ignore")
-            # Extract 11-char YouTube video IDs in order of appearance
-            raw_ids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
-            discovered_ids = list(dict.fromkeys(raw_ids))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to query YouTube channel: {str(e)}")
-
+    res = sync_channel_live_feed(paths, handle, force=True)
     mappings = get_user_video_mappings(paths["mappings_file"])
-    existing_yt_ids = set()
-    for k, v in mappings.items():
-        yid = v.get("yt_id") if isinstance(v, dict) else v
-        if yid:
-            existing_yt_ids.add(yid)
-
-    # Known historical seed mappings (e.g. for restored admin shorts)
-    KNOWN_SEEDS = {
-        "nyU_NsIkodA": "short_01",
-        "NIC6gw6P-UY": "short_02",
-        "_PdvMHyd5v8": "short_03",
-        "hb_Dc-lvWE4": "short_04",
-        "Fl0KjYnNK8c": "short_05",
-        "b2iNWCbHkVQ": "short_06",
-        "wukiGKM0ajo": "short_07",
-        "rKtARt8ly8s": "short_08"
-    }
-
-    restored_count = 0
-    # Process discovered YouTube IDs
-    for yt_id in discovered_ids:
-        if yt_id not in existing_yt_ids:
-            # Check if it has a known seed short key
-            short_key = KNOWN_SEEDS.get(yt_id)
-            if not short_key or short_key in mappings:
-                # Find next short_XX ID
-                max_num = 0
-                for k in mappings.keys():
-                    m = re.match(r"short_0*(\d+)", k.lower())
-                    if m:
-                        max_num = max(max_num, int(m.group(1)))
-                short_key = f"short_{max_num + 1:02d}"
-
-            mappings[short_key] = {
-                "yt_id": yt_id,
-                "default_status": "LIVE",
-                "local_purged": True,
-                "synced_from_channel": True
-            }
-            existing_yt_ids.add(yt_id)
-            restored_count += 1
-
-    # Also ensure any seeds are restored if they were missing
-    for yt_id, short_key in KNOWN_SEEDS.items():
-        if yt_id not in existing_yt_ids and short_key not in mappings:
-            mappings[short_key] = {
-                "yt_id": yt_id,
-                "default_status": "LIVE",
-                "local_purged": True,
-                "synced_from_channel": True
-            }
-            existing_yt_ids.add(yt_id)
-            restored_count += 1
-
-    # Sort mappings by numeric short key
-    sorted_mappings = {}
-    for k in sorted(mappings.keys(), key=lambda x: int(re.search(r'\d+', x).group(0)) if re.search(r'\d+', x) else 999):
-        sorted_mappings[k] = mappings[k]
-
-    try:
-        with open(paths["mappings_file"], "w", encoding="utf-8") as f:
-            json.dump(sorted_mappings, f, indent=2)
-    except Exception:
-        pass
+    live_count = sum(1 for m in mappings.values() if m.get("default_status") == "LIVE")
 
     return {
         "success": True,
-        "message": f"Channel sync complete. Discovered {len(discovered_ids)} shorts on channel. Restored {restored_count} videos.",
-        "discovered_ids": discovered_ids,
-        "restored_count": restored_count,
-        "total_tracked": len(sorted_mappings)
+        "message": f"Channel synced live with YouTube. {res.get('live_count', live_count)} active shorts verified.",
+        "live_count": res.get("live_count", live_count),
+        "total_tracked": len(mappings)
     }
 
 
@@ -1588,6 +1621,59 @@ def upload_to_youtube(req: UploadRequest, user: dict = Depends(require_auth)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/schedule/recommendation")
+def get_schedule_recommendation(user: dict = Depends(require_auth)):
+    """Computes algorithmic US peak slots (18:00 - 21:00 UTC, default 19:00 UTC) avoiding release collisions."""
+    from datetime import datetime, timezone, timedelta
+    paths = get_user_paths(user)
+    mappings = get_user_video_mappings(paths["mappings_file"])
+
+    scheduled_dts = []
+    now = datetime.now(timezone.utc)
+    for m in mappings.values():
+        p_at = m.get("publish_at")
+        if p_at:
+            try:
+                dt = datetime.fromisoformat(p_at.replace("Z", "+00:00"))
+                if dt > now:
+                    scheduled_dts.append(dt)
+            except Exception:
+                pass
+
+    slots = []
+    candidate_date = now.date()
+    # If today is already past 17:30 UTC, start candidate slots from tomorrow
+    if now.hour > 17 or (now.hour == 17 and now.minute >= 30):
+        candidate_date = candidate_date + timedelta(days=1)
+
+    for i in range(14):
+        slot_dt = datetime(candidate_date.year, candidate_date.month, candidate_date.day, 19, 0, 0, tzinfo=timezone.utc)
+        # Collision if another video is within 18 hours of this slot
+        collision = any(abs((slot_dt - s).total_seconds()) < 18 * 3600 for s in scheduled_dts)
+
+        is_today = slot_dt.date() == now.date()
+        is_tomorrow = slot_dt.date() == (now + timedelta(days=1)).date()
+
+        day_label = "Today" if is_today else ("Tomorrow" if is_tomorrow else slot_dt.strftime("%a %b %d"))
+        slots.append({
+            "iso": slot_dt.strftime("%Y-%m-%dT%H:%M:00.000Z"),
+            "input_val": slot_dt.strftime("%Y-%m-%dT19:00"),
+            "display": f"{day_label} 19:00 UTC (US Peak)",
+            "available": not collision,
+            "days_away": (slot_dt.date() - now.date()).days
+        })
+        candidate_date = candidate_date + timedelta(days=1)
+
+    next_best = next((s for s in slots if s["available"]), slots[0] if slots else None)
+
+    return {
+        "recommended_slot": next_best,
+        "available_slots": [s for s in slots if s["available"]][:4],
+        "active_scheduled_count": len(scheduled_dts),
+        "rule": "Target US peak attention (18:00–21:00 UTC). Space uploads at least 20 hours apart for algorithm test waves."
+    }
 
 
 # Mount React static files if built

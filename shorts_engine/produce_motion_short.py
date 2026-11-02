@@ -198,6 +198,14 @@ def download_clip_with_smart_fallback(
                 break
 
     if not candidates:
+        import glob, shutil
+        existing_clips = glob.glob(os.path.join(BASE_DIR, "users_data", "*", "videos", "*", "clip_*.mp4"))
+        if existing_clips:
+            fresh_local = [c for c in existing_clips if c not in used_in_video]
+            picked = random.choice(fresh_local or existing_clips)
+            used_in_video.add(picked)
+            shutil.copy2(picked, dest_path)
+            return True, f"local_cached_{os.path.basename(picked)}"
         raise RuntimeError(f"Could not find stock video clip for '{query}' in niche '{niche}'")
 
     # Try downloading best candidate; if it fails or produces corrupt/empty file, try next
@@ -246,9 +254,15 @@ def render_motion_video(clip_paths: list, audio_path: str, ass_path: str, output
         # 30% chance of subtle horizontal mirror flip for visual novelty
         flip_filter = ",hflip" if random.random() < 0.30 else ""
 
+        # Alternating subtle punch-in (1.1x zoom) vs standard scale for rapid pattern-interrupts
+        if i % 2 == 0:
+            scale_crop = "scale=1200:2133:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
+        else:
+            scale_crop = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
+
         filter_parts.append(
             f"[{i}:v]trim=start={offset}:duration={per_clip:.3f},setpts=PTS-STARTPTS,fps=30,"
-            f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1{flip_filter}[v{i}]"
+            f"{scale_crop},setsar=1{flip_filter}[v{i}]"
         )
 
     concat_ins = "".join(f"[v{i}]" for i in range(len(clip_paths)))
@@ -257,10 +271,10 @@ def render_motion_video(clip_paths: list, audio_path: str, ass_path: str, output
     clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
     subtitle_filter = f"[vbase]ass='{clean_ass}'[vfinal]"
 
-    # Audio mix with subtle cinematic low rumble
+    # Audio mix with subtle cinematic low-frequency tension rumble
     audio_input_idx = len(clip_paths)
     synth_input_idx = len(clip_paths) + 1
-    audio_filter = f"[{audio_input_idx}:a][{synth_input_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.12[afinal]"
+    audio_filter = f"[{audio_input_idx}:a][{synth_input_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.15[afinal]"
 
     full_filter = ";".join(filter_parts) + ";" + concat_filter + ";" + subtitle_filter + ";" + audio_filter
 
@@ -269,7 +283,7 @@ def render_motion_video(clip_paths: list, audio_path: str, ass_path: str, output
         *inputs,
         "-i", audio_path,
         "-f", "lavfi", "-t", f"{duration:.2f}",
-        "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.03,lowpass=f=120",
+        "-i", "anoisesrc=d=60:c=brown:r=44100:a=0.045,lowpass=f=110",
         "-filter_complex", full_filter,
         "-map", "[vfinal]",
         "-map", "[afinal]",
@@ -315,8 +329,8 @@ async def produce_motion_short(
 
     build_ass_subtitles(words, ass_file)
 
-    # Target 8 to 10 cuts for high retention (~4 to 4.5s per scene)
-    target_cuts = max(6, min(10, round(dur / 4.2)))
+    # High-retention rapid pacing: cut every 2.4 to 2.8 seconds (~12 to 18 cuts for a 40s video)
+    target_cuts = max(12, min(18, round(dur / 2.6)))
 
     profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
     niche_bank = profile.get("visual_bank", ["thinking", "shadows", "mirror", "dark-street"])

@@ -20,58 +20,37 @@ NICHE_PROFILES = {
             "fallout vault", "hand puppets"
         ],
         "hook_formulas": [
-            "If someone does [X], they are secretly trying to [Y]...",
-            "Never look someone in the eye like this unless you want to [Z]...",
-            "In behavioral psychology, this is known as [Named Effect]...",
-            "When someone tries to disrespect you in public, use the [Rule Name]...",
-            "The human brain has a dangerous glitch known as [Cognitive Phenomenon]..."
+            "If you experience a sudden emergency in front of a crowd, looking at the people around you makes you seven times more likely to die...",
+            "If a stranger approaches you in an everyday location and uses the word 'we,' your physical safety is in immediate danger...",
+            "When someone falsely accuses you in front of a group, answering their first question makes everyone believe you are one hundred percent guilty...",
+            "If you think someone is lying to your face, watching their eyes makes you fifty percent more likely to get fooled...",
+            "When someone insults you disguised as a joke in front of others, laughing along triggers a subconscious status drop you cannot reverse...",
+            "If you collapse in front of a crowd of one hundred people, you are five times more likely to die than in front of a single stranger..."
         ],
         "angles": [
-            "The Ben Franklin Effect (cognitive dissonance favor hack)",
-            "The Pratfall Effect (why minor blunders spike authority)",
-            "The 4-Second Silence Rule (breaking intimidation non-verbally)",
-            "The Door-in-the-Face Technique (extreme request concession trap)",
-            "The Foot-in-the-Door Phenomenon (micro-agreements escalating to compliance)",
-            "The Pygmalion Effect (subconscious performance shaping)",
-            "The Baader-Meinhof Phenomenon (frequency illusion in persuasion)",
-            "The Spotlight Effect (curing social anxiety with statistical reality)",
-            "The Zeigarnik Effect (uncompleted tasks hijacking brain memory)",
-            "The Decoy Effect (asymmetric dominance pricing and choice steering)",
-            "The Halo Effect (how single physical traits blind critical judgment)",
-            "The Bystander Effect (diffusion of responsibility and how to break it)",
-            "The Scarcity Principle (artificial urgency triggering panic decisions)",
-            "Mirroring & Matching (subconscious rapport synchronization)",
-            "Triangulation Detection (how manipulators manufacture jealousy)",
-            "The Gray Rock Technique (neutralizing toxic narcissism effortlessly)",
-            "Gaslighting Counters (documenting reality without emotional reactivity)",
-            "The Chameleon Effect (unconscious mimicry establishing social dominance)",
-            "Anchoring Bias (how initial numbers permanently distort perception)",
-            "The Sunk Cost Fallacy (why humans double down on disastrous choices)",
-            "False Consensus Effect (overestimating how many people agree with you)",
-            "Non-Verbal Dominance Cues (posture, eye stillness, and vocal gravity)",
-            "The Framing Effect (how word choice reverses moral consensus)",
-            "Reactance Theory (why forbidden things become irresistibly attractive)",
-            "The Contrast Principle (altering valuation through extreme baselines)",
-            "The Reciprocity Trap (unsolicited gifts creating subconscious debt)",
-            "Silent Treatment Neutralization (depriving emotional validation vampires)",
-            "Micro-Expressions (detecting the 0.2-second facial leakage of truth)",
-            "The Hawthorne Effect (how awareness of observation changes human behavior)",
-            "The Illusion of Control (why humans confuse luck with personal skill)",
-            "Social Proof Cascade (how crowds convince individuals to ignore danger)",
-            "The Dunning-Kruger Trap (why the least competent speak with the highest confidence)"
+            "The Disaster Crowd Freeze (Normalcy bias & social proof contagion causing paralysis)",
+            "Forced Teaming Defense (Gavin de Becker predatory grooming counter in public)",
+            "The Presupposition False Accusation Trap (Refusing bait questions that manufacture guilt)",
+            "The Reverse Chronology Lie Collapse (Cognitive load deception detection that breaks fakes)",
+            "The Schrodinger's Joke Counter (Neutralizing public humiliation disguised as humor)",
+            "The Bystander Collapse Paradox (Why crowds watch people die and the exact command to break it)",
+            "The Door-in-the-Face Technique (Extreme request concession trap and the 3-second refusal)",
+            "The Gray Rock Technique (Neutralizing emotional predators without giving ammunition)",
+            "Non-Verbal Dominance Cues (Eye stillness, posture gravity, and breaking intimidation)",
+            "The Gaslighting Documentation Counter (Neutralizing distorted reality with cold facts)",
+            "The 4-Second Silence Rule (Breaking high-pressure interrogation traps)",
+            "Micro-Expressions Leakage (Detecting the 0.2-second facial twitch of hidden deception)",
+            "The Silent Treatment Neutralization (Depriving emotional vampires of their leverage)"
         ],
         "visual_bank": [
-            "thinking", "shadows", "eye-contact", "silhouette", "dark-room", "crowd",
-            "clock", "whisper", "mirror", "walking-alone", "dark-street", "handshake",
-            "chess", "fog", "rain-window", "stare", "candle", "stairs", "tunnel",
-            "city-night", "smoke", "clock-ticking", "meeting-room", "library", "glasses",
-            "writing", "hourglass", "portrait", "deep-thought", "rain", "neon-shadows",
-            "hands-typing", "door-opening", "corridor", "dramatic-lighting", "mysterious"
+            "dark-crowd", "subway-station", "cctv-camera", "eye-contact", "silhouette", "dark-room",
+            "whisper", "mirror", "walking-alone", "dark-street", "chess", "rain-window", "stare",
+            "tunnel", "city-night", "smoke", "interrogation-room", "dramatic-lighting", "emergency-light"
         ]
     },
     "dark_history": {
         "id": "dark_history",
-        "name": "The Monster Study & Dark History",
+        "name": "Dark History & Forbidden Experiments",
         "rpm_range": "$0.16 - $0.28",
         "retention_rate": "60% - 72%",
         "voice_recommended": "en-US-ChristopherNeural",
@@ -79,19 +58,18 @@ NICHE_PROFILES = {
         "outro_phrase": "Follow {brand_name} for dark historical breakthroughs that shape our world.",
         "forbidden_terms": ["skincare", "serum", "cream", "makeup", "robot factory", "quantum encryption", "drone swarm"],
         "hook_formulas": [
-            "In [Year], a psychologist conducted an experiment so unethical it was hidden for decades...",
-            "This is the horrifying true story of [Experiment Name]...",
-            "The government officially classified this study until [Year]..."
+            "If a voice on a telephone orders a hospital nurse to inject you with a lethal dose of medicine, ninety-five percent of them will push the syringe into your arm...",
+            "If you check into an institution completely sane and speak normally, doctors will record your sanity as a symptom of severe paranoia...",
+            "The forbidden 1939 study where researchers deliberately turned 22 normal orphan children into stutterers...",
+            "The terrifying truth about what happens to normal human minds the moment they put on a guard uniform..."
         ],
         "angles": [
-            "The 1951 Asch Conformity Test (why 75% deny their own eyes)",
-            "The 1968 Blue Eyes Brown Eyes Experiment (manufacturing cruelty in 24 hours)",
-            "The 1954 Robbers Cave Experiment (tribal warfare created in 7 days)",
-            "The 1939 Monster Study (unethical stuttering experiment on orphans)",
-            "The Milgram Experiment (shocking obedience to authority figures)",
-            "The Stanford Prison Experiment (how rapid power corridors destroy empathy)",
-            "The Pit of Despair (Harry Harlow's devastating maternal deprivation study)",
-            "Operation Midnight Climax (CIA safehouses and mind-alteration research)"
+            "The Hofling Hospital Lethal Overdose Paradox (Why 21 of 22 nurses obeyed a lethal phone order)",
+            "The Rosenhan Psychiatric Trap (How completely sane people were permanently labeled insane)",
+            "The 1939 Monster Study (The forbidden stuttering experiment on 22 orphans)",
+            "The Stanford Guard Syndrome (How ordinary students turned sadistic in 6 days)",
+            "The 1951 Asch Conformity Test (Why 75% of people deny what their own eyes see)",
+            "Operation Midnight Climax (Classified mind-alteration safehouses)"
         ],
         "visual_bank": [
             "vintage", "laboratory", "classroom", "whisper", "hallway", "ancient-book",
@@ -183,43 +161,43 @@ NICHE_PROFILES = {
 CONCEPTS_DATABASE = {
     "dark_psychology": [
         {
-            "title": "The Ben Franklin Effect: How to Make Anyone Like You #shorts #psychology",
+            "title": "The Disturbing Cognitive Glitch That Forces People to Obey You #shorts #darkpsychology",
             "script": (
-                "If you want someone who dislikes you to become your ally, never do them a favor. Ask them to do one for you. "
-                "In psychology, this is known as the Ben Franklin Effect. "
-                "The human brain cannot tolerate cognitive dissonance. When someone does you a favor, their subconscious mind assumes: 'I must like this person, otherwise why would I help them?' "
-                "To use this ethically, ask for something trivially small: borrow a pen, ask for the time, or request a quick opinion. "
-                "Their brain will instantly justify the action by generating subconscious warmth toward you. "
+                "If you suspect someone secretly despises you, never try to be nice to them. Do this instead. "
+                "Ask them for something trivially small: borrow a pen, ask for the time, or request a quick opinion. "
+                "In psychology, this triggers the Ben Franklin Effect. "
+                "The human brain cannot tolerate cognitive dissonance. Once someone helps you, their subconscious is forced to rationalize: 'I must like this person, otherwise why would I do them a favor?' "
+                "Without realizing it, their brain rewires their attitude and begins treating you like a trusted ally. "
                 "Follow ShadowMind for psychological rules that put you five steps ahead."
             ),
             "keywords": ["thinking", "eye-contact", "notebook", "shadows", "meeting"],
-            "description": "How asking for a small favor hacks cognitive dissonance.\n\nSubscribe to @ShadowMind.\n\n#darkpsychology #psychologyfacts #mindset #manipulation #shorts",
-            "pinned_comment": "Have you ever tried the Ben Franklin Effect? Did it work? 👇",
+            "description": "How asking for a small favor hacks subconscious compliance.\n\nSubscribe to @ShadowMind.\n\n#darkpsychology #psychologyfacts #mindset #manipulation #shorts",
+            "pinned_comment": "Have you ever seen this compliance trigger work on someone? 👇",
             "voice": "en-US-ChristopherNeural"
         },
         {
-            "title": "The Pratfall Effect: Why Flaws Make You More Powerful #shorts #psychology",
+            "title": "Why Flawless People Are Secretly Feared and Disliked #shorts #darkpsychology",
             "script": (
-                "Being completely flawless makes people secretly distrust and resent you. "
+                "If you try to appear completely flawless, people will secretly resent and distrust you. "
                 "In behavioral psychology, this is known as the Pratfall Effect. "
-                "When a highly competent person makes a minor, harmless blunder—like spilling a drop of coffee or dropping a pen—their perceived likability spikes by over forty percent. "
-                "Perfection creates an intimidating wall of inferiority in others. A deliberate minor vulnerability humanizes you and instantly lowers everyone's defensive guard. "
-                "Never pretend to be superhuman. Let them see your small flaws, and they will trust your immense strengths. "
-                "Follow ShadowMind for human behavioral psychology."
+                "When an authority figure makes a minor, harmless blunder—like spilling a drop of coffee or dropping a pen—their perceived likability spikes by over forty percent. "
+                "Perfection creates an intimidating wall of inferiority. A deliberate, controlled vulnerability humanizes you and instantly disarms their defenses. "
+                "Never pretend to be superhuman. Show a minor flaw, and they will surrender their trust to you completely. "
+                "Follow ShadowMind for psychological rules that put you five steps ahead."
             ),
             "keywords": ["coffee", "hands", "walking", "dark-room", "silhouette"],
-            "description": "Why making small mistakes increases your authority.\n\nSubscribe to @ShadowMind.\n\n#pratfalleffect #darkpsychology #charisma #confidence #shorts",
-            "pinned_comment": "Do you trust people who pretend to be perfect? Be honest. 👇",
+            "description": "Why small tactical flaws spike your influence and disarm enemies.\n\nSubscribe to @ShadowMind.\n\n#pratfalleffect #darkpsychology #charisma #confidence #shorts",
+            "pinned_comment": "Do you trust people who pretend to have zero flaws? 👇",
             "voice": "en-US-ChristopherNeural"
         },
         {
-            "title": "The 4-Second Silence Trick to Break Intimidation #shorts #psychology",
+            "title": "The 4-Second Silence Rule That Destroys Disrespect #shorts #darkpsychology",
             "script": (
-                "When someone tries to insult or intimidate you in public, never shout and never defend yourself. Use the four-second silence rule. "
-                "Immediately stop speaking. Look directly into the center of their forehead with zero facial expression for exactly four seconds. "
-                "In social psychology, silence in the face of aggression is perceived as absolute dominance, while rapid defense signals weakness. "
-                "After four seconds of unbroken silence, simply ask: 'Are you okay?' "
-                "This instantly shifts the social embarrassment off of you and leaves them exposed in front of the entire room. "
+                "When someone tries to humiliate or intimidate you in public, never shout and never defend yourself. Use the four-second silence rule. "
+                "Immediately freeze your face. Look directly into the center of their forehead with zero emotion for exactly four seconds. "
+                "In social psychology, rapid defense signals weakness, while dead unbroken silence signals absolute dominance. "
+                "After four seconds pass, quietly ask: 'Are you okay?' "
+                "This instantly shifts the social embarrassment onto them and exposes their insecurity to the entire room. "
                 "Follow ShadowMind for psychological rules that put you five steps ahead."
             ),
             "keywords": ["dark-street", "stare", "shadows", "crowd", "clock"],
@@ -228,33 +206,33 @@ CONCEPTS_DATABASE = {
             "voice": "en-US-ChristopherNeural"
         },
         {
-            "title": "The Door-in-the-Face Technique: The Ultimate Persuasion Hack #shorts #psychology",
+            "title": "The Door-in-the-Face Trap: How Manipulators Force Compliance #shorts #darkpsychology",
             "script": (
-                "If you want someone to agree to a favor, always demand something absurdly impossible first. "
-                "This is the Door-in-the-Face Technique, one of the most powerful compliance triggers discovered in behavioral science. "
-                "When you ask for a huge favor and get rejected, their subconscious experiences subtle social guilt. "
-                "If you immediately follow up with your real, smaller request, their brain interprets it as a generous concession, making them three times more likely to say yes. "
-                "Negotiators and master persuaders use this every day without anyone realizing. "
+                "If someone asks you for an absurdly massive favor and then immediately lowers their request, watch out. You are being manipulated. "
+                "This is the Door-in-the-Face Technique, one of the most dangerous compliance traps in behavioral science. "
+                "When you reject their initial extreme demand, your brain experiences subconscious social guilt. "
+                "When they immediately offer a smaller concession, your brain falsely interprets it as a gift, making you three times more likely to say yes to what they actually wanted all along. "
+                "Master negotiators use this daily to control high-stakes decisions. "
                 "Follow ShadowMind for psychological rules that put you five steps ahead."
             ),
             "keywords": ["door", "business", "handshake", "night", "thinking"],
-            "description": "Why asking for too much makes people agree to what you actually want.\n\nSubscribe to @ShadowMind.\n\n#persuasion #darkpsychology #negotiation #mindset #shorts",
-            "pinned_comment": "Have you ever had this technique used against you? Comment below. 👇",
+            "description": "Why reject-then-retreat hacks your subconscious guilt.\n\nSubscribe to @ShadowMind.\n\n#persuasion #darkpsychology #negotiation #mindset #shorts",
+            "pinned_comment": "Has anyone ever pulled this trick on you? 👇",
             "voice": "en-US-ChristopherNeural"
         },
         {
-            "title": "The Foot-in-the-Door Phenomenon: How Small Yeses Create Total Control #shorts #psychology",
+            "title": "The Micro-Agreement Trap: How Cults and Manipulators Trap You #shorts #darkpsychology",
             "script": (
-                "If you want someone to commit to a massive life-changing request, never ask for it immediately. Ask for something so small it is impossible to refuse. "
-                "In behavioral psychology, this is known as the Foot-in-the-Door Phenomenon. "
-                "Once a person agrees to a minor micro-commitment—like signing a simple petition or wearing a small lapel pin—their self-identity shifts. "
-                "When you follow up days later with a massive request requiring immense effort, compliance rates skyrocket by over four hundred percent. "
-                "Guard your small yeses. They are the gateway to your future decisions. "
+                "If someone gets you to agree to a tiny, meaningless favor, you are already walking into their trap. "
+                "In psychology, this is the Foot-in-the-Door Phenomenon, used by interrogators and cult recruiters. "
+                "Once you say yes to a trivial micro-action—like signing a simple petition or wearing a pin—your self-image shifts into someone who complies. "
+                "Days later, when they hit you with a massive, life-altering demand, your brain complies simply to remain consistent with your past actions. "
+                "Guard your small yeses, or someone else will dictate your big decisions. "
                 "Follow ShadowMind for psychological rules that put you five steps ahead."
             ),
-            "keywords": ["handshake", "notebook", "walking", "shadows", "meeting-room"],
-            "description": "How micro-agreements trap human psychology into massive compliance.\n\nSubscribe to @ShadowMind.\n\n#footinthedoor #darkpsychology #persuasion #manipulation #shorts",
-            "pinned_comment": "Do you notice when people use micro-commitments on you? 👇",
+            "keywords": ["signature", "hands", "crowd", "shadows", "document"],
+            "description": "How tiny micro-commitments lead to total behavioral control.\n\nSubscribe to @ShadowMind.\n\n#footinthedoor #darkpsychology #compliance #shorts",
+            "pinned_comment": "Have you noticed yourself saying yes just to be agreeable? 👇",
             "voice": "en-US-ChristopherNeural"
         },
         {
