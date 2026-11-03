@@ -377,6 +377,10 @@ class UploadRequest(BaseModel):
     publish_at: Optional[str] = None
 
 
+class UpdateScheduleRequest(BaseModel):
+    publish_at: str
+
+
 class AIKeyRequest(BaseModel):
     api_key: str
 
@@ -414,7 +418,7 @@ def get_auth_url_for_client(client_id: str, redirect_uri: str = DEFAULT_REDIRECT
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": "https://www.googleapis.com/auth/youtube.upload",
+        "scope": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly",
         "access_type": "offline",
         "prompt": "consent"
     }
@@ -1749,6 +1753,31 @@ def upload_to_youtube(req: UploadRequest, user: dict = Depends(require_auth)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/videos/{short_id}/schedule")
+def update_video_schedule(short_id: str, req: UpdateScheduleRequest, user: dict = Depends(require_auth)):
+    """Updates the release date/time for a scheduled short locally."""
+    paths = get_user_paths(user)
+    cleaned_id = sanitize_short_id(short_id)
+    mappings = get_user_video_mappings(paths["mappings_file"])
+
+    if cleaned_id not in mappings:
+        raise HTTPException(status_code=404, detail=f"Short '{cleaned_id}' not found in user library")
+
+    info = mappings[cleaned_id]
+    info["publish_at"] = req.publish_at.strip()
+    info["default_status"] = "SCHEDULED"
+
+    with open(paths["mappings_file"], "w", encoding="utf-8") as f:
+        json.dump(mappings, f, indent=2)
+
+    return {
+        "success": True,
+        "short_id": cleaned_id,
+        "publish_at": info["publish_at"],
+        "message": f"Schedule date for {cleaned_id} updated successfully"
+    }
 
 
 # Mount React static files if built
