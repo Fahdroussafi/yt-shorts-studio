@@ -572,21 +572,10 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
         return {"status": "error", "error": str(e)}
 
     mappings = get_user_video_mappings(paths["mappings_file"])
-    KNOWN_SEEDS = {
-        "nyU_NsIkodA": "short_01",
-        "NIC6gw6P-UY": "short_02",
-        "_PdvMHyd5v8": "short_03",
-        "hb_Dc-lvWE4": "short_04",
-        "Fl0KjYnNK8c": "short_05",
-        "b2iNWCbHkVQ": "short_06",
-        "wukiGKM0ajo": "short_07",
-        "rKtARt8ly8s": "short_08"
-    } if is_owner else {}
-
     from datetime import datetime, timezone
     now_utc = datetime.now(timezone.utc)
 
-    # 1. Update existing mappings
+    # 1. Update existing mappings with fresh scrape data
     for short_key, info in list(mappings.items()):
         yt_id = info.get("yt_id")
         if not yt_id:
@@ -614,7 +603,6 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
                     pass
 
             if not is_future_scheduled:
-                # Was supposed to be live (or scheduled drop time has passed) but is NOT on YouTube -> Marked as DELETED_ON_YOUTUBE
                 info["default_status"] = "DELETED_ON_YOUTUBE"
                 if short_key in stats_cache:
                     stats_cache[short_key]["deleted"] = True
@@ -624,14 +612,12 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
     for yt_id, item in discovered_live.items():
         already_mapped = any(info.get("yt_id") == yt_id for info in mappings.values())
         if not already_mapped:
-            short_key = KNOWN_SEEDS.get(yt_id)
-            if not short_key or short_key in mappings:
-                max_num = 0
-                for k in mappings.keys():
-                    m = re.match(r"short_0*(\d+)", k.lower())
-                    if m:
-                        max_num = max(max_num, int(m.group(1)))
-                short_key = f"short_{max_num + 1:02d}"
+            max_num = 0
+            for k in mappings.keys():
+                m = re.match(r"short_0*(\d+)", k.lower())
+                if m:
+                    max_num = max(max_num, int(m.group(1)))
+            short_key = f"short_{max_num + 1:02d}"
 
             mappings[short_key] = {
                 "yt_id": yt_id,
