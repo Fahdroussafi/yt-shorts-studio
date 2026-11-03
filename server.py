@@ -509,7 +509,8 @@ def parse_view_count(text: str) -> int:
     return 0
 
 def fetch_exact_video_view_count(yt_id: str) -> Optional[int]:
-    """Fetches exact unrounded view count from YouTube's player API in ~0.2s."""
+    """Fetches exact unrounded view count from YouTube's player API or public watch page."""
+    # 1. Try Innertube player endpoint
     try:
         url = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
         payload = {
@@ -531,10 +532,29 @@ def fetch_exact_video_view_count(yt_id: str) -> Optional[int]:
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             raw = data.get("videoDetails", {}).get("viewCount")
-            if raw is not None:
+            if raw is not None and str(raw).isdigit():
                 return int(raw)
     except Exception:
         pass
+
+    # 2. Datacenter fallback: scrape unrounded originalViewCount from watch page
+    try:
+        url = f"https://www.youtube.com/watch?v={yt_id}"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9"
+        })
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+            m = re.search(r'"originalViewCount":\s*"(\d+)"', html)
+            if m:
+                return int(m.group(1))
+            m_alt = re.search(r'"viewCount":\s*"(\d+)"', html)
+            if m_alt:
+                return int(m_alt.group(1))
+    except Exception:
+        pass
+
     return None
 
 
