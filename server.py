@@ -1647,7 +1647,9 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
 async def start_produce(req: ProduceRequest, background_tasks: BackgroundTasks, user: dict = Depends(require_auth)):
     """Triggers end-to-end motion short production in background (User Scoped)."""
     paths = get_user_paths(user)
-    task_id = f"task_{req.video_id}_{int(time.time())}"
+    cleaned_video_id = sanitize_short_id(req.video_id)
+    req.video_id = cleaned_video_id
+    task_id = f"task_{cleaned_video_id}_{int(time.time())}"
     PRODUCTION_TASKS[task_id] = {
         "task_id": task_id,
         "user_id": paths["user_id"],
@@ -1680,7 +1682,9 @@ def get_produce_status(task_id: str, user: dict = Depends(require_auth)):
 def upload_to_youtube(req: UploadRequest, user: dict = Depends(require_auth)):
     """Uploads a generated short to YouTube (Public or Scheduled) using user's token.json."""
     paths = get_user_paths(user)
-    dir_path = os.path.join(paths["videos_dir"], req.video_id)
+    cleaned_video_id = sanitize_short_id(req.video_id)
+    req.video_id = cleaned_video_id
+    dir_path = os.path.join(paths["videos_dir"], cleaned_video_id)
     if not os.path.exists(dir_path):
         raise HTTPException(status_code=404, detail=f"Short folder '{req.video_id}' not found")
 
