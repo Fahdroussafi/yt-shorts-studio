@@ -48,11 +48,6 @@ DEFAULT_BRAND_NAME = os.environ.get("DEFAULT_BRAND_NAME", "ShadowMind").strip()
 DEFAULT_CHANNEL_HANDLE = os.environ.get("DEFAULT_CHANNEL_HANDLE", "@TheShadowMindHQ-Hub").strip()
 DEFAULT_CHANNEL_URL = os.environ.get("DEFAULT_CHANNEL_URL", f"https://www.youtube.com/{DEFAULT_CHANNEL_HANDLE}").strip()
 DEFAULT_REDIRECT_URI = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost").strip()
-ADMIN_SEED_YT_IDS = {
-    "_fuT7t5z0xY", "8SaCT97oHsg", "kXEh9l_pggI", "FGlYu9azJzY",
-    "rKtARt8ly8s", "Fl0KjYnNK8c", "hb_Dc-lvWE4", "b2iNWCbHkVQ",
-    "_PdvMHyd5v8", "NIC6gw6P-UY", "nyU_NsIkodA", "wukiGKM0ajo"
-}
 
 def verify_jwt_token(token: str) -> dict:
     """Verifies HS256 JWT signature and expiration. Standard library only."""
@@ -154,6 +149,30 @@ def is_legacy_owner(uid: str, email: Optional[str] = None) -> bool:
         except Exception:
             return False
     return False
+
+def get_admin_yt_ids() -> set:
+    """Dynamically loads all YouTube IDs owned by the platform administrator (root + admin user folder)."""
+    admin_ids = set()
+    candidate_files = [os.path.join(BASE_DIR, "video_mappings.json")]
+    if os.path.exists(LEGACY_CLAIM_FILE):
+        try:
+            with open(LEGACY_CLAIM_FILE, "r", encoding="utf-8") as f:
+                owner_id = json.load(f).get("owner_id")
+            if owner_id:
+                candidate_files.append(os.path.join(USERS_DATA_DIR, owner_id, "video_mappings.json"))
+        except Exception:
+            pass
+    for mf in candidate_files:
+        if os.path.exists(mf):
+            try:
+                with open(mf, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for v in data.values():
+                    if isinstance(v, dict) and v.get("yt_id"):
+                        admin_ids.add(v["yt_id"])
+            except Exception:
+                pass
+    return admin_ids
 
 def get_user_paths(user: dict) -> dict:
     uid = get_user_id(user)
@@ -490,6 +509,13 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
     if not channel_handle or not channel_handle.strip():
         return {"status": "skipped", "reason": "no_channel_configured"}
 
+    handle_clean = channel_handle.strip()
+    if not handle_clean.startswith("@"):
+        handle_clean = f"@{handle_clean}"
+
+    if not is_owner and handle_clean.lower() == DEFAULT_CHANNEL_HANDLE.lower():
+        return {"status": "skipped", "reason": "unauthorized_channel"}
+
     stats_cache = load_user_stats_cache(paths["stats_cache_file"])
     now = time.time()
     last_synced = stats_cache.get("_meta", {}).get("last_synced_at", 0)
@@ -498,9 +524,6 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
     if not force and (now - last_synced < 60):
         return {"status": "cached", "last_synced_at": last_synced, "live_count": stats_cache.get("_meta", {}).get("live_count", 0)}
 
-    handle_clean = channel_handle.strip()
-    if not handle_clean.startswith("@"):
-        handle_clean = f"@{handle_clean}"
     url = f"https://www.youtube.com/{handle_clean}/shorts"
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
@@ -643,6 +666,10 @@ def get_channel_stats(user: dict = Depends(require_auth)):
     is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
     channel_info = get_user_channel_info(paths["channel_file"])
     channel_handle = (channel_info.get("channel_handle") or "").strip()
+
+    if not is_owner and channel_handle.lower() == DEFAULT_CHANNEL_HANDLE.lower():
+        channel_handle = ""
+
     if not channel_handle and is_owner:
         channel_handle = DEFAULT_CHANNEL_HANDLE
 
@@ -653,11 +680,12 @@ def get_channel_stats(user: dict = Depends(require_auth)):
     mappings = get_user_video_mappings(paths["mappings_file"])
     stats_cache = load_user_stats_cache(paths["stats_cache_file"])
 
-    # Auto-heal / Purge pollution:
+    # Auto-heal / Purge pollution dynamically:
     # If user is not the owner:
-    # 1. Purge any videos belonging to admin's seed YT IDs.
-    # 2. If user has NO channel connected, purge any entries that lack a physical local directory.
+    # 1. Purge any video whose yt_id belongs to the administrator's live mappings (root + admin folder).
+    # 2. If user has NO channel connected, purge any entry that lacks a physical local directory.
     if not is_owner:
+        admin_yt_ids = get_admin_yt_ids()
         purged = False
         clean_mappings = {}
         for short_key, info in list(mappings.items()):
@@ -665,7 +693,7 @@ def get_channel_stats(user: dict = Depends(require_auth)):
             dir_path = os.path.join(paths["videos_dir"], short_key)
             has_local = os.path.exists(dir_path)
 
-            if yt_id in ADMIN_SEED_YT_IDS:
+            if yt_id and yt_id in admin_yt_ids:
                 purged = True
                 stats_cache.pop(short_key, None)
             elif not channel_handle and not has_local:
@@ -1145,6 +1173,10 @@ def save_channel_settings(req: ChannelSettingsRequest, user: dict = Depends(requ
     if not re.match(r"^@[a-zA-Z0-9_.-]{3,60}$", handle):
         raise HTTPException(status_code=400, detail=f"Invalid YouTube channel handle format: {handle}. Must be 3-60 characters (@username).")
 
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
+    if not is_owner and handle.lower() == DEFAULT_CHANNEL_HANDLE.lower():
+        raise HTTPException(status_code=400, detail="Cannot claim the platform administrator's channel handle.")
+
     old_info = get_user_channel_info(paths["channel_file"])
     old_handle = old_info.get("channel_handle", "")
 
@@ -1154,19 +1186,21 @@ def save_channel_settings(req: ChannelSettingsRequest, user: dict = Depends(requ
         json.dump(info, f, indent=2)
 
     # If handle changed, purge old scraped video mappings for non-owner
-    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
     if not is_owner and old_handle and old_handle.lower() != handle.lower():
         try:
             if os.path.exists(paths["mappings_file"]):
                 with open(paths["mappings_file"], "r", encoding="utf-8") as f:
                     mappings = json.load(f)
-                filtered = {k: v for k, v in mappings.items() if v.get("source") != "live_channel_sync"}
+                filtered = {
+                    k: v for k, v in mappings.items()
+                    if not v.get("synced_from_channel") and v.get("source") != "live_channel_sync"
+                }
                 with open(paths["mappings_file"], "w", encoding="utf-8") as f:
                     json.dump(filtered, f, indent=2)
-            if os.path.exists(paths["stats_cache"]):
-                os.remove(paths["stats_cache"])
+            if os.path.exists(paths["stats_cache_file"]):
+                os.remove(paths["stats_cache_file"])
         except Exception as e:
-            logger.warning(f"Error purging old mappings on handle change: {e}")
+            print(f"[Warning] Error purging old mappings on handle change: {e}")
 
     return {"success": True, "channel_handle": handle, "channel_url": url}
 
@@ -1749,4 +1783,5 @@ if __name__ == "__main__":
     import uvicorn
     server_port = int(os.environ.get("PORT", "8050"))
     server_host = os.environ.get("HOST", "0.0.0.0")
-    uvicorn.run("server:app", host=server_host, port=server_port, app_dir=BASE_DIR, reload_dirs=[BASE_DIR], reload=True)
+    enable_reload = os.environ.get("DEV_RELOAD", "false").lower() == "true"
+    uvicorn.run("server:app", host=server_host, port=server_port, app_dir=BASE_DIR, reload=enable_reload)
