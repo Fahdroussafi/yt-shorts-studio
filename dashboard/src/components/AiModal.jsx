@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cpu, X, AlertCircle, ExternalLink, RefreshCw, Check } from 'lucide-react';
+import { Cpu, X, AlertCircle, ExternalLink, RefreshCw, Check, Zap, Sparkles } from 'lucide-react';
 
 export default function AiModal({
   isOpen,
@@ -20,12 +20,12 @@ export default function AiModal({
       <div className="bg-[#12121a] border border-slate-800 rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl relative my-8">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
-            <div className="p-2 rounded-xl bg-cyan-950/60 border border-cyan-800/50">
-              <Cpu className="w-5 h-5 text-cyan-400" />
+            <div className="p-2 rounded-xl bg-orange-950/60 border border-orange-800/50">
+              <Zap className="w-5 h-5 text-orange-400 fill-current" />
             </div>
             <div>
-              <h3 className="font-extrabold text-white text-base">Gemini 3.1 Flash Lite Setup</h3>
-              <p className="text-[11px] text-cyan-400 font-mono">500 Free Requests/Day • 1.0s Speed • Zero Cost</p>
+              <h3 className="font-extrabold text-white text-base">Groq Cloud LPU Engine</h3>
+              <p className="text-[11px] text-orange-400 font-mono">0.6s Instant Speed • 14,400 Free RPD • Limitless Zero-Key Fallback</p>
             </div>
           </div>
           <button 
@@ -36,9 +36,16 @@ export default function AiModal({
           </button>
         </div>
 
-        <p className="text-xs text-slate-400 leading-relaxed">
-          Gemini 3 Flash is <strong className="text-emerald-300">pre-configured and ready to use</strong> (zero setup required). You do not need to type anything! You can optionally paste your own private Google AI Studio key below if you wish to use your own quota:
-        </p>
+        <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-2 text-xs leading-relaxed text-slate-300">
+          <div className="flex items-center space-x-1.5 font-bold text-white">
+            <Sparkles className="w-4 h-4 text-amber-400" />
+            <span>Dual-Engine AI Architecture</span>
+          </div>
+          <ul className="space-y-1 text-slate-400 list-disc list-inside text-[11px]">
+            <li><strong className="text-orange-300">Primary (Groq LPU)</strong>: Pre-configured system key active with ~14,400 free requests/day. Generates 4-act scripts in under 1 second.</li>
+            <li><strong className="text-cyan-300">Auto-Fallback (OpenAI / DeepSeek)</strong>: 100% Free limitless engine automatically kicks in if limits are ever reached. Zero setup needed.</li>
+          </ul>
+        </div>
 
         {/* Error Banner */}
         {aiKeyError && (
@@ -48,12 +55,12 @@ export default function AiModal({
           </div>
         )}
 
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           <label className="text-xs font-mono uppercase text-slate-400 flex flex-wrap items-center justify-between gap-1">
-            <span>Google AI Studio API Key (Optional)</span>
+            <span>Groq Cloud API Key (Optional)</span>
             {aiSettings?.has_key && (
               <span className="text-emerald-400 font-bold text-[11px]">
-                {aiSettings.is_custom_key ? "Custom Key Active" : "Pre-Configured System Key"}
+                {aiSettings.is_custom_key ? "Custom Groq Key Active" : "Pre-Configured System Key"}
               </span>
             )}
           </label>
@@ -61,19 +68,32 @@ export default function AiModal({
             type="password"
             value={inputApiKey}
             onChange={(e) => { setInputApiKey(e.target.value); setAiKeyError(''); }}
-            placeholder={aiSettings?.has_key ? `Current: ${aiSettings.masked_key}` : "AIzaSy..."}
-            className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-cyan-500 outline-none text-sm text-white font-mono"
+            placeholder={aiSettings?.has_key ? `Current: ${aiSettings.masked_key}` : "gsk_..."}
+            className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-orange-500 outline-none text-sm text-white font-mono"
           />
+          <p className="text-[11px] text-slate-500">
+            Paste your personal <code className="text-orange-400">gsk_...</code> key to use your own private Groq quota.
+          </p>
+        </div>
+
+        {/* Step-by-Step Guide for User */}
+        <div className="p-3 rounded-xl bg-black/40 border border-slate-800/60 text-[11px] text-slate-400 space-y-1.5">
+          <span className="font-bold text-slate-300 uppercase tracking-wider text-[10px] font-mono">How to get your own 100% free Groq key:</span>
+          <ol className="list-decimal list-inside space-y-0.5 leading-normal">
+            <li>Open <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="text-orange-400 underline hover:text-orange-300">console.groq.com/keys</a> in a new tab.</li>
+            <li>Sign in with Google or GitHub (No credit card needed).</li>
+            <li>Click <strong>"Create API Key"</strong>, copy your <code className="text-slate-300">gsk_...</code> string, and paste it above.</li>
+          </ol>
         </div>
 
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-slate-800/80">
           <a 
-            href="https://aistudio.google.com/app/apikey" 
+            href="https://console.groq.com/keys" 
             target="_blank" 
             rel="noreferrer"
-            className="text-xs text-cyan-400 hover:text-cyan-300 underline flex items-center space-x-1"
+            className="text-xs text-orange-400 hover:text-orange-300 underline flex items-center space-x-1"
           >
-            <span>Get Free Key (Google AI Studio)</span>
+            <span>Open Groq Console Keys</span>
             <ExternalLink className="w-3 h-3" />
           </a>
 
@@ -92,10 +112,10 @@ export default function AiModal({
               type="button"
               onClick={onSave}
               disabled={savingKey || !inputApiKey.trim()}
-              className="py-2.5 px-4 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 font-bold text-xs text-white transition flex items-center justify-center space-x-1.5 shadow-lg shadow-cyan-600/20 whitespace-nowrap flex-shrink-0"
+              className="py-2.5 px-4 rounded-xl bg-orange-600 hover:bg-orange-500 disabled:opacity-50 font-bold text-xs text-white transition flex items-center justify-center space-x-1.5 shadow-lg shadow-orange-600/20 whitespace-nowrap flex-shrink-0"
             >
               {savingKey ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-              <span>{savingKey ? "Verifying with Google..." : "Save Key"}</span>
+              <span>{savingKey ? "Verifying with Groq..." : "Verify & Save Key"}</span>
             </button>
           </div>
         </div>
@@ -103,4 +123,3 @@ export default function AiModal({
     </div>
   );
 }
-

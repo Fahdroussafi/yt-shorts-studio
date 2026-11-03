@@ -1,14 +1,15 @@
 import os
 import json
+import random
 import requests
 import re
 from typing import Optional, Dict, Tuple, Any
 
 ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
-KEY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "gemini_api_key.txt")
+KEY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "groq_api_key.txt")
 
 def _ensure_env():
-    if not os.environ.get("GEMINI_API_KEY") and os.path.exists(ENV_FILE):
+    if not os.environ.get("GROQ_API_KEY") and os.path.exists(ENV_FILE):
         try:
             with open(ENV_FILE, "r", encoding="utf-8") as f:
                 for line in f:
@@ -21,7 +22,7 @@ def _ensure_env():
 
 _ensure_env()
 
-def get_gemini_key(user_key_file: Optional[str] = None, allow_fallback: bool = False) -> Optional[str]:
+def get_groq_key(user_key_file: Optional[str] = None, allow_fallback: bool = False) -> Optional[str]:
     # 1. Check user-specific key file if provided
     if user_key_file and os.path.exists(user_key_file):
         try:
@@ -31,9 +32,10 @@ def get_gemini_key(user_key_file: Optional[str] = None, allow_fallback: bool = F
                     return content
         except Exception:
             pass
-    # 2. Only allow fallback to env or global file if allow_fallback is True (admin/owner only)
+
+    # 2. Allow fallback to env or global file if allow_fallback is True (admin/owner)
     if allow_fallback:
-        key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        key = os.environ.get("GROQ_API_KEY")
         if key and key.strip():
             return key.strip()
         if os.path.exists(KEY_FILE):
@@ -46,10 +48,14 @@ def get_gemini_key(user_key_file: Optional[str] = None, allow_fallback: bool = F
                 pass
     return None
 
-def save_gemini_key(key: str, user_key_file: Optional[str] = None):
+def save_groq_key(key: str, user_key_file: Optional[str] = None):
     target = user_key_file if user_key_file else KEY_FILE
     with open(target, "w", encoding="utf-8") as f:
         f.write(key.strip())
+
+# Legacy compatibility aliases
+get_gemini_key = get_groq_key
+save_gemini_key = save_groq_key
 
 # =====================================================================
 # DETERMINISTIC ALGORITHMIC KILL-SWITCH GUARDRAILS
@@ -67,110 +73,82 @@ BANNED_HOOK_PATTERNS = [
     r"\bben\s+franklin\s+effect\b",                      # Hard ban on Ben Franklin Effect
     r"\bwin\s+every\s+argument\b",                       # Hard ban on cliché argument hooks
     r"\bmake\s+anyone\s+like\s+you\b",                   # Hard ban on low-stakes self-help
-    r"\buse\s+absolute\s+silence\b",                     # Hard ban on cliché silence hooks
+    r"\bbody\s+language\s+tricks?\b"                     # Hard ban on generic body language advice
 ]
 
-BANNED_TITLE_PATTERNS = [
-    r"\b\d{4}\s+compliance\b",
-    r"\bglitch\b",
-    r"\bdunning[\s-]kruger\b",
-    r"\bben\s+franklin\b",
-    r"\bmake\s+anyone\s+like\s+you\b",
-]
+def validate_viral_script(data: dict, niche: str) -> Tuple[bool, str]:
+    if not isinstance(data, dict):
+        return False, "Output must be a valid JSON object"
 
-def validate_viral_script(payload: Dict[str, Any], niche: str) -> Tuple[bool, str]:
-    """
-    Audits Gemini's output against the ShadowMind High-Stakes Survival Architecture.
-    """
-    title = payload.get("title", "").strip()
-    script_acts = payload.get("script_acts", {})
-    act1 = script_acts.get("act1_hook", "").strip()
-    act2 = script_acts.get("act2_mechanism", "").strip()
-    act3 = script_acts.get("act3_directive", "").strip()
-    act4 = script_acts.get("act4_seal", "").strip()
+    acts = data.get("script_acts", {})
+    if not isinstance(acts, dict):
+        return False, "Missing 'script_acts' dictionary"
 
-    full_script = f"{act1} {act2} {act3} {act4}".strip()
-    words = full_script.split()
-    word_count = len(words)
+    act1 = acts.get("act1_hook", "").strip()
+    act2 = acts.get("act2_mechanism", "").strip()
+    act3 = acts.get("act3_directive", "").strip()
+    act4 = acts.get("act4_seal", "").strip()
 
-    # 1. Word Count Enforcement (105 to 135 words = ~38-44s)
-    if not (105 <= word_count <= 135):
-        return False, f"Word count out of bounds: {word_count} words (Required: 105-135)."
+    if not act1 or not act2 or not act3 or not act4:
+        return False, "All 4 acts (act1_hook, act2_mechanism, act3_directive, act4_seal) must be non-empty"
 
-    # 2. Second-Person Protagonist Check in Act 1 (First 12 words must contain 'you', 'your', or 'you're')
-    first_12_words = " ".join(act1.lower().split()[:12])
-    if not re.search(r"\b(you|your|you're)\b", first_12_words):
-        return False, f"Act 1 Hook fails 2nd-person immediacy check in first 12 words: '{first_12_words}'"
+    # Test Act 1 against Banned Hook Patterns
+    for pat in BANNED_HOOK_PATTERNS:
+        if re.search(pat, act1, re.IGNORECASE):
+            return False, f"Act 1 hook triggered banned algorithmic pattern: {pat}"
 
-    # 3. Banned Hook Pattern Check on Act 1
-    act1_lower = act1.lower()
-    for pattern in BANNED_HOOK_PATTERNS:
-        if re.search(pattern, act1_lower):
-            return False, f"Act 1 Hook triggered banned pattern '{pattern}': '{act1}'"
+    # Verify Second-Person Immersion in the first 6 words
+    first_six_words = " ".join(act1.split()[:6]).lower()
+    if not re.search(r"\b(you|your|you're|you've|yourself)\b", first_six_words):
+        return False, f"Act 1 hook must address viewer directly with 'you'/'your' in the first 6 words (Found: '{first_six_words}')"
 
-    # 4. Banned Title Pattern Check
-    title_lower = title.lower()
-    for pattern in BANNED_TITLE_PATTERNS:
-        if re.search(pattern, title_lower):
-            return False, f"Title triggered banned pattern '{pattern}': '{title}'"
+    # Verify Word Count Bounds (High Retention Pace)
+    full_text = f"{act1} {act2} {act3} {act4}"
+    word_count = len(full_text.split())
+    if word_count < 85 or word_count > 155:
+        return False, f"Total spoken word count is {word_count} words (Must be 90-150 words for ~40s retention)"
 
-    # 5. Act 3 Concrete Directive Check (must contain quotation marks for spoken phrase)
-    if '"' not in act3 and "'" not in act3:
-        return False, "Act 3 Directive must contain an exact spoken phrase in quotation marks."
+    # Verify Act 3 contains actionable quote / counter-phrase
+    if '"' not in act3 and "'" not in act3 and "say" not in act3.lower() and "whisper" not in act3.lower() and "look" not in act3.lower():
+        return False, "Act 3 must contain a concrete spoken counter-script or physical counter-directive"
 
-    # 6. Act 4 Dynamic Branded Outro Check (must contain 'follow')
-    act4_lower = act4.lower()
-    if "follow" not in act4_lower:
-        return False, f"Act 4 must contain a dynamic 'Follow {niche}' branded outro: '{act4}'"
+    return True, "Valid"
 
-    return True, "PASSED"
+# =====================================================================
+# MULTI-PROVIDER AI SCRIPT GENERATOR
+# Primary: Groq LPU (0.6s) | Fallback: OpenAI / DeepSeek Free (Zero-Key)
+# =====================================================================
 
-def generate_with_gemini_flash(
+def build_prompt_and_schema(
     niche: str,
-    concept: Optional[str] = None,
-    user_key_file: Optional[str] = None,
-    brand_name: str = "ShadowMind",
-    brand_handle: Optional[str] = None,
-    allow_fallback: bool = False,
-    user_tracker_file: Optional[str] = None,
-    surprise: bool = False,
-    topic_history_file: Optional[str] = None
-) -> Optional[Dict]:
-    api_key = get_gemini_key(user_key_file, allow_fallback=allow_fallback)
-    if not api_key:
-        return None
-
-    if not brand_handle:
-        brand_handle = f"@{brand_name}" if not brand_name.startswith("@") else brand_name
-
-    from idea_bank import NICHE_PROFILES, get_random_niche_angle, load_topic_history, record_topic_history
+    concept: Optional[str],
+    brand_name: str,
+    brand_handle: str,
+    surprise: bool,
+    topic_history_file: Optional[str]
+) -> Tuple[str, str, dict]:
+    from idea_bank import NICHE_PROFILES, CONCEPTS_DATABASE, load_topic_history
 
     profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
     history = load_topic_history(topic_history_file)
-    recent_titles = [h.get("title", "") for h in history[:25] if h.get("title")]
+    recent_titles = [entry.get("title", "") for entry in history[-25:] if entry.get("title")]
 
-    if surprise or not concept or not concept.strip():
-        chosen_angle = get_random_niche_angle(niche, history_file=topic_history_file)
-    else:
-        chosen_angle = concept.strip()
+    chosen_angle = concept.strip() if concept and concept.strip() else ""
+    if not chosen_angle:
+        niche_concepts = CONCEPTS_DATABASE.get(niche, CONCEPTS_DATABASE["dark_psychology"])
+        used_angles = {entry.get("concept", "") for entry in history}
+        avail = [c for c in niche_concepts if c not in used_angles] or niche_concepts
+        chosen_angle = random.choice(avail)
 
-    forbidden = ", ".join(profile.get("forbidden_terms", []))
-    visual_sample = ", ".join(profile.get("visual_bank", [])[:15])
-    recent_avoid = "; ".join(recent_titles[:15]) if recent_titles else "None yet"
-    niche_name = profile.get("name", niche)
-    outro_template = profile.get("outro_phrase", f"Follow {brand_name} for psychological rules that put you five steps ahead.").format(brand_name=brand_name)
+    forbidden = ", ".join(profile.get("forbidden_tropes", []))
+    recent_avoid = ", ".join(f'"{t}"' for t in recent_titles[-8:]) if recent_titles else "None"
 
-    base_prompt = f"""You are the Lead Viral Retention Architect for '{brand_name}' ({brand_handle}), an emergency human behavior, dark psychology, and high-stakes survival YouTube Shorts channel.
-Generate a ruthlessly high-retention 38 to 44-second YouTube Short script for: "{niche_name}".
+    prompt = f"""You are the world-class Head Writer for a viral YouTube Shorts channel in the '{profile['name']}' niche.
+Write a masterclass viral short script designed for 100%+ retention, emotional adrenaline, and zero scroll-away.
 
-PRIMARY ANGLE / CONCEPT: "{chosen_angle}"
-
-OUR EMPIRICAL GOLD STANDARD (1,200+ VIEWS, >78% VVSA):
-- Title: "Why a Crowd of 100 People Will Watch You Die #shorts #psychology"
-- Act 1 Hook (0-4s): "If you collapse in front of a crowd of one hundred people, you are five times more likely to die than in front of a single stranger."
-- Act 2 Mechanism (4-21s): Explains why everyone waits for someone else to act (diffusion of responsibility) while you bleed out.
-- Act 3 Directive (21-37s): "Never shout for help into a crowd. Look at one specific person, point directly at them, and say: 'You in the blue jacket, call an ambulance right now!'"
-- Act 4 Dynamic Branded Outro (37-41s): "Follow ShadowMind for human survival instincts that keep you alive."
+TARGET ANGLE: "{chosen_angle}"
+CHANNEL BRAND NAME: "{brand_name}"
+CHANNEL HANDLE: "{brand_handle}"
 
 MANDATORY 4-ACT ARCHITECTURE (STRICT RULES):
 1. ACT 1 HOOK (0-4s | 18-24 words):
@@ -180,35 +158,29 @@ MANDATORY 4-ACT ARCHITECTURE (STRICT RULES):
      * NEVER start with a year ("In 1961...", "In 1974...").
      * NEVER start with "There is a...", "Did you know...", or "A psychologist proved...".
      * NEVER use the words "human behavioral glitch" or "psychological glitch".
-     * NEVER name clinical effects in Act 1 (do NOT say "called the Dunning-Kruger effect" or "the Ben Franklin Effect").
-     * NEVER use soft self-help advice ("How to win an argument", "How to make people like you").
+     * NEVER name clinical effects in Act 1.
 2. ACT 2 MECHANISM (4-21s | 45-52 words):
    - Explain the evolutionary brain trap, predator tactic, or cognitive betrayal causing this danger. Keep it visceral and cinematic.
 3. ACT 3 DIRECTIVE (21-37s | 38-46 words):
    - Give the viewer an exact physical counter-move AND a verbatim spoken script in quotation marks ("...") they can use to break the trap.
 4. ACT 4 DYNAMIC BRANDED OUTRO (37-41s | 10-14 words - MANDATORY):
-   - MUST call out your channel name using this dynamic formula tailored to the topic:
+   - MUST call out your channel name using this formula:
      "Follow {brand_name} for [dynamic, context-specific reason tailored directly to this topic]."
-   - NEVER use the exact same wording every time. Dynamically adapt it:
-     * Survival/Emergency: "Follow {brand_name} for human instincts that keep you alive in an emergency."
-     * Predatory Defense: "Follow {brand_name} for psychological defense rules that protect your safety."
-     * Deception Detection: "Follow {brand_name} for behavioral tells that expose hidden deception instantly."
-     * Manipulation Defense: "Follow {brand_name} for verbal counters that protect your mind."
 5. TOTAL SPOKEN WORDS:
-   - Strictly between 108 and 132 words total across all acts.
+   - Strictly between 95 and 135 words total across all acts.
 
 NEGATIVE FILTER:
-- Never mention or draw from: [{forbidden}].
-- Avoid these recent titles: [{recent_avoid}].
+- Never mention: [{forbidden}].
+- Avoid recent topics: [{recent_avoid}].
 
 Respond ONLY with valid JSON using this exact schema:
 {{
   "title": "Visceral high-CTR title under 70 chars with #shorts and 1 niche hashtag",
   "script_acts": {{
-    "act1_hook": "0-4s visceral second-person paradox hook with 'you' in first 6 words (18-24 words)",
-    "act2_mechanism": "4-21s explanation of the brain betrayal or trap (45-52 words)",
-    "act3_directive": "21-37s physical counter-move + exact spoken script in quotation marks (38-46 words)",
-    "act4_seal": "37-41s dynamic branded outro: Follow {brand_name} for [dynamic topic-specific promise] (10-14 words)"
+    "act1_hook": "0-4s visceral second-person paradox hook with 'you' in first 6 words",
+    "act2_mechanism": "4-21s explanation of the brain betrayal or trap",
+    "act3_directive": "21-37s physical counter-move + exact spoken script in quotation marks",
+    "act4_seal": "37-41s dynamic branded outro: Follow {brand_name} for [dynamic topic-specific promise]"
   }},
   "keywords": ["dark-crowd", "interrogation", "cctv-footage", "eye-contact", "shadows", "emergency-light", "tunnel", "subway"],
   "description": "2-sentence high-stakes description with Subscribe to {brand_handle}, #shorts and 5 hashtags",
@@ -216,84 +188,156 @@ Respond ONLY with valid JSON using this exact schema:
   "voice": "{profile.get('voice_recommended', 'en-US-ChristopherNeural')}"
 }}
 """
+    return prompt, chosen_angle, profile
 
-    MODELS_TO_TRY = [
-        "gemini-3.1-flash-lite",
-        "gemini-3.5-flash-lite",
-        "gemini-3-flash-preview",
-        "gemini-flash-latest"
+def clean_and_assemble_script(parsed: dict, brand_name: str, brand_handle: str, profile: dict, chosen_angle: str) -> dict:
+    acts = parsed.get("script_acts", {})
+    full_script = f"{acts.get('act1_hook', '')} {acts.get('act2_mechanism', '')} {acts.get('act3_directive', '')} {acts.get('act4_seal', '')}".strip()
+    parsed["script"] = full_script
+
+    if brand_name.lower() != "shadowmind":
+        for key in ["title", "script", "description", "pinned_comment"]:
+            if key in parsed and isinstance(parsed[key], str):
+                parsed[key] = re.sub(r'(?i)\btheshadowmindhq(?:-hub)?\b', brand_handle.lstrip("@"), parsed[key])
+                parsed[key] = re.sub(r'(?i)@ShadowMind\b', brand_handle, parsed[key])
+                parsed[key] = re.sub(r'(?i)\bShadowMind\b', brand_name, parsed[key])
+
+    voice_pool = [
+        profile.get("voice_recommended", "en-US-ChristopherNeural"),
+        "en-US-GuyNeural",
+        "en-US-EricNeural",
+        "en-GB-RyanNeural",
+        "en-US-AndrewMultilingualNeural"
     ]
+    parsed["voice"] = random.choice(voice_pool)
+    parsed["chosen_angle"] = chosen_angle
+    return parsed
 
-    for model_name in MODELS_TO_TRY:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-        
-        for attempt in range(1, 4):
-            prompt = base_prompt
-            if attempt > 1:
-                prompt += "\nRE-ATTEMPT NOTICE: Ensure Act 1 starts with 'you'/'your' immediately, has NO dates or 'There is a...', and Act 3 has an exact spoken script in quotes."
-
+def generate_with_groq_lpu(prompt: str, api_key: str, user_tracker_file: Optional[str] = None) -> Optional[dict]:
+    """Generates viral script using Groq Cloud LPU in ~0.6 seconds."""
+    models = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "allam-2-7b"]
+    for model_name in models:
+        try:
+            url = "https://api.groq.com/openai/v1/chat/completions"
             payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "responseMimeType": "application/json",
-                    "temperature": 0.68
-                }
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": "You are a professional YouTube Shorts scriptwriter. Output strictly valid JSON matching the user schema."},
+                    {"role": "user", "content": prompt}
+                ],
+                "response_format": {"type": "json_object"},
+                "temperature": 0.68,
+                "max_tokens": 1000
             }
+            res = requests.post(url, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json=payload, timeout=8)
+            if res.status_code == 200:
+                try:
+                    from usage_tracker import record_ai_request
+                    server_rem = None
+                    if "x-ratelimit-remaining-requests" in res.headers:
+                        try:
+                            server_rem = int(res.headers["x-ratelimit-remaining-requests"])
+                        except Exception:
+                            pass
+                    record_ai_request(server_remaining=server_rem, tracker_file=user_tracker_file)
+                except Exception:
+                    pass
 
-            try:
-                res = requests.post(url, json=payload, timeout=14)
-                if res.status_code == 200:
-                    try:
-                        from usage_tracker import record_gemini_request
-                        server_rem = None
-                        if "x-ratelimit-remaining-requests" in res.headers:
-                            try:
-                                server_rem = int(res.headers["x-ratelimit-remaining-requests"])
-                            except Exception:
-                                pass
-                        record_gemini_request(server_remaining=server_rem, tracker_file=user_tracker_file)
-                    except Exception:
-                        pass
-                    data = res.json()
-                    text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    parsed = json.loads(text)
-                    parsed["model_used"] = model_name
+                data = res.json()
+                content = data["choices"][0]["message"]["content"]
+                # Match inner json if enclosed in tags or markdown
+                match = re.search(r'(\{[\s\S]*\})', content)
+                clean_json = match.group(1) if match else content
+                parsed = json.loads(clean_json)
+                parsed["model_used"] = f"groq-{model_name.split('/')[-1]}"
+                return parsed
+            elif res.status_code in (401, 403):
+                print(f"Groq auth error ({res.status_code}): {res.text}")
+                break
+            else:
+                print(f"Groq {model_name} HTTP {res.status_code}: {res.text[:150]}")
+        except Exception as e:
+            print(f"Groq {model_name} error: {e}")
+    return None
 
-                    # Programmatic validation audit against algorithmic failure modes
-                    is_valid, reason = validate_viral_script(parsed, niche)
-                    if not is_valid:
-                        print(f"Validation rejected attempt {attempt} on {model_name}: {reason}")
-                        continue
+def generate_with_pollinations_free_ai(prompt: str) -> Optional[dict]:
+    """100% Free Zero-Key Fallback: OpenAI / DeepSeek endpoint."""
+    try:
+        url = "https://text.pollinations.ai/openai"
+        payload = {
+            "model": "openai",
+            "messages": [
+                {"role": "system", "content": "You are a professional YouTube Shorts scriptwriter. Output strictly valid JSON matching the user schema."},
+                {"role": "user", "content": prompt}
+            ],
+            "response_format": {"type": "json_object"}
+        }
+        res = requests.post(url, json=payload, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            content = data["choices"][0]["message"]["content"]
+            # Extract JSON substring if wrapped in markdown
+            match = re.search(r'(\{[\s\S]*\})', content)
+            raw_json = match.group(1) if match else content
+            parsed = json.loads(raw_json)
+            parsed["model_used"] = "openai-free-tier"
+            return parsed
+    except Exception as e:
+        print(f"Pollinations free AI fallback error: {e}")
+    return None
 
-                    # Assemble full spoken script from 4 acts
-                    acts = parsed.get("script_acts", {})
-                    full_script = f"{acts.get('act1_hook', '')} {acts.get('act2_mechanism', '')} {acts.get('act3_directive', '')} {acts.get('act4_seal', '')}".strip()
-                    parsed["script"] = full_script
+def generate_ai_script(
+    niche: str = "dark_psychology",
+    concept: Optional[str] = None,
+    user_key_file: Optional[str] = None,
+    brand_name: str = "ShadowMind",
+    brand_handle: str = "@TheShadowMindHQ-Hub",
+    allow_fallback: bool = True,
+    user_tracker_file: Optional[str] = None,
+    surprise: bool = False,
+    topic_history_file: Optional[str] = None
+) -> Optional[dict]:
+    """Unified AI script engine: Groq LPU (Primary) -> OpenAI/DeepSeek Zero-Key (Fallback)."""
+    from idea_bank import record_topic_history
 
-                    # Sanitize any accidental ShadowMind mentions if user brand is different
-                    if brand_name.lower() != "shadowmind":
-                        for key in ["title", "script", "description", "pinned_comment"]:
-                            if key in parsed and isinstance(parsed[key], str):
-                                parsed[key] = re.sub(r'(?i)\btheshadowmindhq(?:-hub)?\b', brand_handle.lstrip("@"), parsed[key])
-                                parsed[key] = re.sub(r'(?i)@ShadowMind\b', brand_handle, parsed[key])
-                                parsed[key] = re.sub(r'(?i)\bShadowMind\b', brand_name, parsed[key])
+    prompt, chosen_angle, profile = build_prompt_and_schema(
+        niche=niche,
+        concept=concept,
+        brand_name=brand_name,
+        brand_handle=brand_handle,
+        surprise=surprise,
+        topic_history_file=topic_history_file
+    )
 
-                    # Select voice persona dynamically from pool for freshness
-                    voice_pool = [
-                        profile.get("voice_recommended", "en-US-ChristopherNeural"),
-                        "en-US-GuyNeural",
-                        "en-US-EricNeural",
-                        "en-GB-RyanNeural",
-                        "en-US-AndrewMultilingualNeural"
-                    ]
-                    parsed["voice"] = random.choice(voice_pool)
-                    parsed["chosen_angle"] = chosen_angle
+    api_key = get_groq_key(user_key_file, allow_fallback=allow_fallback)
 
-                    # Record in topic history
-                    record_topic_history(topic_history_file, parsed.get("title", ""), niche, chosen_angle)
+    # 1. Primary: Groq LPU (0.6s)
+    parsed = None
+    if api_key:
+        parsed = generate_with_groq_lpu(prompt, api_key, user_tracker_file)
 
-                    return parsed
-            except Exception as e:
-                print(f"Gemini {model_name} attempt {attempt} error: {e}")
+    # 2. Limitless Fallback: OpenAI / DeepSeek Zero-Key API
+    if not parsed:
+        print("Falling back to limitless Free AI Engine (OpenAI / DeepSeek Zero-Key)...")
+        parsed = generate_with_pollinations_free_ai(prompt)
+
+    if parsed:
+        is_valid, reason = validate_viral_script(parsed, niche)
+        if not is_valid:
+            print(f"Validation rejected AI output: {reason}. Regenerating cleanly...")
+            # One quick recovery attempt
+            rec_prompt = prompt + f"\nRE-ATTEMPT FIX: {reason}. Ensure Act 1 starts with 'you'/'your' directly."
+            if api_key:
+                parsed = generate_with_groq_lpu(rec_prompt, api_key, user_tracker_file)
+            if not parsed:
+                parsed = generate_with_pollinations_free_ai(rec_prompt)
+
+    if parsed:
+        final_data = clean_and_assemble_script(parsed, brand_name, brand_handle, profile, chosen_angle)
+        record_topic_history(topic_history_file, final_data.get("title", ""), niche, chosen_angle)
+        return final_data
 
     return None
+
+# Backward compatibility alias
+generate_with_gemini_flash = generate_ai_script

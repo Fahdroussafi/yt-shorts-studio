@@ -5,6 +5,7 @@ client_secret*.json
 *service_account*.json
 gcp_service_account.json
 gemini_api_key.txt
+groq_api_key.txt
 token.json
 *.key
 *.pem

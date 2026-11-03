@@ -218,11 +218,15 @@ export default function IdeasPage() {
               <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                 <span className="text-xs font-mono font-bold text-cyan-400 uppercase">Generated Concept</span>
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                  generatedIdea.source && generatedIdea.source.startsWith('gemini')
-                    ? 'bg-cyan-950 text-cyan-300 border-cyan-700'
+                  generatedIdea.source && (generatedIdea.source.includes('groq') || generatedIdea.source.includes('openai'))
+                    ? 'bg-orange-950 text-orange-300 border-orange-700'
                     : 'bg-violet-950 text-violet-300 border-violet-800'
                 }`}>
-                  {generatedIdea.source && generatedIdea.source.startsWith('gemini') ? `⚡ ${generatedIdea.source.toUpperCase()}` : '🤖 Built-in Matrix'}
+                  {generatedIdea.source && generatedIdea.source.includes('groq')
+                    ? `⚡ GROQ LPU (${generatedIdea.source.toUpperCase()})`
+                    : generatedIdea.source && generatedIdea.source.includes('openai')
+                      ? '🌐 FREE OPENAI / DEEPSEEK'
+                      : '🤖 Built-in Matrix'}
                 </span>
                 {generatedIdea.chosen_angle && (
                   <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-800/60 max-w-xs truncate" title={generatedIdea.chosen_angle}>

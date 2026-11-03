@@ -313,9 +313,9 @@ export function AppProvider({ children }) {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.detail || data.message || "Failed to verify API key with Google.");
+        throw new Error(data.detail || data.message || "Failed to verify API key with Groq.");
       }
-      showToast("Gemini Flash API Key verified with Google and saved!", "success");
+      showToast("Groq LPU API Key verified and saved successfully!", "success");
       setShowAiModal(false);
       setInputApiKey('');
       fetchAiSettings();
@@ -328,7 +328,7 @@ export function AppProvider({ children }) {
   };
 
   const handleResetAiKey = async () => {
-    if (!confirm("Revert to default pre-configured Gemini Flash key?")) return;
+    if (!confirm("Revert to default pre-configured Groq key?")) return;
     setSavingKey(true);
     setAiKeyError('');
     try {

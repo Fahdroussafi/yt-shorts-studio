@@ -130,13 +130,13 @@ export default function Layout() {
             onClick={() => setShowAiModal(true)}
             className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border text-xs transition ${
               aiSettings?.has_key 
-                ? 'bg-cyan-950/60 border-cyan-700/60 text-cyan-300' 
+                ? 'bg-orange-950/60 border-orange-700/60 text-orange-300' 
                 : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
             }`}
           >
-            <Cpu className="w-3.5 h-3.5 text-cyan-400" />
-            <span>{aiSettings?.has_key ? 'Gemini Flash Active' : 'Connect Free AI'}</span>
-            <span className={`w-1.5 h-1.5 rounded-full ${aiSettings?.has_key ? 'bg-cyan-400 animate-pulse' : 'bg-slate-600'}`}></span>
+            <Cpu className="w-3.5 h-3.5 text-orange-400" />
+            <span>{aiSettings?.has_key ? 'Groq LPU Active' : 'Connect Free AI'}</span>
+            <span className={`w-1.5 h-1.5 rounded-full ${aiSettings?.has_key ? 'bg-orange-400 animate-pulse' : 'bg-slate-600'}`}></span>
           </button>
 
           <button 
@@ -218,22 +218,22 @@ export default function Layout() {
               </span>
             </div>
 
-            {/* Gemini Flash Quota */}
+            {/* Groq LPU Quota */}
             <div className="space-y-1">
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-slate-400 flex items-center space-x-1">
-                  <span className={`w-1.5 h-1.5 rounded-full ${usage?.gemini?.has_key ? 'bg-cyan-400 animate-pulse' : 'bg-slate-600'}`}></span>
-                  <span>Gemini 3.1 Flash Lite</span>
+                  <span className={`w-1.5 h-1.5 rounded-full ${usage?.gemini?.has_key ? 'bg-orange-400 animate-pulse' : 'bg-slate-600'}`}></span>
+                  <span>Groq Cloud LPU</span>
                 </span>
                 {usage && usage.gemini?.has_key === false ? (
                   <button 
                     onClick={() => setShowAiModal(true)}
-                    className="text-[10px] font-mono font-bold text-slate-400 hover:text-cyan-300 underline"
+                    className="text-[10px] font-mono font-bold text-slate-400 hover:text-orange-300 underline"
                   >
-                    No Key
+                    Open Setup
                   </button>
                 ) : (
-                  <span className="font-mono font-bold text-cyan-300">
+                  <span className="font-mono font-bold text-orange-300">
                     {usage ? `${usage.gemini.remaining.toLocaleString()} left` : '...'}
                   </span>
                 )}
@@ -241,12 +241,12 @@ export default function Layout() {
               <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
                 <div 
                   style={{ width: `${usage?.gemini?.has_key === false ? 0 : Math.max(3, 100 - (usage?.gemini?.percent || 0))}%` }}
-                  className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full"
+                  className="h-full bg-gradient-to-r from-orange-500 to-amber-500 rounded-full"
                 ></div>
               </div>
               <div className="flex justify-between text-[10px] text-slate-500 font-mono">
                 <span>Used: {usage ? usage.gemini.used.toLocaleString() : 0}</span>
-                <span>Cap: {usage?.gemini?.limit ? `${usage.gemini.limit.toLocaleString()}/day` : '500/day'}</span>
+                <span>Cap: {usage?.gemini?.limit ? `${usage.gemini.limit.toLocaleString()}/day` : '14,400/day'}</span>
               </div>
             </div>
 

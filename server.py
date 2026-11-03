@@ -196,7 +196,7 @@ def get_user_paths(user: dict) -> dict:
                     if os.path.isdir(s) and not os.path.exists(d):
                         shutil.copytree(s, d)
 
-            for fname in ["video_mappings.json", "stats_cache.json", "usage_tracker.json", "gemini_api_key.txt", "token.json", "client_secret.json"]:
+            for fname in ["video_mappings.json", "stats_cache.json", "usage_tracker.json", "groq_api_key.txt", "token.json", "client_secret.json"]:
                 s = os.path.join(BASE_DIR, fname)
                 d = os.path.join(u_dir, fname)
                 if os.path.exists(s) and not os.path.exists(d):
@@ -265,7 +265,7 @@ def get_user_paths(user: dict) -> dict:
         "mappings_file": vm_path,
         "stats_cache_file": sc_path,
         "usage_file": os.path.join(u_dir, "usage_tracker.json"),
-        "key_file": os.path.join(u_dir, "gemini_api_key.txt"),
+        "key_file": os.path.join(u_dir, "groq_api_key.txt"),
         "token_file": os.path.join(u_dir, "token.json"),
         "client_secret_file": os.path.join(u_dir, "client_secret.json"),
         "channel_file": ch_path,
@@ -1181,50 +1181,35 @@ def get_niches(_user: dict = Depends(require_auth)):
     return out
 
 
-def verify_gemini_api_key(key: str) -> tuple:
+def verify_groq_api_key(key: str) -> tuple:
     if not key or not isinstance(key, str):
         return False, "API key cannot be empty."
     clean_key = key.strip()
-    if len(clean_key) < 20:
-        return False, "API key format invalid (too short)."
+    if not clean_key.startswith("gsk_") and len(clean_key) < 20:
+        return False, "Invalid Groq API key format (must start with 'gsk_')."
 
-    # 1. Fast metadata ping to verify key validity with Google in <0.2s
-    fast_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={clean_key}"
+    url = "https://api.groq.com/openai/v1/models"
     try:
-        fb_res = requests.get(fast_url, timeout=5)
-        if fb_res.status_code == 200:
-            return True, "Valid API key."
-        elif fb_res.status_code == 400 or fb_res.status_code == 403:
-            try:
-                err = fb_res.json().get("error", {})
-                return False, err.get("message", "API key not valid or unauthorized.")
-            except Exception:
-                return False, f"Google rejected key (HTTP {fb_res.status_code})"
-    except Exception:
-        pass
+        res = requests.get(url, headers={"Authorization": f"Bearer {clean_key}"}, timeout=5)
+        if res.status_code == 200:
+            return True, "Valid Groq API key."
+        elif res.status_code in (401, 403):
+            return False, "Groq rejected key (Invalid or unauthorized API key)."
+        return False, f"Groq API returned HTTP {res.status_code}"
+    except Exception as e:
+        return False, f"Network error contacting Groq API: {str(e)}"
 
-    # 2. Inference check against fast models (prioritize Flash-Lite 500 RPD)
-    for m in ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3-flash-preview"]:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={clean_key}"
-        payload = {"contents": [{"parts": [{"text": "ping"}]}]}
-        try:
-            res = requests.post(url, json=payload, timeout=5)
-            if res.status_code == 200:
-                return True, "Valid API key."
-        except Exception:
-            continue
-
-    return False, "Could not reach Google API or verify key."
+verify_gemini_api_key = verify_groq_api_key
 
 
 @app.get("/api/settings/ai")
 def get_ai_settings(user: dict = Depends(require_auth)):
     paths = get_user_paths(user)
-    from gemini_generator import get_gemini_key
-    user_custom_key = get_gemini_key(paths["key_file"], allow_fallback=False)
+    from gemini_generator import get_groq_key
+    user_custom_key = get_groq_key(paths["key_file"], allow_fallback=False)
 
-    # Auto-purge corrupted or fake keys (e.g. '123456' or 'sfsfsfdf')
-    if user_custom_key and len(user_custom_key.strip()) < 20:
+    # Auto-purge corrupted keys
+    if user_custom_key and len(user_custom_key.strip()) < 15:
         try:
             if os.path.exists(paths["key_file"]):
                 os.remove(paths["key_file"])
@@ -1233,15 +1218,16 @@ def get_ai_settings(user: dict = Depends(require_auth)):
         user_custom_key = None
 
     is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
-    system_key = get_gemini_key(paths["key_file"], allow_fallback=is_owner)
+    system_key = get_groq_key(paths["key_file"], allow_fallback=is_owner)
     key = user_custom_key or system_key
-    masked = f"{key[:6]}...{key[-4:]}" if key and len(key) > 10 else None
+    masked = f"{key[:7]}...{key[-4:]}" if key and len(key) > 12 else None
     return {
         "has_key": bool(key),
         "is_custom_key": bool(user_custom_key),
         "masked_key": masked,
-        "model": "gemini-3.1-flash-lite (500 RPD Free Tier • 1.0s Speed)",
-        "status": "AI Flash Online (Custom Key)" if user_custom_key else ("AI Flash Online (System Pre-Configured)" if system_key else "Local Generator Active")
+        "model": "Groq LPU (14,400 Free RPD • 0.6s Speed) + Limitless Free OpenAI/DeepSeek Fallback",
+        "provider": "Groq LPU",
+        "status": "Groq LPU Online (Custom Key)" if user_custom_key else ("Groq LPU Online (System Pre-Configured)" if system_key else "OpenAI / DeepSeek Free Mode Active")
     }
 
 
@@ -1252,13 +1238,13 @@ def save_ai_settings(req: AIKeyRequest, user: dict = Depends(require_auth)):
     if not key:
         raise HTTPException(status_code=400, detail="API key cannot be empty.")
 
-    is_valid, err_msg = verify_gemini_api_key(key)
+    is_valid, err_msg = verify_groq_api_key(key)
     if not is_valid:
-        raise HTTPException(status_code=400, detail=f"Invalid Gemini API Key: {err_msg}")
+        raise HTTPException(status_code=400, detail=f"Invalid Groq API Key: {err_msg}")
 
-    from gemini_generator import save_gemini_key
-    save_gemini_key(key, paths["key_file"])
-    return {"success": True, "message": "Gemini Flash API Key verified with Google and saved successfully!"}
+    from gemini_generator import save_groq_key
+    save_groq_key(key, paths["key_file"])
+    return {"success": True, "message": "Groq API Key verified with Groq Cloud and saved successfully!"}
 
 
 @app.delete("/api/settings/ai")
@@ -1266,7 +1252,7 @@ def delete_ai_settings(user: dict = Depends(require_auth)):
     paths = get_user_paths(user)
     if os.path.exists(paths["key_file"]):
         os.remove(paths["key_file"])
-    return {"success": True, "message": "Gemini API Key cleared."}
+    return {"success": True, "message": "Custom Groq API Key cleared. Default engine active."}
 
 
 @app.get("/api/settings/channel")
@@ -1538,18 +1524,20 @@ def disconnect_youtube(user: dict = Depends(require_auth)):
 
 @app.get("/api/usage")
 def get_usage(user: dict = Depends(require_auth)):
-    """Returns exact daily quota & credit consumption for Gemini and YouTube (User Scoped)."""
+    """Returns exact daily quota & credit consumption for Groq LPU and YouTube (User Scoped)."""
     paths = get_user_paths(user)
     from usage_tracker import get_usage_summary
-    from gemini_generator import get_gemini_key
+    from gemini_generator import get_groq_key
 
     is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
     has_token = os.path.exists(paths["token_file"])
-    has_ai_key = bool(get_gemini_key(paths["key_file"], allow_fallback=is_owner))
+    has_ai_key = bool(get_groq_key(paths["key_file"], allow_fallback=is_owner))
 
     summary = get_usage_summary(paths["usage_file"], allow_live_gcp=is_owner)
     summary["youtube"]["connected"] = has_token
     summary["gemini"]["has_key"] = has_ai_key
+    summary["ai"] = summary.get("ai", summary["gemini"])
+    summary["ai"]["has_key"] = has_ai_key
     return summary
 
 
@@ -1579,14 +1567,16 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
     brand_name, brand_handle = get_user_brand(paths, user)
     is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
 
-    # If series_count > 1, generate a multi-part story series
+    # If series_count > 1, generate a multi-part story series IN PARALLEL
     series_count = max(1, min(3, req.series_count or 1))
     if series_count > 1:
-        episodes = []
         base_num = int(re.search(r'\d+', next_id).group()) if re.search(r'\d+', next_id) else 1
         series_topic = req.concept or "The 3 Forbidden Stages of Influence"
+        profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
 
-        for ep_idx in range(1, series_count + 1):
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _generate_single_part(ep_idx):
             ep_id = f"short_{base_num + ep_idx - 1:02d}"
             ep_concept = f"{series_topic} (Part {ep_idx} of {series_count})"
             ai_ep = generate_with_gemini_flash(
@@ -1600,7 +1590,6 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
                 surprise=False,
                 topic_history_file=paths.get("topic_history_file")
             )
-            profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
             if ai_ep:
                 ep_script = ai_ep.get("script", "").strip()
                 if ep_idx < series_count:
@@ -1612,10 +1601,10 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
                     if brand_name.lower() not in ep_script.lower():
                         ep_script = ep_script.rstrip(" .,!?:;-") + f". {outro_mandate}"
 
-                episodes.append({
+                return {
                     "series_part": ep_idx,
                     "series_total": series_count,
-                    "source": ai_ep.get("model_used", "gemini-3.5-flash-lite"),
+                    "source": ai_ep.get("model_used", "groq-lpu"),
                     "next_id": ep_id,
                     "niche": niche,
                     "title": f"{ai_ep.get('title', series_topic).replace(' #shorts', '')} (Part {ep_idx}/{series_count}) #shorts",
@@ -1626,9 +1615,8 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
                     "voice": ai_ep.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
                     "chosen_angle": ep_concept,
                     "generation_type": f"story_series_part_{ep_idx}"
-                })
+                }
             else:
-                # Fallback to local
                 chosen = pick_concept_without_repeats(
                     niche=niche,
                     history_file=paths.get("topic_history_file"),
@@ -1636,7 +1624,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
                     brand_handle=brand_handle
                 )
                 ep_title = f"{chosen['title'].replace(' #shorts', '')} (Part {ep_idx}/{series_count}) #shorts"
-                episodes.append({
+                return {
                     "series_part": ep_idx,
                     "series_total": series_count,
                     "source": "local-generator",
@@ -1650,7 +1638,10 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
                     "voice": chosen.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
                     "chosen_angle": ep_concept,
                     "generation_type": f"story_series_part_{ep_idx}"
-                })
+                }
+
+        with ThreadPoolExecutor(max_workers=series_count) as executor:
+            episodes = list(executor.map(_generate_single_part, range(1, series_count + 1)))
 
         return {
             "is_series": True,
@@ -1658,7 +1649,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
             "episodes": episodes
         }
 
-    # 1. Try Gemini Flash AI first with user's key (fallback to system pre-configured key for admin only)
+    # 1. Primary AI Call (Groq LPU / OpenAI-DeepSeek Zero-Key Fallback)
     ai_result = generate_with_gemini_flash(
         niche=niche,
         concept=req.concept,
@@ -1671,7 +1662,6 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
         topic_history_file=paths.get("topic_history_file")
     )
     if ai_result:
-        # Note: gemini_generator.py already logs request against usage_tracker.json directly upon HTTP 200
         final_script = ai_result.get("script", "").strip()
         profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
         outro_mandate = profile.get("outro_phrase", f"Follow {brand_name} for psychological rules that put you five steps ahead.").format(brand_name=brand_name)
@@ -1679,7 +1669,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
             final_script = final_script.rstrip(" .,!?:;-") + f". {outro_mandate}"
 
         return {
-            "source": ai_result.get("model_used", "gemini-3.5-flash-lite"),
+            "source": ai_result.get("model_used", "groq-lpu"),
             "next_id": next_id,
             "niche": niche,
             "title": ai_result.get("title", ""),
