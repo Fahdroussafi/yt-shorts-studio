@@ -508,6 +508,36 @@ def parse_view_count(text: str) -> int:
         return int(m_num.group(1))
     return 0
 
+def fetch_exact_video_view_count(yt_id: str) -> Optional[int]:
+    """Fetches exact unrounded view count from YouTube's player API in ~0.2s."""
+    try:
+        url = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+        payload = {
+            "videoId": yt_id,
+            "context": {
+                "client": {
+                    "hl": "en",
+                    "gl": "US",
+                    "clientName": "WEB",
+                    "clientVersion": "2.20240101.00.00"
+                }
+            }
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            raw = data.get("videoDetails", {}).get("viewCount")
+            if raw is not None:
+                return int(raw)
+    except Exception:
+        pass
+    return None
+
+
 def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False, is_owner: bool = False) -> dict:
     """Scrapes channel's /shorts page directly, updating mappings and stats_cache in one fast 0.4s call."""
     if not channel_handle or not channel_handle.strip():
@@ -574,6 +604,19 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
     except Exception as e:
         print(f"Warning: Channel live scrape failed: {e}")
         return {"status": "error", "error": str(e)}
+
+    # Refine views with exact unrounded counts from player API for rounded items (e.g. 1.2K -> 1228)
+    items_to_refine = [vid for vid, it in discovered_live.items() if ("k" in it["views_display"].lower() or "m" in it["views_display"].lower())]
+    if items_to_refine:
+        from concurrent.futures import ThreadPoolExecutor
+        def _fetch_one(vid):
+            exact = fetch_exact_video_view_count(vid)
+            return vid, exact
+        with ThreadPoolExecutor(max_workers=min(8, len(items_to_refine))) as ex:
+            for vid, exact_count in ex.map(_fetch_one, items_to_refine):
+                if exact_count is not None and exact_count > 0:
+                    discovered_live[vid]["views"] = exact_count
+                    discovered_live[vid]["views_display"] = f"{exact_count:,} views"
 
     mappings = get_user_video_mappings(paths["mappings_file"])
     from datetime import datetime, timezone
