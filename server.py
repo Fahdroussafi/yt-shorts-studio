@@ -8,6 +8,7 @@ import hashlib
 import base64
 import random
 import asyncio
+import subprocess
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -92,6 +93,15 @@ def require_auth(authorization: Optional[str] = Header(None)) -> dict:
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized: Invalid or expired JWT")
     return user
+
+def sanitize_short_id(short_id: str) -> str:
+    """Sanitizes and validates video/short IDs to strictly disallow directory traversal."""
+    if not short_id or not isinstance(short_id, str):
+        raise HTTPException(status_code=400, detail="Short ID cannot be empty")
+    cleaned = short_id.strip()
+    if not re.match(r'^[a-zA-Z0-9_-]{1,64}$', cleaned):
+        raise HTTPException(status_code=400, detail="Invalid short ID format")
+    return cleaned
 
 # Workspace Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -470,8 +480,11 @@ def parse_view_count(text: str) -> int:
         return int(m_num.group(1))
     return 0
 
-def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False) -> dict:
+def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False, is_owner: bool = False) -> dict:
     """Scrapes channel's /shorts page directly, updating mappings and stats_cache in one fast 0.4s call."""
+    if not channel_handle or not channel_handle.strip():
+        return {"status": "skipped", "reason": "no_channel_configured"}
+
     stats_cache = load_user_stats_cache(paths["stats_cache_file"])
     now = time.time()
     last_synced = stats_cache.get("_meta", {}).get("last_synced_at", 0)
@@ -480,8 +493,9 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
     if not force and (now - last_synced < 60):
         return {"status": "cached", "last_synced_at": last_synced, "live_count": stats_cache.get("_meta", {}).get("live_count", 0)}
 
-    handle = channel_handle or DEFAULT_CHANNEL_HANDLE
-    handle_clean = handle if handle.startswith("@") else f"@{handle}"
+    handle_clean = channel_handle.strip()
+    if not handle_clean.startswith("@"):
+        handle_clean = f"@{handle_clean}"
     url = f"https://www.youtube.com/{handle_clean}/shorts"
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
@@ -539,7 +553,7 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
         "b2iNWCbHkVQ": "short_06",
         "wukiGKM0ajo": "short_07",
         "rKtARt8ly8s": "short_08"
-    }
+    } if is_owner else {}
 
     from datetime import datetime, timezone
     now_utc = datetime.now(timezone.utc)
@@ -621,11 +635,15 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
 def get_channel_stats(user: dict = Depends(require_auth)):
     """Scrapes real-time public stats from YouTube with disk-backed caching fallback (User Scoped)."""
     paths = get_user_paths(user)
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
     channel_info = get_user_channel_info(paths["channel_file"])
-    channel_handle = channel_info.get("channel_handle") or DEFAULT_CHANNEL_HANDLE
+    channel_handle = (channel_info.get("channel_handle") or "").strip()
+    if not channel_handle and is_owner:
+        channel_handle = DEFAULT_CHANNEL_HANDLE
 
-    # 1. Automatically sync with channel live feed (60s cooldown cache)
-    sync_channel_live_feed(paths, channel_handle, force=False)
+    # 1. Automatically sync with channel live feed (60s cooldown cache) ONLY if channel is configured
+    if channel_handle:
+        sync_channel_live_feed(paths, channel_handle, force=False, is_owner=is_owner)
 
     mappings = get_user_video_mappings(paths["mappings_file"])
     stats_cache = load_user_stats_cache(paths["stats_cache_file"])
@@ -704,8 +722,8 @@ def get_channel_stats(user: dict = Depends(require_auth)):
             "storage_status": storage_status
         })
 
-    channel_handle_display = channel_info.get("channel_handle") or ""
-    channel_url = channel_info.get("channel_url") or ""
+    channel_handle_display = channel_handle if channel_handle else ""
+    channel_url = channel_info.get("channel_url") or (DEFAULT_CHANNEL_URL if (is_owner and channel_handle) else "")
 
     # Fetch subscriber count for user's configured channel
     subscribers = "Not Connected"
@@ -805,8 +823,10 @@ def list_videos(user: dict = Depends(require_auth)):
 
 @app.api_route("/api/videos/{short_id}/stream", methods=["GET", "HEAD"])
 def stream_video(short_id: str, req: Request, range: Optional[str] = Header(None)):
-    """Streams the short MP4 with HTTP 206 partial range support across user partitions."""
-    # Check if authorization token provided
+    """Streams the short MP4 with HTTP 206 partial range support strictly for authenticated owner."""
+    clean_id = sanitize_short_id(short_id)
+
+    # 1. Strict Authentication
     token = None
     auth_h = req.headers.get("Authorization")
     if auth_h and auth_h.startswith("Bearer "):
@@ -814,36 +834,26 @@ def stream_video(short_id: str, req: Request, range: Optional[str] = Header(None
     elif req.query_params.get("token"):
         token = req.query_params.get("token").strip()
 
-    dir_path = None
-    if token:
-        user = verify_jwt_token(token)
-        if user:
-            paths = get_user_paths(user)
-            p = os.path.join(paths["videos_dir"], short_id)
-            if os.path.exists(p):
-                dir_path = p
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized: Valid authentication required to stream video")
 
-    # Fallback search across user partitions or legacy videos
-    if not dir_path or not os.path.exists(dir_path):
-        if os.path.exists(USERS_DATA_DIR):
-            for u in os.listdir(USERS_DATA_DIR):
-                cand = os.path.join(USERS_DATA_DIR, u, "videos", short_id)
-                if os.path.exists(cand):
-                    dir_path = cand
-                    break
-    if not dir_path or not os.path.exists(dir_path):
-        cand = os.path.join(VIDEOS_DIR, short_id)
-        if os.path.exists(cand):
-            dir_path = cand
+    user = verify_jwt_token(token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized: Invalid or expired authentication token")
 
-    if not dir_path or not os.path.exists(dir_path):
-        raise HTTPException(status_code=404, detail="Short directory not found")
+    # 2. Strict Partition Isolation - Only user's own videos directory
+    paths = get_user_paths(user)
+    dir_path = os.path.join(paths["videos_dir"], clean_id)
+
+    # Enforce path containment
+    if os.path.commonpath([dir_path, paths["videos_dir"]]) != os.path.abspath(paths["videos_dir"]) or not os.path.exists(dir_path):
+        raise HTTPException(status_code=404, detail="Short video not found in your library")
 
     mp4_files = [x for x in os.listdir(dir_path) if x.endswith(".mp4")]
     if not mp4_files:
         raise HTTPException(status_code=404, detail="No MP4 found in directory")
 
-    target_mp4 = next((x for x in mp4_files if short_id in x), mp4_files[0])
+    target_mp4 = next((x for x in mp4_files if clean_id in x), mp4_files[0])
     video_path = os.path.join(dir_path, target_mp4)
     file_size = os.path.getsize(video_path)
 
@@ -879,8 +889,13 @@ def stream_video(short_id: str, req: Request, range: Optional[str] = Header(None
 @app.delete("/api/videos/{short_id}")
 def delete_video(short_id: str, user: dict = Depends(require_auth)):
     """Deletes a short directory and all its local files from disk to free VPS storage, keeping YouTube tracking intact."""
+    clean_id = sanitize_short_id(short_id)
     paths = get_user_paths(user)
-    dir_path = os.path.join(paths["videos_dir"], short_id)
+    dir_path = os.path.join(paths["videos_dir"], clean_id)
+
+    if os.path.commonpath([dir_path, paths["videos_dir"]]) != os.path.abspath(paths["videos_dir"]):
+        raise HTTPException(status_code=400, detail="Invalid path traversal detected")
+
     if os.path.exists(dir_path):
         try:
             shutil.rmtree(dir_path)
@@ -891,23 +906,26 @@ def delete_video(short_id: str, user: dict = Depends(require_auth)):
             try:
                 shutil.rmtree(dir_path)
             except Exception:
-                # Force delete via shell
-                subprocess.run(["cmd", "/c", "rd", "/s", "/q", dir_path], capture_output=True)
+                # Force delete via OS shell
+                if os.name == 'nt':
+                    subprocess.run(["cmd", "/c", "rd", "/s", "/q", dir_path], capture_output=True)
+                else:
+                    subprocess.run(["rm", "-rf", dir_path], capture_output=True)
                 if os.path.exists(dir_path):
                     raise HTTPException(status_code=500, detail=f"Failed to delete short: {str(e)}")
 
     # Crucial: If this video was mapped to a YouTube video, do NOT erase it from mappings!
     # Mark it as local_purged so Telemetry & KPIs continue tracking the live/scheduled YouTube video.
     mappings = get_user_video_mappings(paths["mappings_file"])
-    if short_id in mappings:
-        entry = mappings[short_id]
+    if clean_id in mappings:
+        entry = mappings[clean_id]
         if isinstance(entry, dict) and entry.get("yt_id"):
             entry["local_purged"] = True
-            mappings[short_id] = entry
+            mappings[clean_id] = entry
         elif isinstance(entry, str) and entry:
-            mappings[short_id] = {"yt_id": entry, "local_purged": True, "default_status": "LIVE"}
+            mappings[clean_id] = {"yt_id": entry, "local_purged": True, "default_status": "LIVE"}
         else:
-            del mappings[short_id]
+            del mappings[clean_id]
         try:
             with open(paths["mappings_file"], "w", encoding="utf-8") as f:
                 json.dump(mappings, f, indent=2)
@@ -921,10 +939,19 @@ def delete_video(short_id: str, user: dict = Depends(require_auth)):
 def sync_channel_videos(user: dict = Depends(require_auth)):
     """Forces an immediate live feed synchronization with user's YouTube channel."""
     paths = get_user_paths(user)
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
     channel_info = get_user_channel_info(paths["channel_file"])
-    handle = channel_info.get("channel_handle") or DEFAULT_CHANNEL_HANDLE
+    handle = (channel_info.get("channel_handle") or "").strip()
+    if not handle and is_owner:
+        handle = DEFAULT_CHANNEL_HANDLE
 
-    res = sync_channel_live_feed(paths, handle, force=True)
+    if not handle:
+        raise HTTPException(
+            status_code=400,
+            detail="No YouTube channel handle configured. Please enter your YouTube channel handle in Channel Settings first."
+        )
+
+    res = sync_channel_live_feed(paths, handle, force=True, is_owner=is_owner)
     mappings = get_user_video_mappings(paths["mappings_file"])
     live_count = sum(1 for m in mappings.values() if m.get("default_status") == "LIVE")
 
@@ -1047,9 +1074,10 @@ def delete_ai_settings(user: dict = Depends(require_auth)):
 @app.get("/api/settings/channel")
 def get_channel_settings(user: dict = Depends(require_auth)):
     paths = get_user_paths(user)
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
     info = get_user_channel_info(paths["channel_file"])
-    has_token = os.path.exists(paths["token_file"]) or (is_legacy_owner(paths["user_id"], user.get("email")) and os.path.exists(TOKEN_FILE))
-    has_cs = os.path.exists(paths["client_secret_file"]) or os.path.exists(CLIENT_SECRETS_FILE)
+    has_token = os.path.exists(paths["token_file"]) or (is_owner and os.path.exists(TOKEN_FILE))
+    has_cs = os.path.exists(paths["client_secret_file"]) or (is_owner and os.path.exists(CLIENT_SECRETS_FILE))
     return {
         "channel_handle": info.get("channel_handle", ""),
         "channel_url": info.get("channel_url", ""),
@@ -1061,21 +1089,59 @@ def get_channel_settings(user: dict = Depends(require_auth)):
 @app.post("/api/settings/channel")
 def save_channel_settings(req: ChannelSettingsRequest, user: dict = Depends(require_auth)):
     paths = get_user_paths(user)
-    handle = req.channel_handle.strip()
-    if handle and not handle.startswith("@"):
+    handle = (req.channel_handle or "").strip()
+    if not handle:
+        raise HTTPException(status_code=400, detail="Channel handle cannot be empty.")
+
+    # Extract handle if full URL was pasted
+    if "youtube.com/" in handle or "youtu.be/" in handle:
+        m = re.search(r'(@[a-zA-Z0-9_.-]+)', handle)
+        if m:
+            handle = m.group(1)
+        else:
+            parts = [p for p in handle.rstrip("/").split("/") if p]
+            if parts:
+                last = parts[-1]
+                handle = last if last.startswith("@") else f"@{last}"
+
+    if not handle.startswith("@"):
         handle = "@" + handle
-    url = req.channel_url.strip() if req.channel_url else (f"https://www.youtube.com/{handle}" if handle else "")
+
+    if not re.match(r"^@[a-zA-Z0-9_.-]{3,60}$", handle):
+        raise HTTPException(status_code=400, detail=f"Invalid YouTube channel handle format: {handle}. Must be 3-60 characters (@username).")
+
+    old_info = get_user_channel_info(paths["channel_file"])
+    old_handle = old_info.get("channel_handle", "")
+
+    url = req.channel_url.strip() if req.channel_url else f"https://www.youtube.com/{handle}"
     info = {"channel_handle": handle, "channel_url": url}
     with open(paths["channel_file"], "w", encoding="utf-8") as f:
         json.dump(info, f, indent=2)
+
+    # If handle changed, purge old scraped video mappings for non-owner
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
+    if not is_owner and old_handle and old_handle.lower() != handle.lower():
+        try:
+            if os.path.exists(paths["mappings_file"]):
+                with open(paths["mappings_file"], "r", encoding="utf-8") as f:
+                    mappings = json.load(f)
+                filtered = {k: v for k, v in mappings.items() if v.get("source") != "live_channel_sync"}
+                with open(paths["mappings_file"], "w", encoding="utf-8") as f:
+                    json.dump(filtered, f, indent=2)
+            if os.path.exists(paths["stats_cache"]):
+                os.remove(paths["stats_cache"])
+        except Exception as e:
+            logger.warning(f"Error purging old mappings on handle change: {e}")
+
     return {"success": True, "channel_handle": handle, "channel_url": url}
 
 
 @app.get("/api/settings/youtube-auth-url")
 def get_youtube_auth_url(user: dict = Depends(require_auth)):
     paths = get_user_paths(user)
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
     cs_file = paths["client_secret_file"]
-    if not os.path.exists(cs_file):
+    if not os.path.exists(cs_file) and is_owner:
         cs_file = CLIENT_SECRETS_FILE
     if not os.path.exists(cs_file):
         return {"has_client_secret": False, "auth_url": None}
@@ -1153,6 +1219,7 @@ def save_youtube_token(req: YouTubeTokenRequest, user: dict = Depends(require_au
 @app.post("/api/settings/youtube-oauth-callback")
 def handle_oauth_callback(req: OAuthCallbackRequest, user: dict = Depends(require_auth)):
     paths = get_user_paths(user)
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
     raw = req.code_or_url.strip()
     if not raw:
         raise HTTPException(status_code=400, detail="No code or redirect URL provided.")
@@ -1166,7 +1233,7 @@ def handle_oauth_callback(req: OAuthCallbackRequest, user: dict = Depends(requir
             code = urllib.parse.unquote(raw.split("code=")[1].split("&")[0])
 
     cs_file = paths["client_secret_file"]
-    if not os.path.exists(cs_file):
+    if not os.path.exists(cs_file) and is_owner:
         cs_file = CLIENT_SECRETS_FILE
     if not os.path.exists(cs_file):
         raise HTTPException(status_code=400, detail="Missing client_secret.json. Please upload client secret first.")
@@ -1258,7 +1325,7 @@ def get_usage(user: dict = Depends(require_auth)):
     has_token = os.path.exists(paths["token_file"]) or (is_owner and os.path.exists(TOKEN_FILE))
     has_ai_key = bool(get_gemini_key(paths["key_file"], allow_fallback=is_owner))
 
-    summary = get_usage_summary(paths["usage_file"])
+    summary = get_usage_summary(paths["usage_file"], allow_live_gcp=is_owner)
     summary["youtube"]["connected"] = has_token
     summary["gemini"]["has_key"] = has_ai_key
     return summary

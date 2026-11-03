@@ -149,7 +149,7 @@ def record_youtube_upload(tracker_file: Optional[str] = None):
     data["youtube_units"] = data.get("youtube_units", 0) + YOUTUBE_UPLOAD_COST
     save_tracker(data, tracker_file)
 
-def get_usage_summary(tracker_file: Optional[str] = None) -> Dict:
+def get_usage_summary(tracker_file: Optional[str] = None, allow_live_gcp: bool = True) -> Dict:
     data = load_tracker(tracker_file)
     sec_left = get_seconds_until_pt_midnight()
     hrs = sec_left // 3600
@@ -162,8 +162,8 @@ def get_usage_summary(tracker_file: Optional[str] = None) -> Dict:
     gem_rem = server_rem if server_rem is not None else max(0, gem_limit - gem_used)
     gem_pct = round((gem_used / gem_limit) * 100, 1) if gem_limit > 0 else 0.0
 
-    # Check for genuine live GCP Monitoring quota for YouTube
-    live_yt = fetch_live_gcp_youtube_quota()
+    # Check for genuine live GCP Monitoring quota for YouTube (Admin only)
+    live_yt = fetch_live_gcp_youtube_quota() if allow_live_gcp else None
     if live_yt:
         yt_summary = live_yt
     else:

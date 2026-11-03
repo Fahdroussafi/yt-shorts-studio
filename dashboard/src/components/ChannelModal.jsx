@@ -250,8 +250,8 @@ export default function ChannelModal({
           <button
             type="button"
             onClick={handleSaveChannel}
-            disabled={savingChannel || uploadingTokenFile || exchangingOauth}
-            className="py-2.5 px-5 rounded-xl bg-violet-600 hover:bg-violet-500 font-bold text-xs text-white transition flex items-center space-x-1.5 shadow-lg shadow-violet-600/20"
+            disabled={savingChannel || uploadingTokenFile || exchangingOauth || (!inputChannelHandle?.trim() && !inputYoutubeToken?.trim())}
+            className="py-2.5 px-5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-xs text-white transition flex items-center space-x-1.5 shadow-lg shadow-violet-600/20"
           >
             {savingChannel ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
             <span>Save Channel</span>

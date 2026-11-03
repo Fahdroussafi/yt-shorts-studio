@@ -33,6 +33,24 @@ export function AppProvider({ children }) {
     localStorage.removeItem('yt_studio_jwt');
     setAuthToken('');
     setCurrentUser(null);
+    setStats(null);
+    setVideos([]);
+    setUsage(null);
+    setAiSettings(null);
+    setChannelData({ channel_handle: '', channel_url: '', has_youtube_token: false, has_client_secret: false });
+    setInputChannelHandle('');
+    setInputYoutubeToken('');
+    setGeneratedIdea(null);
+    setStudioVideoId('short_01');
+    setStudioScript('');
+    setStudioTitle('');
+    setStudioDesc('');
+    setDispatchVideoId('');
+    setUploadResult(null);
+    setActiveTaskId(null);
+    setTaskStatus(null);
+    setIsProducing(false);
+    setPreviewVideo(null);
   };
 
   // Authenticated fetch wrapper
@@ -431,21 +449,33 @@ export function AppProvider({ children }) {
   };
 
   const handleSaveChannel = async () => {
+    const handleTrimmed = inputChannelHandle.trim();
+    const tokenTrimmed = inputYoutubeToken.trim();
+
+    if (!handleTrimmed && !tokenTrimmed) {
+      showToast("Please enter a YouTube handle or upload credentials.", "warning");
+      return;
+    }
+
     setSavingChannel(true);
     setTokenUploadError('');
     try {
-      if (inputChannelHandle.trim()) {
-        await authFetch('/api/settings/channel', {
+      if (handleTrimmed) {
+        const hRes = await authFetch('/api/settings/channel', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ channel_handle: inputChannelHandle.trim() })
+          body: JSON.stringify({ channel_handle: handleTrimmed })
         });
+        const hData = await hRes.json();
+        if (!hRes.ok) {
+          throw new Error(hData.detail || hData.message || "Failed to save channel handle.");
+        }
       }
-      if (inputYoutubeToken.trim()) {
+      if (tokenTrimmed) {
         const res = await authFetch('/api/settings/youtube-token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token_json: inputYoutubeToken.trim() })
+          body: JSON.stringify({ token_json: tokenTrimmed })
         });
         const data = await res.json();
         if (!res.ok) {

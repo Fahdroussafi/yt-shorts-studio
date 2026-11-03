@@ -32,7 +32,7 @@ export default function OverviewPage() {
   const [tablePage, setTablePage] = useState(1);
   const [tablePerPage, setTablePerPage] = useState(10);
 
-  const allTableVideos = stats?.videos || [];
+  const allTableVideos = (stats?.videos || []).filter(v => v.status !== 'DELETED_ON_YOUTUBE');
   const topBreakout = allTableVideos.reduce((max, v) => (v.views > (max?.views || 0) ? v : max), null);
   const topBreakoutViews = topBreakout?.views || 0;
   const topBreakoutLabel = topBreakout && topBreakout.views > 0 ? (topBreakout.short_id?.replace('_', ' ') || 'Short') : 'None yet';
