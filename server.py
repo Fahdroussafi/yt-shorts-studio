@@ -1693,8 +1693,9 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             mb = round(os.path.getsize(output_mp4) / (1024 * 1024), 2)
             PRODUCTION_TASKS[task_id]["status"] = "completed"
             PRODUCTION_TASKS[task_id]["progress"] = 100
-            PRODUCTION_TASKS[task_id]["output_file"] = output_mp4
-            PRODUCTION_TASKS[task_id]["log"].append(f"[SUCCESS] Real-motion short generated ({mb} MB): {output_mp4}")
+            file_name = os.path.basename(output_mp4)
+            PRODUCTION_TASKS[task_id]["output_file"] = file_name
+            PRODUCTION_TASKS[task_id]["log"].append(f"[SUCCESS] Real-motion short generated ({mb} MB): {file_name}")
 
         except Exception as e:
             PRODUCTION_TASKS[task_id]["status"] = "failed"
