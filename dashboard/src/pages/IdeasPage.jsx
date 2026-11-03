@@ -7,6 +7,7 @@ export default function IdeasPage() {
   const {
     niches,
     selectedNiche, setSelectedNiche,
+    seriesMode, setSeriesMode,
     ideaConcept, setIdeaConcept,
     generatingIdea, generatedIdea,
     handleGenerateIdea,
@@ -57,8 +58,38 @@ export default function IdeasPage() {
       <div className="p-5 rounded-2xl bg-[#12121a] border border-slate-800/80 space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800/60 pb-3">
           <div>
-            <h3 className="font-bold text-sm text-white">Generate Viral Script Structure</h3>
-            <p className="text-xs text-slate-400">Choose between custom concept drafting or 1-click curated viral hook discovery</p>
+            <div className="flex items-center space-x-2">
+              <h3 className="font-bold text-sm text-white">Generate Viral Script Structure</h3>
+              {/* Batch Story Series Toggle */}
+              <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-[11px] font-mono">
+                <button
+                  type="button"
+                  onClick={() => setSeriesMode(1)}
+                  className={`px-2 py-0.5 rounded-md transition ${seriesMode === 1 ? 'bg-violet-600 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
+                >
+                  Single
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSeriesMode(2)}
+                  className={`px-2 py-0.5 rounded-md transition ${seriesMode === 2 ? 'bg-cyan-600 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
+                  title="Generate a 2-Part Connected Story Series"
+                >
+                  2-Part Arc
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSeriesMode(3)}
+                  className={`px-2 py-0.5 rounded-md transition ${seriesMode === 3 ? 'bg-amber-600 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
+                  title="Generate a 3-Part Trilogy Series with Cliffhangers"
+                >
+                  3-Part Trilogy
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {seriesMode > 1 ? `Multi-short series active: drafts ${seriesMode} connected cliffhanger episodes in one click.` : 'Choose between custom concept drafting or 1-click curated viral hook discovery.'}
+            </p>
           </div>
           <button
             type="button"
@@ -131,7 +162,57 @@ export default function IdeasPage() {
           </div>
         )}
 
-        {generatedIdea && !generatingIdea && (
+        {/* Render Multi-Part Series or Single Idea */}
+        {generatedIdea?.is_series && !generatingIdea && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <span className="text-xs font-mono font-bold text-amber-400 uppercase">
+                Story Series Trilogy ({generatedIdea.episodes?.length} Connected Episodes)
+              </span>
+              <span className="text-[10px] text-slate-400 font-mono">
+                Click "Send to Studio" on any episode to load its full script & tags
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {(generatedIdea.episodes || []).map((ep, idx) => (
+                <div key={idx} className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3 flex flex-col justify-between">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800/60">
+                        Part {ep.series_part} of {ep.series_total}
+                      </span>
+                      <span className="text-[10px] font-mono text-violet-400 font-bold">{ep.next_id?.toUpperCase()}</span>
+                    </div>
+                    <h4 className="text-xs font-bold text-white line-clamp-2" title={ep.title}>{ep.title}</h4>
+                    <p className="text-[11px] text-slate-300 leading-relaxed bg-black/40 p-2.5 rounded-lg border border-slate-800/40 line-clamp-5">
+                      {ep.script}
+                    </p>
+                  </div>
+                  <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => sendIdeaToStudio(ep, navigate)}
+                      className="flex-1 py-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold text-center transition"
+                    >
+                      Load in Studio
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleQuickProduce(ep, navigate)}
+                      disabled={isProducing}
+                      className="py-1 px-2.5 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-[11px] flex items-center space-x-1"
+                    >
+                      <Zap className="w-3 h-3 fill-current" />
+                      <span>Produce</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {generatedIdea && !generatedIdea.is_series && !generatingIdea && (
           <div className="mt-4 p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2 flex-wrap gap-y-1">

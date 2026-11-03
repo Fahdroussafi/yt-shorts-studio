@@ -560,24 +560,30 @@ export function AppProvider({ children }) {
     }
   };
 
-  const handleGenerateIdea = async (overrideNiche = null, isSurprise = false) => {
+  const [seriesMode, setSeriesMode] = useState(1); // 1 = Single Short, 2 = 2-Part Series, 3 = 3-Part Series
+
+  const handleGenerateIdea = async (overrideNiche = null, isSurprise = false, countOverride = null) => {
     setGeneratingIdea(true);
     try {
       const targetNiche = overrideNiche || selectedNiche;
+      const count = countOverride !== null ? countOverride : seriesMode;
       const res = await authFetch('/api/ideas/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           niche: targetNiche,
           concept: isSurprise ? '' : ideaConcept,
-          surprise: isSurprise
+          surprise: isSurprise,
+          series_count: count
         })
       });
       if (res.ok) {
         const data = await res.json();
         setGeneratedIdea(data);
-        if (data.next_id) {
+        if (!data.is_series && data.next_id) {
           setStudioVideoId(data.next_id);
+        } else if (data.is_series && data.episodes?.length > 0) {
+          setStudioVideoId(data.episodes[0].next_id);
         }
       }
     } catch (e) {
@@ -777,6 +783,7 @@ export function AppProvider({ children }) {
     handleTokenFileUpload, handleStartGoogleAuth, handleCompleteOauthCode,
     handleSaveChannel, handleDisconnectYoutube,
     selectedNiche, setSelectedNiche,
+    seriesMode, setSeriesMode,
     ideaConcept, setIdeaConcept,
     generatingIdea, generatedIdea,
     handleGenerateIdea, autoGenerateAndFillStudio,
