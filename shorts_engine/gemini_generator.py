@@ -135,10 +135,12 @@ def build_prompt_and_schema(
 
     chosen_angle = concept.strip() if concept and concept.strip() else ""
     if not chosen_angle:
-        niche_concepts = CONCEPTS_DATABASE.get(niche, CONCEPTS_DATABASE["dark_psychology"])
-        used_angles = {entry.get("concept", "") for entry in history}
-        avail = [c for c in niche_concepts if c not in used_angles] or niche_concepts
-        chosen_angle = random.choice(avail)
+        angles_pool = profile.get("angles", [])
+        if not angles_pool:
+            angles_pool = [c.get("title") for c in CONCEPTS_DATABASE.get(niche, []) if isinstance(c, dict) and c.get("title")]
+        used_angles = {str(entry.get("concept", "")).lower() for entry in history}
+        avail = [a for a in angles_pool if isinstance(a, str) and a.lower() not in used_angles] or angles_pool
+        chosen_angle = random.choice(avail) if avail else "The Psychological Paradox"
 
     forbidden = ", ".join(profile.get("forbidden_tropes", []))
     recent_avoid = ", ".join(f'"{t}"' for t in recent_titles[-8:]) if recent_titles else "None"

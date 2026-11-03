@@ -585,9 +585,14 @@ export function AppProvider({ children }) {
         } else if (data.is_series && data.episodes?.length > 0) {
           setStudioVideoId(data.episodes[0].next_id);
         }
+      } else {
+        const errText = await res.text();
+        showToast(`Idea generation failed: ${res.statusText || 'Server Error'}`, "error");
+        console.error("Idea generation failed:", res.status, errText);
       }
     } catch (e) {
       console.error("Idea generation error:", e);
+      showToast("Network error during script generation.", "error");
     } finally {
       setGeneratingIdea(false);
       fetchUsage();

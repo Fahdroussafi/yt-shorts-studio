@@ -1578,25 +1578,32 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
     series_count = max(1, min(3, req.series_count or 1))
     if series_count > 1:
         base_num = int(re.search(r'\d+', next_id).group()) if re.search(r'\d+', next_id) else 1
-        series_topic = req.concept or "The 3 Forbidden Stages of Influence"
         profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
+        series_topic = req.concept.strip() if req.concept and req.concept.strip() else ""
+        if not series_topic:
+            angles_pool = profile.get("angles", [])
+            series_topic = random.choice(angles_pool) if angles_pool else "The 3 Forbidden Stages of Influence"
 
         from concurrent.futures import ThreadPoolExecutor
 
         def _generate_single_part(ep_idx):
             ep_id = f"short_{base_num + ep_idx - 1:02d}"
             ep_concept = f"{series_topic} (Part {ep_idx} of {series_count})"
-            ai_ep = generate_with_gemini_flash(
-                niche=niche,
-                concept=ep_concept,
-                user_key_file=paths["key_file"],
-                brand_name=brand_name,
-                brand_handle=brand_handle,
-                allow_fallback=is_owner,
-                user_tracker_file=paths["usage_file"],
-                surprise=False,
-                topic_history_file=paths.get("topic_history_file")
-            )
+            ai_ep = None
+            try:
+                ai_ep = generate_with_gemini_flash(
+                    niche=niche,
+                    concept=ep_concept,
+                    user_key_file=paths["key_file"],
+                    brand_name=brand_name,
+                    brand_handle=brand_handle,
+                    allow_fallback=is_owner,
+                    user_tracker_file=paths["usage_file"],
+                    surprise=False,
+                    topic_history_file=paths.get("topic_history_file")
+                )
+            except Exception as e:
+                print(f"Series episode {ep_idx} generation error: {e}")
             if ai_ep:
                 ep_script = ai_ep.get("script", "").strip()
                 if ep_idx < series_count:
@@ -1657,17 +1664,21 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
         }
 
     # 1. Primary AI Call (Groq LPU / OpenAI-DeepSeek Zero-Key Fallback)
-    ai_result = generate_with_gemini_flash(
-        niche=niche,
-        concept=req.concept,
-        user_key_file=paths["key_file"],
-        brand_name=brand_name,
-        brand_handle=brand_handle,
-        allow_fallback=is_owner,
-        user_tracker_file=paths["usage_file"],
-        surprise=bool(req.surprise),
-        topic_history_file=paths.get("topic_history_file")
-    )
+    ai_result = None
+    try:
+        ai_result = generate_with_gemini_flash(
+            niche=niche,
+            concept=req.concept,
+            user_key_file=paths["key_file"],
+            brand_name=brand_name,
+            brand_handle=brand_handle,
+            allow_fallback=is_owner,
+            user_tracker_file=paths["usage_file"],
+            surprise=bool(req.surprise),
+            topic_history_file=paths.get("topic_history_file")
+        )
+    except Exception as e:
+        print(f"AI script generation error: {e}")
     if ai_result:
         final_script = ai_result.get("script", "").strip()
         profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
