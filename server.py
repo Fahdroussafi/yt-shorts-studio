@@ -48,6 +48,11 @@ DEFAULT_BRAND_NAME = os.environ.get("DEFAULT_BRAND_NAME", "ShadowMind").strip()
 DEFAULT_CHANNEL_HANDLE = os.environ.get("DEFAULT_CHANNEL_HANDLE", "@TheShadowMindHQ-Hub").strip()
 DEFAULT_CHANNEL_URL = os.environ.get("DEFAULT_CHANNEL_URL", f"https://www.youtube.com/{DEFAULT_CHANNEL_HANDLE}").strip()
 DEFAULT_REDIRECT_URI = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost").strip()
+ADMIN_SEED_YT_IDS = {
+    "_fuT7t5z0xY", "8SaCT97oHsg", "kXEh9l_pggI", "FGlYu9azJzY",
+    "rKtARt8ly8s", "Fl0KjYnNK8c", "hb_Dc-lvWE4", "b2iNWCbHkVQ",
+    "_PdvMHyd5v8", "NIC6gw6P-UY", "nyU_NsIkodA", "wukiGKM0ajo"
+}
 
 def verify_jwt_token(token: str) -> dict:
     """Verifies HS256 JWT signature and expiration. Standard library only."""
@@ -647,6 +652,36 @@ def get_channel_stats(user: dict = Depends(require_auth)):
 
     mappings = get_user_video_mappings(paths["mappings_file"])
     stats_cache = load_user_stats_cache(paths["stats_cache_file"])
+
+    # Auto-heal / Purge pollution:
+    # If user is not the owner:
+    # 1. Purge any videos belonging to admin's seed YT IDs.
+    # 2. If user has NO channel connected, purge any entries that lack a physical local directory.
+    if not is_owner:
+        purged = False
+        clean_mappings = {}
+        for short_key, info in list(mappings.items()):
+            yt_id = info.get("yt_id", "")
+            dir_path = os.path.join(paths["videos_dir"], short_key)
+            has_local = os.path.exists(dir_path)
+
+            if yt_id in ADMIN_SEED_YT_IDS:
+                purged = True
+                stats_cache.pop(short_key, None)
+            elif not channel_handle and not has_local:
+                purged = True
+                stats_cache.pop(short_key, None)
+            else:
+                clean_mappings[short_key] = info
+
+        if purged:
+            mappings = clean_mappings
+            save_user_stats_cache(stats_cache, paths["stats_cache_file"])
+            try:
+                with open(paths["mappings_file"], "w", encoding="utf-8") as f:
+                    json.dump(mappings, f, indent=2)
+            except Exception:
+                pass
 
     audit_results = []
     total_views = 0
@@ -1694,59 +1729,6 @@ def upload_to_youtube(req: UploadRequest, user: dict = Depends(require_auth)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/schedule/recommendation")
-def get_schedule_recommendation(user: dict = Depends(require_auth)):
-    """Computes algorithmic US peak slots (18:00 - 21:00 UTC, default 19:00 UTC) avoiding release collisions."""
-    from datetime import datetime, timezone, timedelta
-    paths = get_user_paths(user)
-    mappings = get_user_video_mappings(paths["mappings_file"])
-
-    scheduled_dts = []
-    now = datetime.now(timezone.utc)
-    for m in mappings.values():
-        p_at = m.get("publish_at")
-        if p_at:
-            try:
-                dt = datetime.fromisoformat(p_at.replace("Z", "+00:00"))
-                if dt > now:
-                    scheduled_dts.append(dt)
-            except Exception:
-                pass
-
-    slots = []
-    candidate_date = now.date()
-    # If today is already past 17:30 UTC, start candidate slots from tomorrow
-    if now.hour > 17 or (now.hour == 17 and now.minute >= 30):
-        candidate_date = candidate_date + timedelta(days=1)
-
-    for i in range(14):
-        slot_dt = datetime(candidate_date.year, candidate_date.month, candidate_date.day, 19, 0, 0, tzinfo=timezone.utc)
-        # Collision if another video is within 18 hours of this slot
-        collision = any(abs((slot_dt - s).total_seconds()) < 18 * 3600 for s in scheduled_dts)
-
-        is_today = slot_dt.date() == now.date()
-        is_tomorrow = slot_dt.date() == (now + timedelta(days=1)).date()
-
-        day_label = "Today" if is_today else ("Tomorrow" if is_tomorrow else slot_dt.strftime("%a %b %d"))
-        slots.append({
-            "iso": slot_dt.strftime("%Y-%m-%dT%H:%M:00.000Z"),
-            "input_val": slot_dt.strftime("%Y-%m-%dT19:00"),
-            "display": f"{day_label} 19:00 UTC (US Peak)",
-            "available": not collision,
-            "days_away": (slot_dt.date() - now.date()).days
-        })
-        candidate_date = candidate_date + timedelta(days=1)
-
-    next_best = next((s for s in slots if s["available"]), slots[0] if slots else None)
-
-    return {
-        "recommended_slot": next_best,
-        "available_slots": [s for s in slots if s["available"]][:4],
-        "active_scheduled_count": len(scheduled_dts),
-        "rule": "Target US peak attention (18:00–21:00 UTC). Space uploads at least 20 hours apart for algorithm test waves."
-    }
 
 
 # Mount React static files if built

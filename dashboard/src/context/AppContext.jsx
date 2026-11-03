@@ -126,7 +126,6 @@ export function AppProvider({ children }) {
   const [dispatchVideoId, setDispatchVideoId] = useState('');
   const [dispatchMode, setDispatchMode] = useState('public');
   const [dispatchTime, setDispatchTime] = useState('');
-  const [scheduleRec, setScheduleRec] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
 
@@ -177,7 +176,6 @@ export function AppProvider({ children }) {
     fetchAiSettings();
     fetchChannelSettings();
     fetchUsage();
-    fetchScheduleRec();
   }, [authToken]);
 
   // Background Telemetry Sync every 45s
@@ -263,21 +261,6 @@ export function AppProvider({ children }) {
       console.error("Usage fetch error:", e);
     } finally {
       setTimeout(() => setLoadingUsage(false), 500);
-    }
-  };
-
-  const fetchScheduleRec = async () => {
-    try {
-      const res = await authFetch('/api/schedule/recommendation');
-      if (res.ok) {
-        const data = await res.json();
-        setScheduleRec(data);
-        if (data.recommended_slot && !dispatchTime) {
-          setDispatchTime(data.recommended_slot.input_val);
-        }
-      }
-    } catch (e) {
-      console.error("Schedule recommendation fetch error:", e);
     }
   };
 
@@ -776,7 +759,6 @@ export function AppProvider({ children }) {
     videos, setVideos, loadingVideos, fetchVideos,
     usage, loadingUsage, fetchUsage,
     niches, fetchNiches,
-    scheduleRec, fetchScheduleRec,
     previewVideo, setPreviewVideo,
     copiedId, copyMetadata,
     handleDeleteVideo,

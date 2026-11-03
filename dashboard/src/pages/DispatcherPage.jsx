@@ -8,7 +8,6 @@ export default function DispatcherPage() {
     dispatchVideoId, setDispatchVideoId,
     dispatchMode, setDispatchMode,
     dispatchTime, setDispatchTime,
-    scheduleRec, fetchScheduleRec,
     channelData, setShowChannelModal,
     uploading, uploadResult, handleUpload
   } = useApp();
