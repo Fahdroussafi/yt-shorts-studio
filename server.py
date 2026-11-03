@@ -113,7 +113,13 @@ DASHBOARD_DIST = os.path.join(BASE_DIR, "dashboard", "dist")
 sys.path.append(TOOLS_DIR)
 sys.path.append(ENGINE_DIR)
 
-app = FastAPI(title="ShadowMind YouTube Shorts Studio API", version="1.0.0")
+app = FastAPI(
+    title="ShadowMind YouTube Shorts Studio API",
+    version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -1258,9 +1264,10 @@ def delete_ai_settings(user: dict = Depends(require_auth)):
 @app.get("/api/settings/channel")
 def get_channel_settings(user: dict = Depends(require_auth)):
     paths = get_user_paths(user)
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
     info = get_user_channel_info(paths["channel_file"])
     has_token = os.path.exists(paths["token_file"])
-    has_cs = os.path.exists(paths["client_secret_file"]) or os.path.exists(CLIENT_SECRETS_FILE)
+    has_cs = os.path.exists(paths["client_secret_file"]) or (is_owner and os.path.exists(CLIENT_SECRETS_FILE))
     return {
         "channel_handle": info.get("channel_handle", ""),
         "channel_url": info.get("channel_url", ""),
@@ -2025,8 +2032,9 @@ if os.path.exists(DASHBOARD_DIST):
 
     @app.get("/{full_path:path}")
     def serve_react_spa(full_path: str):
-        file_path = os.path.join(DASHBOARD_DIST, full_path)
-        if full_path and os.path.exists(file_path):
+        dist_real = os.path.realpath(DASHBOARD_DIST)
+        file_path = os.path.realpath(os.path.join(DASHBOARD_DIST, full_path))
+        if full_path and file_path.startswith(dist_real + os.sep) and os.path.isfile(file_path):
             return FileResponse(file_path)
         return FileResponse(
             os.path.join(DASHBOARD_DIST, "index.html"),
@@ -2036,6 +2044,6 @@ if os.path.exists(DASHBOARD_DIST):
 if __name__ == "__main__":
     import uvicorn
     server_port = int(os.environ.get("PORT", "8050"))
-    server_host = os.environ.get("HOST", "0.0.0.0")
+    server_host = os.environ.get("HOST", "127.0.0.1")
     enable_reload = os.environ.get("DEV_RELOAD", "false").lower() == "true"
     uvicorn.run("server:app", host=server_host, port=server_port, app_dir=BASE_DIR, reload=enable_reload)

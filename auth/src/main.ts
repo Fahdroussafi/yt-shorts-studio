@@ -15,7 +15,7 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
 
   const port = process.env.AUTH_PORT ? parseInt(process.env.AUTH_PORT, 10) : 8051;
-  await app.listen(port, '0.0.0.0');
+  await app.listen(port, '127.0.0.1');
 
   logger.log(`=======================================================`);
   logger.log(`[*] YouTube Shorts Studio NestJS Auth Service Active`);
