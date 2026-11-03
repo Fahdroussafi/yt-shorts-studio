@@ -229,8 +229,8 @@ def get_user_paths(user: dict) -> dict:
 
             root_token = os.path.join(BASE_DIR, "token.json")
             user_token = os.path.join(u_dir, "token.json")
-            if not os.path.exists(user_token) and os.path.exists(root_token):
-                shutil.copy2(root_token, user_token)
+            # Only copy on initial claim if user directory was just created and user_token doesn't exist
+            # Do NOT resurrect if user explicitly deleted/disconnected token
 
             root_cs = os.path.join(BASE_DIR, "client_secret.json")
             user_cs = os.path.join(u_dir, "client_secret.json")
@@ -1190,10 +1190,9 @@ def delete_ai_settings(user: dict = Depends(require_auth)):
 @app.get("/api/settings/channel")
 def get_channel_settings(user: dict = Depends(require_auth)):
     paths = get_user_paths(user)
-    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
     info = get_user_channel_info(paths["channel_file"])
-    has_token = os.path.exists(paths["token_file"]) or (is_owner and os.path.exists(TOKEN_FILE))
-    has_cs = os.path.exists(paths["client_secret_file"]) or (is_owner and os.path.exists(CLIENT_SECRETS_FILE))
+    has_token = os.path.exists(paths["token_file"])
+    has_cs = os.path.exists(paths["client_secret_file"]) or os.path.exists(CLIENT_SECRETS_FILE)
     return {
         "channel_handle": info.get("channel_handle", ""),
         "channel_url": info.get("channel_url", ""),
@@ -1432,7 +1431,17 @@ def handle_oauth_callback(req: OAuthCallbackRequest, user: dict = Depends(requir
 def disconnect_youtube(user: dict = Depends(require_auth)):
     paths = get_user_paths(user)
     if os.path.exists(paths["token_file"]):
-        os.remove(paths["token_file"])
+        try:
+            os.remove(paths["token_file"])
+        except Exception:
+            pass
+    # If legacy admin, also remove root fallback token so it never resurrects
+    if is_legacy_owner(paths["user_id"], user.get("email")):
+        if os.path.exists(TOKEN_FILE):
+            try:
+                os.remove(TOKEN_FILE)
+            except Exception:
+                pass
     return {"success": True, "message": "YouTube channel disconnected."}
 
 
@@ -1444,7 +1453,7 @@ def get_usage(user: dict = Depends(require_auth)):
     from gemini_generator import get_gemini_key
 
     is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
-    has_token = os.path.exists(paths["token_file"]) or (is_owner and os.path.exists(TOKEN_FILE))
+    has_token = os.path.exists(paths["token_file"])
     has_ai_key = bool(get_gemini_key(paths["key_file"], allow_fallback=is_owner))
 
     summary = get_usage_summary(paths["usage_file"], allow_live_gcp=is_owner)
