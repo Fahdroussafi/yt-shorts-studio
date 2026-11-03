@@ -642,11 +642,84 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
     from datetime import datetime, timezone
     now_utc = datetime.now(timezone.utc)
 
-    # 1. Update existing mappings with fresh scrape data
+    # 0. If user has OAuth token with youtube.readonly, query official YouTube API for exact status, publishAt, and statistics
+    oauth_video_data = {}
+    token_file = paths.get("token_file")
+    if token_file and os.path.exists(token_file):
+        try:
+            with open(token_file, "r", encoding="utf-8") as tf:
+                tdata = json.load(tf)
+            scopes = tdata.get("scopes", [])
+            if any("readonly" in s or "youtube.force-ssl" in s or s.endswith("/youtube") for s in scopes):
+                all_yt_ids = [info.get("yt_id") for info in mappings.values() if info.get("yt_id")]
+                for vid in discovered_live.keys():
+                    if vid not in all_yt_ids:
+                        all_yt_ids.append(vid)
+                if all_yt_ids:
+                    from google.oauth2.credentials import Credentials
+                    from google.auth.transport.requests import Request as GoogleAuthRequest
+                    from googleapiclient.discovery import build
+                    creds = Credentials.from_authorized_user_info(tdata)
+                    if creds.expired and creds.refresh_token:
+                        creds.refresh(GoogleAuthRequest())
+                        with open(token_file, "w", encoding="utf-8") as tf_out:
+                            tf_out.write(creds.to_json())
+                    yt_service = build("youtube", "v3", credentials=creds)
+                    for i in range(0, len(all_yt_ids), 50):
+                        batch_ids = all_yt_ids[i:i+50]
+                        resp = yt_service.videos().list(
+                            part="status,statistics,snippet",
+                            id=",".join(batch_ids)
+                        ).execute()
+                        for v_item in resp.get("items", []):
+                            oauth_video_data[v_item["id"]] = v_item
+        except Exception as e:
+            print(f"[Warning] OAuth YouTube API sync error: {e}")
+
+    # 1. Update existing mappings with fresh scrape data & OAuth API data
     for short_key, info in list(mappings.items()):
         yt_id = info.get("yt_id")
         if not yt_id:
             continue
+
+        # Sync real-time schedule / status / exact views from YouTube Studio API if available
+        if yt_id in oauth_video_data:
+            v_api = oauth_video_data[yt_id]
+            v_status = v_api.get("status", {})
+            v_stats = v_api.get("statistics", {})
+            v_snip = v_api.get("snippet", {})
+            privacy = v_status.get("privacyStatus", "")
+            pub_at = v_status.get("publishAt")
+
+            if pub_at:
+                # Normalize ISO format
+                info["publish_at"] = pub_at
+                try:
+                    dt_pub = datetime.fromisoformat(pub_at.replace("Z", "+00:00"))
+                    if dt_pub > now_utc and privacy == "private":
+                        info["default_status"] = "SCHEDULED"
+                except Exception:
+                    pass
+            elif privacy == "public":
+                info["default_status"] = "LIVE"
+                if v_snip.get("publishedAt") and not info.get("publish_at"):
+                    info["publish_at"] = v_snip["publishedAt"]
+
+            if "viewCount" in v_stats:
+                exact_v = int(v_stats["viewCount"])
+                exact_l = str(v_stats.get("likeCount", stats_cache.get(short_key, {}).get("likes", "0")))
+                api_title = v_snip.get("title") or stats_cache.get(short_key, {}).get("title", f"Short {yt_id}")
+                if yt_id in discovered_live:
+                    discovered_live[yt_id]["views"] = exact_v
+                    discovered_live[yt_id]["views_display"] = f"{exact_v:,} views"
+                    discovered_live[yt_id]["title"] = api_title
+                stats_cache[short_key] = {
+                    "views": exact_v,
+                    "views_display": f"{exact_v:,} views",
+                    "title": api_title,
+                    "likes": exact_l,
+                    "last_synced": now
+                }
 
         if yt_id in discovered_live:
             item = discovered_live[yt_id]
@@ -659,6 +732,14 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
                 "last_synced": now
             }
         else:
+            # If OAuth API responded and video was NOT in oauth_video_data (when oauth_video_data succeeded), it was deleted on YouTube
+            if oauth_video_data and yt_id not in oauth_video_data:
+                info["default_status"] = "DELETED_ON_YOUTUBE"
+                if short_key in stats_cache:
+                    stats_cache[short_key]["deleted"] = True
+                    stats_cache[short_key]["views"] = 0
+                continue
+
             # Check if future scheduled
             is_future_scheduled = False
             if info.get("publish_at"):
@@ -1420,6 +1501,15 @@ def handle_oauth_callback(req: OAuthCallbackRequest, user: dict = Depends(requir
 
     with open(paths["token_file"], "w", encoding="utf-8") as f:
         json.dump(token_data, f, indent=2)
+
+    # Immediately force sync so scheduled dates and stats update right away
+    try:
+        ch_info = get_user_channel_info(paths["channel_file"])
+        ch_handle = ch_info.get("channel_handle", "")
+        if ch_handle:
+            sync_channel_live_feed(paths, ch_handle, force=True, is_owner=is_owner)
+    except Exception:
+        pass
 
     return {
         "success": True,
