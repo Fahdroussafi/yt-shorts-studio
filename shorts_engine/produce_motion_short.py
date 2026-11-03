@@ -84,8 +84,56 @@ def record_clip_usage(clip_history_file: Optional[str], clip_urls: List[str]):
     except Exception as e:
         print(f"Warning: could not save clip history: {e}")
 
+# Color Grading Film LUT Looks (Procedural FFmpeg filter chains)
+COLOR_LOOKS = {
+    "noir_contrast": {
+        "name": "Dark Noir High-Contrast",
+        "filter": "eq=contrast=1.18:brightness=-0.02:saturation=0.78,unsharp=3:3:0.6:3:3:0.0"
+    },
+    "cinematic_teal_orange": {
+        "name": "Teal & Orange Cinema",
+        "filter": "colorbalance=rs=-0.08:gs=0.02:bs=0.12:rh=0.10:gh=0.03:bh=-0.08,eq=contrast=1.12:saturation=1.15"
+    },
+    "cold_thriller": {
+        "name": "Cold Thriller Shadow",
+        "filter": "colorbalance=rs=-0.1:gs=-0.02:bs=0.15,eq=contrast=1.15:saturation=0.85,noise=alls=4:allf=t+u"
+    },
+    "warm_vintage": {
+        "name": "Warm Golden Mystery",
+        "filter": "colorbalance=rs=0.10:gs=0.04:bs=-0.08:rh=0.12:gh=0.06:bh=-0.05,eq=contrast=1.08:saturation=1.05,vignette=PI/4.5"
+    },
+    "crisp_hdr": {
+        "name": "Crisp 4K Pop",
+        "filter": "eq=contrast=1.10:saturation=1.20,unsharp=5:5:0.8:5:5:0.0"
+    }
+}
+
+# Ambient Procedural Audio Bed Presets
+AUDIO_BEDS = {
+    "deep_heartbeat": {
+        "name": "Deep Sub-Bass Heartbeat",
+        "filter": "anoisesrc=d=60:c=brown:r=44100:a=0.04,lowpass=f=95,tremolo=f=1.2:d=0.7",
+        "weight": 0.14
+    },
+    "dark_drone": {
+        "name": "Dark Ambient Drone",
+        "filter": "anoisesrc=d=60:c=brown:r=44100:a=0.05,lowpass=f=120",
+        "weight": 0.13
+    },
+    "subtle_tension": {
+        "name": "Subtle High-Tension Rumble",
+        "filter": "anoisesrc=d=60:c=pink:r=44100:a=0.03,lowpass=f=140",
+        "weight": 0.12
+    },
+    "clock_tick": {
+        "name": "Psychological Clockwork Pulse",
+        "filter": "anoisesrc=d=60:c=pink:r=44100:a=0.035,lowpass=f=160,tremolo=f=2.0:d=0.9",
+        "weight": 0.15
+    }
+}
+
 def harvest_candidates_for_query(query: str) -> List[str]:
-    """Scrapes Mixkit (pages 1-2), Coverr, and Pexels (if API key present) for MP4 links."""
+    """Scrapes Mixkit (pages 1-5), Coverr, Pixabay (if key or public), and Pexels for HD MP4 links."""
     q_clean = query.strip().lower().replace(" ", "-")
     if not q_clean:
         return []
@@ -98,28 +146,44 @@ def harvest_candidates_for_query(query: str) -> List[str]:
 
     results: List[str] = []
 
-    # 1. Pexels API (Optional BYOK)
+    # 1. Pexels Video API (Free BYOK or env)
     pexels_key = os.environ.get("PEXELS_API_KEY")
     if pexels_key:
         try:
-            pex_url = f"https://api.pexels.com/videos/search?query={q_clean}&orientation=portrait&per_page=12"
+            pex_url = f"https://api.pexels.com/videos/search?query={q_clean}&orientation=portrait&per_page=15"
             pr = requests.get(pex_url, headers={"Authorization": pexels_key}, timeout=8)
             if pr.status_code == 200:
                 pdata = pr.json()
                 for v in pdata.get("videos", []):
                     files = v.get("video_files", [])
-                    # Pick 720p or HD portrait file
                     best = next((f["link"] for f in files if f.get("height", 0) >= 720 and f.get("link")), None)
-                    if best:
+                    if best and best not in results:
                         results.append(best)
         except Exception as e:
             print(f"Pexels fetch note: {e}")
 
-    # 2. Mixkit Pages 1 & 2
-    for page in [1, 2]:
+    # 2. Pixabay Video API (Free BYOK or env)
+    pixabay_key = os.environ.get("PIXABAY_API_KEY")
+    if pixabay_key:
+        try:
+            pix_url = f"https://pixabay.com/api/videos/?key={pixabay_key}&q={urllib.parse.quote_plus(query)}&video_type=film&per_page=15"
+            pr = requests.get(pix_url, timeout=8)
+            if pr.status_code == 200:
+                pdata = pr.json()
+                for hit in pdata.get("hits", []):
+                    vids = hit.get("videos", {})
+                    # Prefer medium or large vertical/HD
+                    cand = vids.get("medium", {}).get("url") or vids.get("large", {}).get("url") or vids.get("small", {}).get("url")
+                    if cand and cand not in results:
+                        results.append(cand)
+        except Exception as e:
+            print(f"Pixabay fetch note: {e}")
+
+    # 3. Mixkit Pages 1 to 5 (Extended depth)
+    for page in range(1, 6):
         try:
             page_url = f"https://mixkit.co/free-stock-video/{q_clean}/" if page == 1 else f"https://mixkit.co/free-stock-video/{q_clean}/?page={page}"
-            r = requests.get(page_url, headers=HEADERS, timeout=10)
+            r = requests.get(page_url, headers=HEADERS, timeout=8)
             if r.status_code == 200:
                 found = re.findall(r'https://assets\.mixkit\.co/videos/\d+/\d+-(?:1080|720|360)\.mp4', r.text)
                 for f in found:
@@ -128,6 +192,18 @@ def harvest_candidates_for_query(query: str) -> List[str]:
                         results.append(hd)
         except Exception:
             pass
+
+    # 4. Coverr Public Scraping
+    try:
+        c_url = f"https://coverr.co/s?q={urllib.parse.quote_plus(query)}"
+        r = requests.get(c_url, headers=HEADERS, timeout=8)
+        if r.status_code == 200:
+            found_c = re.findall(r'https://[^\s"]+?\.mp4', r.text)
+            for fc in found_c:
+                if "coverr" in fc and fc not in results:
+                    results.append(fc)
+    except Exception:
+        pass
 
     _QUERY_CACHE[q_clean] = (now, results)
     return results
@@ -236,8 +312,31 @@ def download_clip_with_smart_fallback(
 
     raise RuntimeError(f"Failed to download a valid clip for '{query}' across available candidates.")
 
-def render_motion_video(clip_paths: list, audio_path: str, ass_path: str, output_mp4: str, duration: float):
-    print(f"[4/5] Dynamic multi-cut rendering {len(clip_paths)} clips ({duration:.2f}s total, ~{duration/len(clip_paths):.1f}s per cut)...")
+def render_motion_video(
+    clip_paths: list,
+    audio_path: str,
+    ass_path: str,
+    output_mp4: str,
+    duration: float,
+    color_look: Optional[str] = None,
+    audio_bed: Optional[str] = None
+):
+    import random
+    # Select or randomly pick color look & audio bed for complete visual/auditory distinctiveness
+    if not color_look or color_look not in COLOR_LOOKS:
+        c_key = random.choice(list(COLOR_LOOKS.keys()))
+    else:
+        c_key = color_look
+
+    if not audio_bed or audio_bed not in AUDIO_BEDS:
+        a_key = random.choice(list(AUDIO_BEDS.keys()))
+    else:
+        a_key = audio_bed
+
+    color_cfg = COLOR_LOOKS[c_key]
+    audio_cfg = AUDIO_BEDS[a_key]
+
+    print(f"[4/5] Multi-cut render ({len(clip_paths)} cuts, {duration:.2f}s) [Color: {color_cfg['name']} | Soundscape: {audio_cfg['name']}]...")
 
     per_clip = duration / len(clip_paths)
     inputs = []
@@ -268,22 +367,26 @@ def render_motion_video(clip_paths: list, audio_path: str, ass_path: str, output
     concat_ins = "".join(f"[v{i}]" for i in range(len(clip_paths)))
     concat_filter = f"{concat_ins}concat=n={len(clip_paths)}:v=1:a=0[vbase]"
 
-    clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
-    subtitle_filter = f"[vbase]ass='{clean_ass}'[vfinal]"
+    # Apply Procedural Color Grade Look
+    grade_filter = f"[vbase]{color_cfg['filter']}[vgraded]"
 
-    # Audio mix with subtle cinematic low-frequency tension rumble
+    clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+    subtitle_filter = f"[vgraded]ass='{clean_ass}'[vfinal]"
+
+    # Audio mix with procedural tension bed
     audio_input_idx = len(clip_paths)
     synth_input_idx = len(clip_paths) + 1
-    audio_filter = f"[{audio_input_idx}:a][{synth_input_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.15[afinal]"
+    bed_weight = audio_cfg.get("weight", 0.14)
+    audio_filter = f"[{audio_input_idx}:a][{synth_input_idx}:a]amix=inputs=2:duration=first:weights=1.0 {bed_weight}[afinal]"
 
-    full_filter = ";".join(filter_parts) + ";" + concat_filter + ";" + subtitle_filter + ";" + audio_filter
+    full_filter = ";".join(filter_parts) + ";" + concat_filter + ";" + grade_filter + ";" + subtitle_filter + ";" + audio_filter
 
     cmd = [
         FFMPEG, "-y",
         *inputs,
         "-i", audio_path,
         "-f", "lavfi", "-t", f"{duration:.2f}",
-        "-i", "anoisesrc=d=60:c=brown:r=44100:a=0.045,lowpass=f=110",
+        "-i", audio_cfg["filter"],
         "-filter_complex", full_filter,
         "-map", "[vfinal]",
         "-map", "[afinal]",

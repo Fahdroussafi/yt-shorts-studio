@@ -278,7 +278,15 @@ Respond ONLY with valid JSON using this exact schema:
                                 parsed[key] = re.sub(r'(?i)@ShadowMind\b', brand_handle, parsed[key])
                                 parsed[key] = re.sub(r'(?i)\bShadowMind\b', brand_name, parsed[key])
 
-                    parsed["voice"] = profile.get("voice_recommended", "en-US-ChristopherNeural")
+                    # Select voice persona dynamically from pool for freshness
+                    voice_pool = [
+                        profile.get("voice_recommended", "en-US-ChristopherNeural"),
+                        "en-US-GuyNeural",
+                        "en-US-EricNeural",
+                        "en-GB-RyanNeural",
+                        "en-US-AndrewMultilingualNeural"
+                    ]
+                    parsed["voice"] = random.choice(voice_pool)
                     parsed["chosen_angle"] = chosen_angle
 
                     # Record in topic history

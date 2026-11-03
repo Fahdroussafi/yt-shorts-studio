@@ -62,12 +62,95 @@ def get_audio_duration(file_path: str) -> float:
     return 40.0
 
 
-def build_ass_subtitles(words, output_ass: str):
-    print("[2/5] Creating TikTok-style animated ASS subtitles...")
+# 5 High-Impact Caption Visual DNA Styles
+CAPTION_STYLES = {
+    "hormozi_gold": {
+        "name": "Hormozi Gold",
+        "font": "Arial Black",
+        "fontsize": 86,
+        "primary": "&H00FFFFFF",      # Base White
+        "active": "&H0000D7FF",       # Electric Gold/Yellow
+        "outline": "&H00000000",      # Pure Black
+        "back": "&H90000000",
+        "border_style": 1,
+        "outline_w": 8,
+        "shadow_w": 4,
+        "chunk_size": 3,
+        "anim": r"{\fscx110\fscy110\t(0,70,\fscx100\fscy100)}"
+    },
+    "crimson_alert": {
+        "name": "Crimson Alert",
+        "font": "Impact",
+        "fontsize": 92,
+        "primary": "&H00FFFFFF",
+        "active": "&H002A2AFF",       # Vivid Crimson Red
+        "outline": "&H00000000",
+        "back": "&HB0000000",
+        "border_style": 1,
+        "outline_w": 9,
+        "shadow_w": 5,
+        "chunk_size": 2,
+        "anim": r"{\fscx115\fscy115\t(0,60,\fscx100\fscy100)}"
+    },
+    "cyber_cyan": {
+        "name": "Cyber Cyan",
+        "font": "Trebuchet MS",
+        "fontsize": 84,
+        "primary": "&H00F0F0F0",
+        "active": "&H00FFFF00",       # Neon Cyan / Aqua
+        "outline": "&H001A0B2E",      # Deep Midnight
+        "back": "&H80000000",
+        "border_style": 1,
+        "outline_w": 7,
+        "shadow_w": 3,
+        "chunk_size": 3,
+        "anim": r"{\fscx108\fscy108\t(0,80,\fscx100\fscy100)}"
+    },
+    "emerald_matrix": {
+        "name": "Emerald Matrix",
+        "font": "Arial Black",
+        "fontsize": 86,
+        "primary": "&H00FFFFFF",
+        "active": "&H0081B910",       # Neon Emerald Green
+        "outline": "&H00000000",
+        "back": "&H90000000",
+        "border_style": 1,
+        "outline_w": 8,
+        "shadow_w": 4,
+        "chunk_size": 3,
+        "anim": r"{\fscx112\fscy112\t(0,65,\fscx100\fscy100)}"
+    },
+    "minimal_pill": {
+        "name": "Minimalist Pill",
+        "font": "Arial",
+        "fontsize": 80,
+        "primary": "&H00FFFFFF",
+        "active": "&H0000E5FF",       # Amber Glow
+        "outline": "&H00000000",
+        "back": "&HA0151515",
+        "border_style": 3,            # Opaque Pill Box
+        "outline_w": 6,
+        "shadow_w": 0,
+        "chunk_size": 2,
+        "anim": ""
+    }
+}
+
+def build_ass_subtitles(words, output_ass: str, style_name: Optional[str] = None):
+    """Builds dynamic animated subtitles using one of 5 visual DNA presets."""
+    import random
+    if not style_name or style_name not in CAPTION_STYLES:
+        style_key = random.choice(list(CAPTION_STYLES.keys()))
+    else:
+        style_key = style_name
+
+    cfg = CAPTION_STYLES[style_key]
+    print(f"[2/5] Creating viral subtitles [Preset: {cfg['name']}]...")
+
     phrases = []
-    CHUNK_SIZE = 3
-    for i in range(0, len(words), CHUNK_SIZE):
-        chunk = words[i:i + CHUNK_SIZE]
+    chunk_size = cfg.get("chunk_size", 3)
+    for i in range(0, len(words), chunk_size):
+        chunk = words[i:i + chunk_size]
         if not chunk:
             continue
         phrases.append({
@@ -75,8 +158,8 @@ def build_ass_subtitles(words, output_ass: str):
             "start": chunk[0]["start"],
             "end": chunk[-1]["end"] + 0.1
         })
-    
-    ass_header = """[Script Info]
+
+    ass_header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
 PlayResY: 1920
@@ -84,31 +167,36 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial Black,86,&H00FFFFFF,&H0000FFFF,&H00000000,&H90000000,-1,0,0,0,100,100,2,0,1,8,4,2,60,60,860,1
+Style: Default,{cfg['font']},{cfg['fontsize']},{cfg['primary']},&H0000FFFF,{cfg['outline']},{cfg['back']},-1,0,0,0,100,100,2,0,{cfg['border_style']},{cfg['outline_w']},{cfg['shadow_w']},2,60,60,860,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     events = []
+    pop_anim = cfg.get("anim", "")
+    active_color = cfg["active"]
+    primary_color = cfg["primary"]
+
     for p in phrases:
         for active_idx, w in enumerate(p["words"]):
             w_start = format_ass_time(w["start"])
             w_end = format_ass_time(w["end"])
-            
+
             formatted_words = []
             for idx, item in enumerate(p["words"]):
                 text = item["word"].upper()
                 if idx == active_idx:
-                    formatted_words.append(f"{{\\c&H00D7FF&}}{text}{{\\c&H00FFFFFF&}}")
+                    formatted_words.append(f"{{\\c{active_color}&}}{pop_anim}{text}{{\\c{primary_color}&}}")
                 else:
                     formatted_words.append(text)
-            
+
             line_text = " ".join(formatted_words)
             events.append(f"Dialogue: 0,{w_start},{w_end},Default,,0,0,0,,{line_text}")
 
     with open(output_ass, "w", encoding="utf-8") as f:
         f.write(ass_header + "\n".join(events))
-    print(f"Subtitles written: {len(events)} cues.")
+    print(f"Subtitles written: {len(events)} cues ({cfg['name']}).")
+    return style_key
 
 
 def download_images(prompts, out_dir: str):

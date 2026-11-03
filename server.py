@@ -389,6 +389,7 @@ class IdeaGenerateRequest(BaseModel):
     niche: str
     concept: Optional[str] = None
     surprise: Optional[bool] = False
+    series_count: Optional[int] = 1   # 1 for single, 2 or 3 for multi-part connected story arc
 
 
 class ChannelSettingsRequest(BaseModel):
@@ -1578,6 +1579,85 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
     brand_name, brand_handle = get_user_brand(paths, user)
     is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
 
+    # If series_count > 1, generate a multi-part story series
+    series_count = max(1, min(3, req.series_count or 1))
+    if series_count > 1:
+        episodes = []
+        base_num = int(re.search(r'\d+', next_id).group()) if re.search(r'\d+', next_id) else 1
+        series_topic = req.concept or "The 3 Forbidden Stages of Influence"
+
+        for ep_idx in range(1, series_count + 1):
+            ep_id = f"short_{base_num + ep_idx - 1:02d}"
+            ep_concept = f"{series_topic} (Part {ep_idx} of {series_count})"
+            ai_ep = generate_with_gemini_flash(
+                niche=niche,
+                concept=ep_concept,
+                user_key_file=paths["key_file"],
+                brand_name=brand_name,
+                brand_handle=brand_handle,
+                allow_fallback=is_owner,
+                user_tracker_file=paths["usage_file"],
+                surprise=False,
+                topic_history_file=paths.get("topic_history_file")
+            )
+            profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
+            if ai_ep:
+                ep_script = ai_ep.get("script", "").strip()
+                if ep_idx < series_count:
+                    cliffhanger = f" That was Part {ep_idx}. Watch Part {ep_idx + 1} pinned in comments."
+                    if f"part {ep_idx + 1}" not in ep_script.lower():
+                        ep_script = ep_script.rstrip(" .,!?:;-") + cliffhanger
+                else:
+                    outro_mandate = profile.get("outro_phrase", f"Follow {brand_name} for more.").format(brand_name=brand_name)
+                    if brand_name.lower() not in ep_script.lower():
+                        ep_script = ep_script.rstrip(" .,!?:;-") + f". {outro_mandate}"
+
+                episodes.append({
+                    "series_part": ep_idx,
+                    "series_total": series_count,
+                    "source": ai_ep.get("model_used", "gemini-3.5-flash-lite"),
+                    "next_id": ep_id,
+                    "niche": niche,
+                    "title": f"{ai_ep.get('title', series_topic).replace(' #shorts', '')} (Part {ep_idx}/{series_count}) #shorts",
+                    "script": ep_script,
+                    "keywords": ai_ep.get("keywords", profile.get("visual_bank", ["dark", "mystery"])[:8]),
+                    "description": ai_ep.get("description", ""),
+                    "pinned_comment": f"👉 Watch Part {ep_idx + 1 if ep_idx < series_count else 1} right here! Drop your thoughts below. 👇",
+                    "voice": ai_ep.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
+                    "chosen_angle": ep_concept,
+                    "generation_type": f"story_series_part_{ep_idx}"
+                })
+            else:
+                # Fallback to local
+                chosen = pick_concept_without_repeats(
+                    niche=niche,
+                    history_file=paths.get("topic_history_file"),
+                    brand_name=brand_name,
+                    brand_handle=brand_handle
+                )
+                ep_title = f"{chosen['title'].replace(' #shorts', '')} (Part {ep_idx}/{series_count}) #shorts"
+                episodes.append({
+                    "series_part": ep_idx,
+                    "series_total": series_count,
+                    "source": "local-generator",
+                    "next_id": ep_id,
+                    "niche": niche,
+                    "title": ep_title,
+                    "script": chosen["script"],
+                    "keywords": chosen["keywords"],
+                    "description": chosen["description"],
+                    "pinned_comment": f"Part {ep_idx} of {series_count}. Watch the next chapter pinned on channel!",
+                    "voice": chosen.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
+                    "chosen_angle": ep_concept,
+                    "generation_type": f"story_series_part_{ep_idx}"
+                })
+
+        return {
+            "is_series": True,
+            "series_count": len(episodes),
+            "episodes": episodes
+        }
+
     # 1. Try Gemini Flash AI first with user's key (fallback to system pre-configured key for admin only)
     ai_result = generate_with_gemini_flash(
         niche=niche,
@@ -1705,15 +1785,17 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             if brand_name.lower() not in clean_script.lower():
                 clean_script = clean_script.rstrip(" .,!?:;-") + f". Follow {brand_name} for more."
 
-            # 1. Voice
-            words = await generate_voice(clean_script, audio_file, voice=req.voice or "en-US-ChristopherNeural", brand_name=brand_name)
+            # 1. Voice with Micro-variation
+            voice_choice = req.voice or "en-US-ChristopherNeural"
+            words = await generate_voice(clean_script, audio_file, voice=voice_choice, brand_name=brand_name)
             dur = get_audio_duration(audio_file)
             PRODUCTION_TASKS[task_id]["progress"] = 30
-            PRODUCTION_TASKS[task_id]["log"].append(f"[2/5] Voice synthesized ({dur:.2f}s). Building ASS subtitles...")
+            PRODUCTION_TASKS[task_id]["log"].append(f"[2/5] Voice synthesized ({dur:.2f}s, {voice_choice}). Building viral ASS subtitles...")
 
-            # 2. Subtitles
-            build_ass_subtitles(words, ass_file)
+            # 2. Subtitles with Pop-In Animations & High-Contrast Colors
+            caption_style_used = build_ass_subtitles(words, ass_file)
             PRODUCTION_TASKS[task_id]["progress"] = 50
+            PRODUCTION_TASKS[task_id]["log"].append(f"[2/5] Dynamic subtitles baked [Style: {caption_style_used}].")
 
             # 3. Dynamic clip expansion & no-repeat selection
             niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
