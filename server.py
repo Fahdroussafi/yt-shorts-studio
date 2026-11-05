@@ -1231,7 +1231,7 @@ def get_ai_settings(user: dict = Depends(require_auth)):
         "has_key": bool(key),
         "is_custom_key": bool(user_custom_key),
         "masked_key": masked,
-        "model": "Groq LPU (14,400 Free RPD • 0.6s Speed) + Limitless Free OpenAI/DeepSeek Fallback",
+        "model": "Groq LPU (1,000 Free RPD • 0.6s Speed) + Limitless Free OpenAI/DeepSeek Fallback",
         "provider": "Groq LPU",
         "status": "Groq LPU Online (Custom Key)" if user_custom_key else ("Groq LPU Online (System Pre-Configured)" if system_key else "OpenAI / DeepSeek Free Mode Active")
     }

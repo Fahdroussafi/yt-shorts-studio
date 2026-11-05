@@ -236,12 +236,18 @@ def generate_with_groq_lpu(prompt: str, api_key: str, user_tracker_file: Optiona
                 try:
                     from usage_tracker import record_ai_request
                     server_rem = None
+                    server_limit = None
                     if "x-ratelimit-remaining-requests" in res.headers:
                         try:
                             server_rem = int(res.headers["x-ratelimit-remaining-requests"])
                         except Exception:
                             pass
-                    record_ai_request(server_remaining=server_rem, tracker_file=user_tracker_file)
+                    if "x-ratelimit-limit-requests" in res.headers:
+                        try:
+                            server_limit = int(res.headers["x-ratelimit-limit-requests"])
+                        except Exception:
+                            pass
+                    record_ai_request(server_remaining=server_rem, server_limit=server_limit, tracker_file=user_tracker_file)
                 except Exception:
                     pass
 

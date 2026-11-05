@@ -9,7 +9,7 @@ TRACKER_FILE = os.path.join(BASE_DIR, "usage_tracker.json")
 GCP_SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "gcp_service_account.json")
 
 # Official Groq & YouTube Quota Limits
-AI_DAILY_LIMIT = 14400      # Groq Cloud Free Tier RPD (Requests Per Day)
+AI_DAILY_LIMIT = 1000       # Groq Cloud Free Tier RPD (Requests Per Day for Qwen/Llama-3.3/GPT-OSS)
 AI_RPM_LIMIT = 30           # Requests Per Minute
 YOUTUBE_DAILY_LIMIT = 10000 # YouTube Data API v3 units/day (Google Cloud Project)
 YOUTUBE_UPLOAD_COST = 1600  # Cost per videos.insert (Max 6 uploads/day on 10k quota)
@@ -137,11 +137,13 @@ def save_tracker(data: Dict, tracker_file: Optional[str] = None):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
-def record_ai_request(server_remaining: Optional[int] = None, tracker_file: Optional[str] = None):
+def record_ai_request(server_remaining: Optional[int] = None, server_limit: Optional[int] = None, tracker_file: Optional[str] = None):
     data = load_tracker(tracker_file)
     data["ai_requests"] = data.get("ai_requests", data.get("gemini_requests", 0)) + 1
     if server_remaining is not None:
         data["server_reported_remaining"] = server_remaining
+    if server_limit is not None:
+        data["server_reported_limit"] = server_limit
     save_tracker(data, tracker_file)
 
 record_gemini_request = record_ai_request
@@ -158,7 +160,7 @@ def get_usage_summary(tracker_file: Optional[str] = None, allow_live_gcp: bool =
     mins = (sec_left % 3600) // 60
     countdown = f"{hrs:02d}h {mins:02d}m"
 
-    ai_limit = data.get("ai_limit", data.get("gemini_limit", AI_DAILY_LIMIT))
+    ai_limit = data.get("server_reported_limit") or data.get("ai_limit", data.get("gemini_limit", AI_DAILY_LIMIT))
     ai_used = data.get("ai_requests", data.get("gemini_requests", 0))
     server_rem = data.get("server_reported_remaining")
     ai_rem = server_rem if server_rem is not None else max(0, ai_limit - ai_used)

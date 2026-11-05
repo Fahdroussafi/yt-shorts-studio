@@ -25,7 +25,7 @@ export default function AiModal({
             </div>
             <div>
               <h3 className="font-extrabold text-white text-base">Groq Cloud LPU Engine</h3>
-              <p className="text-[11px] text-orange-400 font-mono">0.6s Instant Speed • 14,400 Free RPD • Limitless Zero-Key Fallback</p>
+              <p className="text-[11px] text-orange-400 font-mono">0.6s Instant Speed • 1,000 Free RPD • Limitless Zero-Key Fallback</p>
             </div>
           </div>
           <button 
@@ -42,7 +42,7 @@ export default function AiModal({
             <span>Dual-Engine AI Architecture</span>
           </div>
           <ul className="space-y-1 text-slate-400 list-disc list-inside text-[11px]">
-            <li><strong className="text-orange-300">Primary (Groq LPU)</strong>: Pre-configured system key active with ~14,400 free requests/day. Generates 4-act scripts in under 1 second.</li>
+            <li><strong className="text-orange-300">Primary (Groq LPU)</strong>: Pre-configured system key active with ~1,000 free requests/day. Generates 4-act scripts in under 1 second.</li>
             <li><strong className="text-cyan-300">Auto-Fallback (OpenAI / DeepSeek)</strong>: 100% Free limitless engine automatically kicks in if limits are ever reached. Zero setup needed.</li>
           </ul>
         </div>

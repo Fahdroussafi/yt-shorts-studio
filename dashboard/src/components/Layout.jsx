@@ -246,7 +246,7 @@ export default function Layout() {
               </div>
               <div className="flex justify-between text-[10px] text-slate-500 font-mono">
                 <span>Used: {usage ? usage.gemini.used.toLocaleString() : 0}</span>
-                <span>Cap: {usage?.gemini?.limit ? `${usage.gemini.limit.toLocaleString()}/day` : '14,400/day'}</span>
+                <span>Cap: {usage?.gemini?.limit ? `${usage.gemini.limit.toLocaleString()}/day` : '1,000/day'}</span>
               </div>
             </div>
 
