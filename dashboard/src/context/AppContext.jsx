@@ -564,7 +564,7 @@ export function AppProvider({ children }) {
 
   const [seriesMode, setSeriesMode] = useState(1); // 1 = Single Short, 2 = 2-Part Series, 3 = 3-Part Series
 
-  const handleGenerateIdea = async (overrideNiche = null, isSurprise = false, countOverride = null, outlierId = null) => {
+  const handleGenerateIdea = async (overrideNiche = null, isSurprise = false, countOverride = null) => {
     setGeneratingIdea(true);
     try {
       const targetNiche = overrideNiche || selectedNiche;
@@ -576,8 +576,7 @@ export function AppProvider({ children }) {
           niche: targetNiche,
           concept: isSurprise ? '' : ideaConcept,
           surprise: isSurprise,
-          series_count: count,
-          outlier_id: outlierId
+          series_count: count
         })
       });
       if (res.ok) {

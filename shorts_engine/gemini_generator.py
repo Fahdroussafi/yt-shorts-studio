@@ -235,7 +235,8 @@ def clean_and_assemble_script(parsed: dict, brand_name: str, brand_handle: str, 
 
 def generate_with_groq_lpu(prompt: str, api_key: str, user_tracker_file: Optional[str] = None) -> Optional[dict]:
     """Generates viral script using Groq Cloud LPU in ~0.6 seconds."""
-    models = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "allam-2-7b"]
+    # Prioritize 120b & 27b high reasoning models. Avoid strict response_format on gpt-oss to prevent HTTP 400.
+    models = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"]
     for model_name in models:
         try:
             url = "https://api.groq.com/openai/v1/chat/completions"
@@ -245,11 +246,14 @@ def generate_with_groq_lpu(prompt: str, api_key: str, user_tracker_file: Optiona
                     {"role": "system", "content": "You are a professional YouTube Shorts scriptwriter. Output strictly valid JSON matching the user schema."},
                     {"role": "user", "content": prompt}
                 ],
-                "response_format": {"type": "json_object"},
                 "temperature": 0.68,
-                "max_tokens": 1000
+                "max_tokens": 1200
             }
-            res = requests.post(url, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json=payload, timeout=8)
+            # Only add response_format for models that natively support json_object without schema conflict
+            if "qwen" in model_name or "llama-3.3" in model_name:
+                payload["response_format"] = {"type": "json_object"}
+
+            res = requests.post(url, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json=payload, timeout=10)
             if res.status_code == 200:
                 try:
                     from usage_tracker import record_ai_request
@@ -259,9 +263,11 @@ def generate_with_groq_lpu(prompt: str, api_key: str, user_tracker_file: Optiona
 
                 data = res.json()
                 content = data["choices"][0]["message"]["content"]
+                # Strip reasoning think tags if present
+                clean_content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
                 # Match inner json if enclosed in tags or markdown
-                match = re.search(r'(\{[\s\S]*\})', content)
-                clean_json = match.group(1) if match else content
+                match = re.search(r'(\{[\s\S]*\})', clean_content)
+                clean_json = match.group(1) if match else clean_content
                 parsed = json.loads(clean_json)
                 parsed["model_used"] = f"groq-{model_name.split('/')[-1]}"
                 return parsed

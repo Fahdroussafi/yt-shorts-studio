@@ -398,7 +398,6 @@ class IdeaGenerateRequest(BaseModel):
     concept: Optional[str] = None
     surprise: Optional[bool] = False
     series_count: Optional[int] = 1   # 1 for single, 2 or 3 for multi-part connected story arc
-    outlier_id: Optional[str] = None  # Proven 1M+ viral outlier template ID
 
 
 class ChannelSettingsRequest(BaseModel):
@@ -1576,32 +1575,15 @@ def get_next_id(user: dict = Depends(require_auth)):
     return {"next_id": next_id}
 
 
-@app.get("/api/ideas/viral-outliers")
-def get_viral_outliers(user: dict = Depends(require_auth)):
-    """Returns curated 1M-15M+ proven viral outlier templates."""
-    from idea_bank import VIRAL_OUTLIERS_VAULT
-    return {"outliers": VIRAL_OUTLIERS_VAULT}
-
-
 @app.post("/api/ideas/generate")
 def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
     """Generates dynamic viral script structure, SEO metadata, and clip keywords."""
     paths = get_user_paths(user)
-    from idea_bank import NICHE_PROFILES, CONCEPTS_DATABASE, VIRAL_OUTLIERS_VAULT, get_next_short_id, pick_concept_without_repeats, record_topic_history
+    from idea_bank import NICHE_PROFILES, CONCEPTS_DATABASE, get_next_short_id, pick_concept_without_repeats, record_topic_history
     from gemini_generator import generate_with_gemini_flash
     from usage_tracker import record_gemini_request
 
-    outlier = None
-    if getattr(req, "outlier_id", None):
-        outlier = next((o for o in VIRAL_OUTLIERS_VAULT if o["id"] == req.outlier_id), None)
-        if outlier:
-            niche = outlier.get("category", "dark_psychology")
-            if not req.concept:
-                req.concept = f"{outlier.get('hook', outlier.get('title'))} - Concept: {outlier.get('concept', '')}"
-        else:
-            niche = req.niche
-    else:
-        niche = req.niche
+    niche = req.niche
 
     # If user selected Surprise Me, preserve their selected niche! Only pick random if explicitly empty or 'random'
     if not niche or niche == "random" or (niche not in NICHE_PROFILES and niche not in CONCEPTS_DATABASE):
@@ -1725,8 +1707,8 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
         if brand_name.lower() not in final_script.lower():
             final_script = final_script.rstrip(" .,!?:;-") + f". {outro_mandate}"
 
-        keywords_list = outlier["visual_keywords"] if outlier and outlier.get("visual_keywords") else ai_result.get("keywords", profile.get("visual_bank", ["dark", "mystery"])[:8])
-        search_tags_list = outlier["search_tags"] if outlier and outlier.get("search_tags") else ai_result.get("search_tags", ["psychology facts", "dark psychology", "human behavior"])
+        keywords_list = ai_result.get("keywords", profile.get("visual_bank", ["dark", "mystery"])[:8])
+        search_tags_list = ai_result.get("search_tags", ["psychology facts", "dark psychology", "human behavior"])
 
         return {
             "source": ai_result.get("model_used", "groq-lpu"),
@@ -1740,7 +1722,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
             "pinned_comment": ai_result.get("pinned_comment", "Drop your thoughts below. 👇"),
             "voice": ai_result.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
             "chosen_angle": ai_result.get("chosen_angle", req.concept or "Viral Psychology Hook"),
-            "generation_type": "viral_outlier_clone" if outlier else ("surprise_seed" if req.surprise else "custom_concept")
+            "generation_type": "surprise_seed" if req.surprise else "custom_concept"
         }
 
     # 2. Smooth fallback to rich local combinatorial generator (History-aware)
@@ -1751,11 +1733,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
         brand_handle=brand_handle
     )
 
-    if outlier:
-        chosen["title"] = outlier.get("title", f"{outlier.get('hook', 'Viral Psychology')} #shorts")
-        chosen["keywords"] = outlier.get("visual_keywords", chosen["keywords"])
-        chosen["search_tags"] = outlier.get("search_tags", ["survival facts", "psychology", "dark psychology"])
-    elif req.concept and req.concept.strip():
+    if req.concept and req.concept.strip():
         chosen["title"] = f"{req.concept.strip().title()} #shorts"
 
     profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
@@ -1773,7 +1751,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
         "pinned_comment": chosen["pinned_comment"],
         "voice": chosen.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
         "chosen_angle": req.concept or chosen.get("title", "Curated Niche Angle"),
-        "generation_type": "viral_outlier_clone" if outlier else ("surprise_seed" if req.surprise else "custom_concept")
+        "generation_type": "surprise_seed" if req.surprise else "custom_concept"
     }
 
 
