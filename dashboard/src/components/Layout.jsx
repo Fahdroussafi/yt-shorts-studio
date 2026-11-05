@@ -31,7 +31,7 @@ export default function Layout() {
     inputYoutubeToken, setInputYoutubeToken,
     savingChannel, handleTokenFileUpload, handleStartGoogleAuth,
     handleCompleteOauthCode, handleSaveChannel, handleDisconnectYoutube,
-    previewVideo, setPreviewVideo, authToken,
+    previewVideo, setPreviewVideo, authToken, authFetch,
     toasts, closeToast,
     isProducing, studioVideoId, taskStatus
   } = useApp();
@@ -234,18 +234,18 @@ export default function Layout() {
                   </button>
                 ) : (
                   <span className="font-mono font-bold text-orange-300">
-                    {usage ? `${usage.gemini.remaining.toLocaleString()} left` : '...'}
+                    {usage ? `${(usage.gemini?.remaining ?? 0).toLocaleString()} left` : '...'}
                   </span>
                 )}
               </div>
               <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
                 <div 
-                  style={{ width: `${usage?.gemini?.has_key === false ? 0 : Math.max(3, 100 - (usage?.gemini?.percent || 0))}%` }}
-                  className="h-full bg-gradient-to-r from-orange-500 to-amber-500 rounded-full"
+                  style={{ width: `${usage?.gemini?.has_key === false ? 0 : Math.max(3, Math.min(100, Math.round(((usage?.gemini?.remaining || 0) / (usage?.gemini?.limit || 1000)) * 100)))}%` }}
+                  className="h-full bg-gradient-to-r from-orange-500 to-amber-500 rounded-full transition-all duration-300"
                 ></div>
               </div>
               <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-                <span>Used: {usage ? usage.gemini.used.toLocaleString() : 0}</span>
+                <span>Used: {usage ? usage.gemini?.used ?? 0 : 0}</span>
                 <span>Cap: {usage?.gemini?.limit ? `${usage.gemini.limit.toLocaleString()}/day` : '1,000/day'}</span>
               </div>
             </div>
@@ -275,18 +275,18 @@ export default function Layout() {
                   </button>
                 ) : (
                   <span className="font-mono font-bold text-emerald-400 whitespace-nowrap shrink-0">
-                    {usage ? `${usage.youtube.uploads_remaining} uploads left` : '...'}
+                    {usage ? `${usage.youtube?.uploads_remaining ?? 6} of ${usage.youtube?.max_uploads || 6} uploads left` : '...'}
                   </span>
                 )}
               </div>
               <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
                 <div 
-                  style={{ width: `${usage?.youtube?.connected === false ? 0 : Math.max(3, 100 - (usage?.youtube?.percent || 0))}%` }}
-                  className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full"
+                  style={{ width: `${usage?.youtube?.connected === false ? 0 : Math.max(3, Math.min(100, Math.round(((usage?.youtube?.remaining_units || 0) / (usage?.youtube?.limit || 10000)) * 100)))}%` }}
+                  className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-300"
                 ></div>
               </div>
               <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-                <span>Used: {usage ? usage.youtube.units_used.toLocaleString() : 0} pts</span>
+                <span>Used: {usage ? (usage.youtube?.units_used ?? 0).toLocaleString() : 0} pts</span>
                 <span>Cap: {usage?.youtube?.limit ? `${usage.youtube.limit.toLocaleString()} pts` : '10,000 pts'}</span>
               </div>
             </div>
@@ -296,17 +296,35 @@ export default function Layout() {
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
                 <span>$0.00 Cost Stack</span>
               </span>
-              <button 
-                onClick={fetchUsage} 
-                disabled={loadingUsage}
-                className="hover:text-cyan-400 px-2 py-1 hover:bg-slate-800/80 rounded-lg transition flex items-center space-x-1 border border-transparent hover:border-slate-700/60" 
-                title="Sync Daily API Quota & AI Status"
-              >
-                <RefreshCw className={`w-3 h-3 ${loadingUsage ? 'animate-spin text-cyan-400' : 'text-slate-400'}`} />
-                <span className="text-[10px] font-mono text-slate-400">
-                  {loadingUsage ? 'Syncing...' : 'Sync'}
-                </span>
-              </button>
+              <div className="flex items-center space-x-1">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await authFetch('/api/usage/reset', { method: 'POST' });
+                      fetchUsage();
+                    } catch (e) {
+                      console.error('Failed to reset usage:', e);
+                    }
+                  }}
+                  className="hover:text-amber-400 px-1.5 py-0.5 hover:bg-slate-800/80 rounded transition text-[10px] font-mono text-slate-500 hover:text-slate-300"
+                  title="Reset daily usage counter back to 0"
+                >
+                  Reset
+                </button>
+                <button 
+                  type="button"
+                  onClick={fetchUsage} 
+                  disabled={loadingUsage}
+                  className="hover:text-cyan-400 px-2 py-1 hover:bg-slate-800/80 rounded-lg transition flex items-center space-x-1 border border-transparent hover:border-slate-700/60" 
+                  title="Sync Daily API Quota & AI Status"
+                >
+                  <RefreshCw className={`w-3 h-3 ${loadingUsage ? 'animate-spin text-cyan-400' : 'text-slate-400'}`} />
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {loadingUsage ? 'Syncing...' : 'Sync'}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </aside>

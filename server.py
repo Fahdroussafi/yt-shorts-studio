@@ -1551,6 +1551,22 @@ def get_usage(user: dict = Depends(require_auth)):
     return summary
 
 
+@app.post("/api/usage/reset")
+def reset_usage(user: dict = Depends(require_auth)):
+    """Resets daily quota usage counters to 0 for current Pacific Time day (User Scoped)."""
+    paths = get_user_paths(user)
+    from usage_tracker import save_tracker, get_current_pt_date, AI_DAILY_LIMIT, YOUTUBE_DAILY_LIMIT
+    fresh = {
+        "date_pt": get_current_pt_date(),
+        "ai_requests": 0,
+        "youtube_units": 0,
+        "ai_limit": AI_DAILY_LIMIT,
+        "youtube_limit": YOUTUBE_DAILY_LIMIT
+    }
+    save_tracker(fresh, paths["usage_file"])
+    return {"success": True, "message": "Daily usage counters reset to 0"}
+
+
 @app.get("/api/next-short-id")
 def get_next_id(user: dict = Depends(require_auth)):
     """Calculates next sequential short folder ID automatically for the user's library."""
