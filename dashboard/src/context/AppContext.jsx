@@ -118,6 +118,8 @@ export function AppProvider({ children }) {
   const [studioTitle, setStudioTitle] = useState('');
   const [studioDesc, setStudioDesc] = useState('');
   const [studioComment, setStudioComment] = useState('What do you think of this psychological truth? Comment below. 👇');
+  const [visualMode, setVisualMode] = useState('cinematic_cuts'); // 'cinematic_cuts' | 'parkour_brainrot' | 'split_retention'
+  const [studioSearchTags, setStudioSearchTags] = useState('dark psychology tricks, human behavior psychology, survival hacks');
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [taskStatus, setTaskStatus] = useState(null);
   const [isProducing, setIsProducing] = useState(false);
@@ -562,7 +564,7 @@ export function AppProvider({ children }) {
 
   const [seriesMode, setSeriesMode] = useState(1); // 1 = Single Short, 2 = 2-Part Series, 3 = 3-Part Series
 
-  const handleGenerateIdea = async (overrideNiche = null, isSurprise = false, countOverride = null) => {
+  const handleGenerateIdea = async (overrideNiche = null, isSurprise = false, countOverride = null, outlierId = null) => {
     setGeneratingIdea(true);
     try {
       const targetNiche = overrideNiche || selectedNiche;
@@ -574,7 +576,8 @@ export function AppProvider({ children }) {
           niche: targetNiche,
           concept: isSurprise ? '' : ideaConcept,
           surprise: isSurprise,
-          series_count: count
+          series_count: count,
+          outlier_id: outlierId
         })
       });
       if (res.ok) {
@@ -634,7 +637,13 @@ export function AppProvider({ children }) {
     }
     setStudioTitle(idea.title);
     setStudioScript(idea.script);
-    setStudioKeywords(idea.keywords.join(', '));
+    setStudioKeywords(Array.isArray(idea.keywords) ? idea.keywords.join(', ') : (idea.keywords || ''));
+    if (idea.search_tags) {
+      setStudioSearchTags(Array.isArray(idea.search_tags) ? idea.search_tags.join(', ') : idea.search_tags);
+    }
+    if (idea.visual_mode) {
+      setVisualMode(idea.visual_mode);
+    }
     setStudioDesc(idea.description);
     setStudioComment(idea.pinned_comment);
     if (idea.voice) {
@@ -653,6 +662,7 @@ export function AppProvider({ children }) {
 
     try {
       const kws = Array.isArray(idea.keywords) ? idea.keywords : (idea.keywords || '').split(',').map(s => s.trim()).filter(Boolean);
+      const tags = Array.isArray(idea.search_tags) ? idea.search_tags : (idea.search_tags || studioSearchTags || '').split(',').map(s => s.trim()).filter(Boolean);
       const res = await authFetch('/api/produce', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -660,6 +670,8 @@ export function AppProvider({ children }) {
           video_id: idea.next_id || studioVideoId,
           script_text: idea.script,
           clip_keywords: kws,
+          search_tags: tags,
+          visual_mode: idea.visual_mode || visualMode,
           title: idea.title || `${idea.next_id || studioVideoId} #shorts`,
           description: idea.description,
           pinned_comment: idea.pinned_comment,
@@ -693,6 +705,7 @@ export function AppProvider({ children }) {
 
     try {
       const kws = studioKeywords.split(',').map(s => s.trim()).filter(Boolean);
+      const tags = studioSearchTags.split(',').map(s => s.trim()).filter(Boolean);
       const res = await authFetch('/api/produce', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -700,6 +713,8 @@ export function AppProvider({ children }) {
           video_id: studioVideoId,
           script_text: studioScript,
           clip_keywords: kws,
+          search_tags: tags,
+          visual_mode: visualMode,
           title: studioTitle || `${studioVideoId} #shorts`,
           description: studioDesc,
           pinned_comment: studioComment,
@@ -800,6 +815,8 @@ export function AppProvider({ children }) {
     studioTitle, setStudioTitle,
     studioDesc, setStudioDesc,
     studioComment, setStudioComment,
+    visualMode, setVisualMode,
+    studioSearchTags, setStudioSearchTags,
     activeTaskId, taskStatus, isProducing, handleStartProduction,
     dispatchVideoId, setDispatchVideoId,
     dispatchMode, setDispatchMode,

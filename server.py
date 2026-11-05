@@ -375,6 +375,8 @@ class ProduceRequest(BaseModel):
     pinned_comment: str
     voice: Optional[str] = "en-US-ChristopherNeural"
     niche: Optional[str] = "dark_psychology"
+    visual_mode: Optional[str] = "cinematic_cuts"   # "cinematic_cuts" | "parkour_brainrot" | "split_retention"
+    search_tags: Optional[List[str]] = None
 
 
 class UploadRequest(BaseModel):
@@ -392,10 +394,11 @@ class AIKeyRequest(BaseModel):
 
 
 class IdeaGenerateRequest(BaseModel):
-    niche: str
+    niche: Optional[str] = "dark_psychology"
     concept: Optional[str] = None
     surprise: Optional[bool] = False
     series_count: Optional[int] = 1   # 1 for single, 2 or 3 for multi-part connected story arc
+    outlier_id: Optional[str] = None  # Proven 1M+ viral outlier template ID
 
 
 class ChannelSettingsRequest(BaseModel):
@@ -1557,15 +1560,33 @@ def get_next_id(user: dict = Depends(require_auth)):
     return {"next_id": next_id}
 
 
+@app.get("/api/ideas/viral-outliers")
+def get_viral_outliers(user: dict = Depends(require_auth)):
+    """Returns curated 1M-15M+ proven viral outlier templates."""
+    from idea_bank import VIRAL_OUTLIERS_VAULT
+    return {"outliers": VIRAL_OUTLIERS_VAULT}
+
+
 @app.post("/api/ideas/generate")
 def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
     """Generates dynamic viral script structure, SEO metadata, and clip keywords."""
     paths = get_user_paths(user)
-    from idea_bank import NICHE_PROFILES, CONCEPTS_DATABASE, get_next_short_id, pick_concept_without_repeats, record_topic_history
+    from idea_bank import NICHE_PROFILES, CONCEPTS_DATABASE, VIRAL_OUTLIERS_VAULT, get_next_short_id, pick_concept_without_repeats, record_topic_history
     from gemini_generator import generate_with_gemini_flash
     from usage_tracker import record_gemini_request
 
-    niche = req.niche
+    outlier = None
+    if getattr(req, "outlier_id", None):
+        outlier = next((o for o in VIRAL_OUTLIERS_VAULT if o["id"] == req.outlier_id), None)
+        if outlier:
+            niche = outlier.get("category", "dark_psychology")
+            if not req.concept:
+                req.concept = f"{outlier.get('hook', outlier.get('title'))} - Concept: {outlier.get('concept', '')}"
+        else:
+            niche = req.niche
+    else:
+        niche = req.niche
+
     # If user selected Surprise Me, preserve their selected niche! Only pick random if explicitly empty or 'random'
     if not niche or niche == "random" or (niche not in NICHE_PROFILES and niche not in CONCEPTS_DATABASE):
         niche = random.choice(list(NICHE_PROFILES.keys()))
@@ -1624,6 +1645,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
                     "title": f"{ai_ep.get('title', series_topic).replace(' #shorts', '')} (Part {ep_idx}/{series_count}) #shorts",
                     "script": ep_script,
                     "keywords": ai_ep.get("keywords", profile.get("visual_bank", ["dark", "mystery"])[:8]),
+                    "search_tags": ai_ep.get("search_tags", ["psychology facts", "dark psychology", "human behavior"]),
                     "description": ai_ep.get("description", ""),
                     "pinned_comment": f"👉 Watch Part {ep_idx + 1 if ep_idx < series_count else 1} right here! Drop your thoughts below. 👇",
                     "voice": ai_ep.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
@@ -1647,6 +1669,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
                     "title": ep_title,
                     "script": chosen["script"],
                     "keywords": chosen["keywords"],
+                    "search_tags": chosen.get("search_tags", ["psychology facts", "dark psychology", "human behavior"]),
                     "description": chosen["description"],
                     "pinned_comment": f"Part {ep_idx} of {series_count}. Watch the next chapter pinned on channel!",
                     "voice": chosen.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
@@ -1686,18 +1709,22 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
         if brand_name.lower() not in final_script.lower():
             final_script = final_script.rstrip(" .,!?:;-") + f". {outro_mandate}"
 
+        keywords_list = outlier["visual_keywords"] if outlier and outlier.get("visual_keywords") else ai_result.get("keywords", profile.get("visual_bank", ["dark", "mystery"])[:8])
+        search_tags_list = outlier["search_tags"] if outlier and outlier.get("search_tags") else ai_result.get("search_tags", ["psychology facts", "dark psychology", "human behavior"])
+
         return {
             "source": ai_result.get("model_used", "groq-lpu"),
             "next_id": next_id,
             "niche": niche,
             "title": ai_result.get("title", ""),
             "script": final_script,
-            "keywords": ai_result.get("keywords", profile.get("visual_bank", ["dark", "mystery"])[:8]),
+            "keywords": keywords_list,
+            "search_tags": search_tags_list,
             "description": ai_result.get("description", ""),
             "pinned_comment": ai_result.get("pinned_comment", "Drop your thoughts below. 👇"),
             "voice": ai_result.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
             "chosen_angle": ai_result.get("chosen_angle", req.concept or "Viral Psychology Hook"),
-            "generation_type": "surprise_seed" if req.surprise else "custom_concept"
+            "generation_type": "viral_outlier_clone" if outlier else ("surprise_seed" if req.surprise else "custom_concept")
         }
 
     # 2. Smooth fallback to rich local combinatorial generator (History-aware)
@@ -1708,7 +1735,11 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
         brand_handle=brand_handle
     )
 
-    if req.concept and req.concept.strip():
+    if outlier:
+        chosen["title"] = outlier.get("title", f"{outlier.get('hook', 'Viral Psychology')} #shorts")
+        chosen["keywords"] = outlier.get("visual_keywords", chosen["keywords"])
+        chosen["search_tags"] = outlier.get("search_tags", ["survival facts", "psychology", "dark psychology"])
+    elif req.concept and req.concept.strip():
         chosen["title"] = f"{req.concept.strip().title()} #shorts"
 
     profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
@@ -1721,11 +1752,12 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
         "title": chosen["title"],
         "script": chosen["script"],
         "keywords": chosen["keywords"],
+        "search_tags": chosen.get("search_tags", ["psychology facts", "dark psychology", "human behavior"]),
         "description": chosen["description"],
         "pinned_comment": chosen["pinned_comment"],
         "voice": chosen.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
         "chosen_angle": req.concept or chosen.get("title", "Curated Niche Angle"),
-        "generation_type": "surprise_seed" if req.surprise else "custom_concept"
+        "generation_type": "viral_outlier_clone" if outlier else ("surprise_seed" if req.surprise else "custom_concept")
     }
 
 
@@ -1767,7 +1799,14 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             PRODUCTION_TASKS[task_id]["log"].append("[1/5] Synthesizing voiceover with edge-tts...")
 
             from engine import generate_voice, get_audio_duration, build_ass_subtitles, strip_watermarks
-            from produce_motion_short import download_clip_with_smart_fallback, load_clip_history, record_clip_usage, render_motion_video
+            from produce_motion_short import (
+                download_clip_with_smart_fallback,
+                load_clip_history,
+                record_clip_usage,
+                render_motion_video,
+                render_gameplay_short,
+                render_split_retention_short
+            )
             from idea_bank import NICHE_PROFILES
 
             target_dir = os.path.join(target_videos_dir, req.video_id)
@@ -1805,54 +1844,97 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             PRODUCTION_TASKS[task_id]["progress"] = 50
             PRODUCTION_TASKS[task_id]["log"].append(f"[2/5] Dynamic subtitles baked [Style: {caption_style_used}].")
 
-            # 3. Dynamic clip expansion & no-repeat selection
-            niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
-            profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
-            niche_bank = profile.get("visual_bank", ["thinking", "shadows", "mirror", "dark-street", "candle"])
-
-            # Target 8 to 10 cuts (~4 to 4.5s per scene for viral pacing)
-            target_cuts = max(6, min(10, round(dur / 4.2)))
-            expanded_keywords = list(req.clip_keywords) if req.clip_keywords else []
-            while len(expanded_keywords) < target_cuts:
-                fresh = random.choice([k for k in niche_bank if k not in expanded_keywords] or niche_bank)
-                expanded_keywords.append(fresh)
-            expanded_keywords = expanded_keywords[:target_cuts]
-
-            PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Scraping & downloading {len(expanded_keywords)} unique stock clips (No-Repeat Algorithm)...")
-
-            clip_history_file = os.path.join(u_dir, "clip_history.json")
-            clip_history = load_clip_history(clip_history_file)
-            used_in_video = set()
-            chosen_urls = []
+            # 3. Visual Mode Handling (cinematic_cuts, parkour_brainrot, split_retention)
+            v_mode = getattr(req, "visual_mode", "cinematic_cuts") or "cinematic_cuts"
             clip_paths = []
 
-            for idx, kw in enumerate(expanded_keywords):
-                clip_path = os.path.join(target_dir, f"clip_{idx}.mp4")
-                _, chosen_url = await asyncio.to_thread(
-                    download_clip_with_smart_fallback,
-                    kw,
-                    clip_path,
-                    niche,
-                    used_in_video,
-                    clip_history
-                )
-                chosen_urls.append(chosen_url)
-                clip_paths.append(clip_path)
+            if v_mode == "parkour_brainrot":
+                PRODUCTION_TASKS[task_id]["progress"] = 70
+                PRODUCTION_TASKS[task_id]["log"].append("[3/5] Visual Mode: Hypnotic Gameplay Loop (Minecraft Parkour / Subway Surfers). Instant local slicing...")
+                await asyncio.to_thread(render_gameplay_short, audio_file, ass_file, output_mp4, dur, None)
 
-            record_clip_usage(clip_history_file, chosen_urls)
+            elif v_mode == "split_retention":
+                niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
+                profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
+                niche_bank = profile.get("visual_bank", ["thinking", "shadows", "mirror", "dark-street", "candle"])
+                target_cuts = 3  # High quality story scenes for top half
+                expanded_keywords = list(req.clip_keywords) if req.clip_keywords else []
+                while len(expanded_keywords) < target_cuts:
+                    fresh = random.choice([k for k in niche_bank if k not in expanded_keywords] or niche_bank)
+                    expanded_keywords.append(fresh)
+                expanded_keywords = expanded_keywords[:target_cuts]
 
-            PRODUCTION_TASKS[task_id]["progress"] = 70
-            PRODUCTION_TASKS[task_id]["log"].append(f"[4/5] Rendering 1080x1920 vertical video ({len(clip_paths)} dynamic cuts with random offsets & flips)...")
+                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Visual Mode: Split-Screen Retention. Fetching {len(expanded_keywords)} top-tier narrative clips...")
+                clip_history_file = os.path.join(u_dir, "clip_history.json")
+                clip_history = load_clip_history(clip_history_file)
+                used_in_video = set()
+                chosen_urls = []
 
-            # 4. Render (Non-blocking async execution)
-            await asyncio.to_thread(render_motion_video, clip_paths, audio_file, ass_file, output_mp4, dur)
+                for idx, kw in enumerate(expanded_keywords):
+                    clip_path = os.path.join(target_dir, f"clip_{idx}.mp4")
+                    _, chosen_url = await asyncio.to_thread(
+                        download_clip_with_smart_fallback,
+                        kw,
+                        clip_path,
+                        niche,
+                        used_in_video,
+                        clip_history
+                    )
+                    chosen_urls.append(chosen_url)
+                    clip_paths.append(clip_path)
+
+                record_clip_usage(clip_history_file, chosen_urls)
+                PRODUCTION_TASKS[task_id]["progress"] = 70
+                PRODUCTION_TASKS[task_id]["log"].append("[4/5] Rendering 50/50 Split-Screen (Narrative Story on Top, Hypnotic Parkour on Bottom)...")
+                await asyncio.to_thread(render_split_retention_short, clip_paths, audio_file, ass_file, output_mp4, dur)
+
+            else:  # cinematic_cuts
+                niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
+                profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
+                niche_bank = profile.get("visual_bank", ["thinking", "shadows", "mirror", "dark-street", "candle"])
+
+                target_cuts = max(6, min(10, round(dur / 4.2)))
+                expanded_keywords = list(req.clip_keywords) if req.clip_keywords else []
+                while len(expanded_keywords) < target_cuts:
+                    fresh = random.choice([k for k in niche_bank if k not in expanded_keywords] or niche_bank)
+                    expanded_keywords.append(fresh)
+                expanded_keywords = expanded_keywords[:target_cuts]
+
+                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Scraping & downloading {len(expanded_keywords)} unique stock clips (No-Repeat Algorithm)...")
+
+                clip_history_file = os.path.join(u_dir, "clip_history.json")
+                clip_history = load_clip_history(clip_history_file)
+                used_in_video = set()
+                chosen_urls = []
+
+                for idx, kw in enumerate(expanded_keywords):
+                    clip_path = os.path.join(target_dir, f"clip_{idx}.mp4")
+                    _, chosen_url = await asyncio.to_thread(
+                        download_clip_with_smart_fallback,
+                        kw,
+                        clip_path,
+                        niche,
+                        used_in_video,
+                        clip_history
+                    )
+                    chosen_urls.append(chosen_url)
+                    clip_paths.append(clip_path)
+
+                record_clip_usage(clip_history_file, chosen_urls)
+
+                PRODUCTION_TASKS[task_id]["progress"] = 70
+                PRODUCTION_TASKS[task_id]["log"].append(f"[4/5] Rendering 1080x1920 vertical video ({len(clip_paths)} dynamic cuts with random offsets & flips)...")
+
+                # 4. Render (Non-blocking async execution)
+                await asyncio.to_thread(render_motion_video, clip_paths, audio_file, ass_file, output_mp4, dur)
+
             PRODUCTION_TASKS[task_id]["progress"] = 90
             PRODUCTION_TASKS[task_id]["log"].append("[5/5] Sanitizing metadata and stripping watermarks...")
 
             # 5. Clean
             await asyncio.to_thread(strip_watermarks, output_mp4)
 
-            # 6. Save SEO
+            # 6. Save SEO with High-Intent Multi-Word Search Tags
             title_to_save = req.title
             desc_to_save = req.description
             pinned_to_save = req.pinned_comment
@@ -1866,9 +1948,12 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                     elif val_name == "desc": desc_to_save = target_str
                     elif val_name == "pinned": pinned_to_save = target_str
 
+            tags_str = ", ".join(req.search_tags) if req.search_tags else ""
             with open(meta_file, "w", encoding="utf-8") as f:
                 f.write(f"TITLE:\n{title_to_save}\n\n")
                 f.write(f"DESCRIPTION:\n{desc_to_save}\n\n")
+                if tags_str:
+                    f.write(f"TAGS:\n{tags_str}\n\n")
                 f.write(f"PINNED COMMENT:\n{pinned_to_save}\n")
 
             # Clean intermediate clips
@@ -1963,6 +2048,10 @@ def upload_to_youtube(req: UploadRequest, user: dict = Depends(require_auth)):
                 title = t_m.group(1).strip()
             if d_m:
                 description = d_m.group(1).strip()
+            tags_m = re.search(r'TAGS:\s*(.*?)(?=\n\nPINNED COMMENT:|\nPINNED COMMENT:|$)', content, re.DOTALL)
+            if tags_m and tags_m.group(1).strip():
+                tags = [t.strip() for t in tags_m.group(1).split(",") if t.strip()]
+            else:
                 extracted_tags = re.findall(r'#(\w+)', description)
                 if extracted_tags:
                     tags = extracted_tags

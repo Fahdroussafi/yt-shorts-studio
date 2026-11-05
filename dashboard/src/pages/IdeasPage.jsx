@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, RefreshCw, ChevronRight, Zap } from 'lucide-react';
+import { Sparkles, RefreshCw, ChevronRight, Zap, Flame, Trophy, ExternalLink } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export default function IdeasPage() {
@@ -12,10 +12,35 @@ export default function IdeasPage() {
     generatingIdea, generatedIdea,
     handleGenerateIdea,
     sendIdeaToStudio, handleQuickProduce,
-    isProducing, showToast
+    isProducing, showToast, authFetch
   } = useApp();
 
   const navigate = useNavigate();
+  const [outliers, setOutliers] = useState([]);
+  const [loadingOutliers, setLoadingOutliers] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState('all');
+
+  useEffect(() => {
+    async function loadOutliers() {
+      try {
+        setLoadingOutliers(true);
+        const res = await authFetch('/api/ideas/viral-outliers');
+        if (res.ok) {
+          const data = await res.json();
+          setOutliers(data.outliers || []);
+        }
+      } catch (err) {
+        console.error('Failed to load outliers:', err);
+      } finally {
+        setLoadingOutliers(false);
+      }
+    }
+    loadOutliers();
+  }, []);
+
+  const filteredOutliers = selectedCategory === 'all'
+    ? outliers
+    : outliers.filter(o => o.category === selectedCategory);
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -279,6 +304,90 @@ export default function IdeasPage() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* 1M+ Proven Viral Outliers Vault */}
+      <div className="p-5 rounded-2xl bg-[#12121a] border border-amber-500/30 space-y-4 shadow-xl shadow-amber-500/5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/60 pb-3">
+          <div>
+            <div className="flex items-center space-x-2">
+              <Flame className="w-5 h-5 text-amber-400 fill-amber-400" />
+              <h3 className="font-black text-sm text-white uppercase tracking-wider">1M–15M+ Viral Outliers Vault</h3>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 font-mono">
+                Source of Truth
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              Battle-tested psychological hooks with 1M–15M+ views. Clone structure, retention curve & multi-word tags in 1 click.
+            </p>
+          </div>
+
+          {/* Category Filter */}
+          <div className="flex items-center space-x-1.5 bg-slate-900 border border-slate-800 rounded-lg p-1 text-[11px] font-mono">
+            {['all', 'survival_paradox', 'forbidden_experiment', 'fbi_interrogation_trap'].map(cat => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setSelectedCategory(cat)}
+                className={`px-2.5 py-1 rounded-md transition ${
+                  selectedCategory === cat
+                    ? 'bg-amber-500 text-black font-black'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {cat === 'all' ? 'All' : cat === 'survival_paradox' ? 'Survival' : cat === 'forbidden_experiment' ? 'Experiments' : 'FBI Traps'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Outlier Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+          {filteredOutliers.map((o) => (
+            <div
+              key={o.id}
+              className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-amber-500/40 transition flex flex-col justify-between space-y-3 group"
+            >
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 font-bold flex items-center space-x-1">
+                    <Trophy className="w-3 h-3" />
+                    <span>{o.views_baseline || '1M+ Views'}</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-500 uppercase">
+                    {(o.category || '').replace('_', ' ')}
+                  </span>
+                </div>
+                <h4 className="text-sm font-bold text-white group-hover:text-amber-300 transition leading-snug">
+                  "{o.hook || o.title}"
+                </h4>
+                <p className="text-xs text-slate-400 leading-relaxed line-clamp-2">
+                  {o.concept}
+                </p>
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-slate-800/60">
+                <div className="flex flex-wrap gap-1">
+                  {(o.search_tags || []).slice(0, 3).map((tag, idx) => (
+                    <span key={idx} className="text-[10px] px-1.5 py-0.5 rounded bg-black/40 text-slate-400 font-mono">
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleGenerateIdea(o.category, false, 1, o.id)}
+                  disabled={generatingIdea}
+                  className="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-black text-xs flex items-center justify-center space-x-1.5 transition shadow-lg shadow-amber-500/10 disabled:opacity-50"
+                >
+                  <Zap className="w-3.5 h-3.5 fill-current" />
+                  <span>Clone Hook & Script</span>
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

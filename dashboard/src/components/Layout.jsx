@@ -75,9 +75,9 @@ export default function Layout() {
     }`;
 
   return (
-    <div className="min-h-screen bg-[#09090e] text-slate-100 flex flex-col font-sans">
+    <div className="h-screen bg-[#09090e] text-slate-100 flex flex-col font-sans overflow-hidden">
       {/* Top Navbar */}
-      <header className="h-16 border-b border-slate-800/80 bg-[#0d0d14]/90 backdrop-blur sticky top-0 z-40 px-6 flex items-center justify-between">
+      <header className="h-16 shrink-0 border-b border-slate-800/80 bg-[#0d0d14]/90 backdrop-blur sticky top-0 z-40 px-6 flex items-center justify-between">
         <div className="flex items-center space-x-3 cursor-pointer" onClick={() => navigate('/overview')}>
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-violet-600 to-cyan-500 flex items-center justify-center shadow-lg shadow-violet-500/20">
             <Film className="w-5 h-5 text-white" />
@@ -165,10 +165,10 @@ export default function Layout() {
       </header>
 
       {/* Main Layout */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         {/* Navigation Sidebar */}
-        <aside className="w-64 border-r border-slate-800/60 bg-[#0d0d14]/50 p-4 flex flex-col justify-between">
-          <nav className="space-y-1.5">
+        <aside className="w-64 shrink-0 border-r border-slate-800/60 bg-[#0d0d14]/50 p-4 flex flex-col justify-between h-full overflow-hidden min-h-0">
+          <nav className="space-y-1.5 overflow-y-auto flex-1 min-h-0 pb-3">
             <NavLink to="/overview" className={getNavClass}>
               <BarChart3 className="w-4 h-4" />
               <span>Overview & Views</span>
@@ -205,8 +205,8 @@ export default function Layout() {
             </NavLink>
           </nav>
 
-          {/* Daily Quotas & Credits Tracker */}
-          <div className="p-3.5 rounded-2xl bg-gradient-to-b from-[#13131c] to-[#0d0d14] border border-slate-800/90 text-xs space-y-3 shadow-lg">
+          {/* Daily Quotas & Credits Tracker - Always Pinned on Bottom */}
+          <div className="shrink-0 mt-auto p-3.5 rounded-2xl bg-gradient-to-b from-[#13131c] to-[#0d0d14] border border-slate-800/90 text-xs space-y-3 shadow-lg">
             <div className="flex items-center justify-between">
               <span className="font-bold text-slate-200 flex items-center space-x-1.5 text-[11px] uppercase tracking-wider font-mono">
                 <Cpu className="w-3.5 h-3.5 text-cyan-400" />
@@ -312,7 +312,7 @@ export default function Layout() {
         </aside>
 
         {/* Content Area */}
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="flex-1 overflow-y-auto p-6 min-h-0">
           <Outlet />
         </main>
       </div>

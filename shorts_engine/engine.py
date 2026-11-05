@@ -62,74 +62,76 @@ def get_audio_duration(file_path: str) -> float:
     return 40.0
 
 
-# 5 High-Impact Caption Visual DNA Styles
+FONTS_DIR = os.path.join(BASE_DIR, "shorts_engine", "fonts")
+
+# 5 High-Impact Caption Visual DNA Styles (Built on Anton Heavy Display Font)
 CAPTION_STYLES = {
     "hormozi_gold": {
         "name": "Hormozi Gold",
-        "font": "Arial Black",
-        "fontsize": 86,
+        "font": "Anton",
+        "fontsize": 94,
         "primary": "&H00FFFFFF",      # Base White
         "active": "&H0000D7FF",       # Electric Gold/Yellow
         "outline": "&H00000000",      # Pure Black
         "back": "&H90000000",
         "border_style": 1,
-        "outline_w": 8,
-        "shadow_w": 4,
+        "outline_w": 9,
+        "shadow_w": 5,
         "chunk_size": 3,
-        "anim": r"{\fscx110\fscy110\t(0,70,\fscx100\fscy100)}"
+        "anim": r"{\fscx112\fscy112\t(0,70,\fscx100\fscy100)}"
     },
     "crimson_alert": {
         "name": "Crimson Alert",
-        "font": "Impact",
-        "fontsize": 92,
+        "font": "Anton",
+        "fontsize": 98,
         "primary": "&H00FFFFFF",
         "active": "&H002A2AFF",       # Vivid Crimson Red
         "outline": "&H00000000",
         "back": "&HB0000000",
         "border_style": 1,
-        "outline_w": 9,
-        "shadow_w": 5,
+        "outline_w": 10,
+        "shadow_w": 6,
         "chunk_size": 2,
-        "anim": r"{\fscx115\fscy115\t(0,60,\fscx100\fscy100)}"
+        "anim": r"{\fscx118\fscy118\t(0,60,\fscx100\fscy100)}"
     },
     "cyber_cyan": {
         "name": "Cyber Cyan",
-        "font": "Trebuchet MS",
-        "fontsize": 84,
+        "font": "Anton",
+        "fontsize": 92,
         "primary": "&H00F0F0F0",
         "active": "&H00FFFF00",       # Neon Cyan / Aqua
         "outline": "&H001A0B2E",      # Deep Midnight
         "back": "&H80000000",
         "border_style": 1,
-        "outline_w": 7,
-        "shadow_w": 3,
+        "outline_w": 8,
+        "shadow_w": 4,
         "chunk_size": 3,
-        "anim": r"{\fscx108\fscy108\t(0,80,\fscx100\fscy100)}"
+        "anim": r"{\fscx110\fscy110\t(0,80,\fscx100\fscy100)}"
     },
     "emerald_matrix": {
         "name": "Emerald Matrix",
-        "font": "Arial Black",
-        "fontsize": 86,
+        "font": "Anton",
+        "fontsize": 94,
         "primary": "&H00FFFFFF",
         "active": "&H0081B910",       # Neon Emerald Green
         "outline": "&H00000000",
         "back": "&H90000000",
         "border_style": 1,
-        "outline_w": 8,
-        "shadow_w": 4,
+        "outline_w": 9,
+        "shadow_w": 5,
         "chunk_size": 3,
-        "anim": r"{\fscx112\fscy112\t(0,65,\fscx100\fscy100)}"
+        "anim": r"{\fscx114\fscy114\t(0,65,\fscx100\fscy100)}"
     },
     "minimal_pill": {
         "name": "Minimalist Pill",
-        "font": "Arial",
-        "fontsize": 80,
+        "font": "Anton",
+        "fontsize": 88,
         "primary": "&H00FFFFFF",
         "active": "&H0000E5FF",       # Amber Glow
         "outline": "&H00000000",
         "back": "&HA0151515",
         "border_style": 3,            # Opaque Pill Box
-        "outline_w": 6,
+        "outline_w": 7,
         "shadow_w": 0,
         "chunk_size": 2,
         "anim": ""
@@ -137,7 +139,7 @@ CAPTION_STYLES = {
 }
 
 def build_ass_subtitles(words, output_ass: str, style_name: Optional[str] = None):
-    """Builds dynamic animated subtitles using one of 5 visual DNA presets."""
+    """Builds dynamic animated subtitles with zero-gap persistent presence."""
     import random
     if not style_name or style_name not in CAPTION_STYLES:
         style_key = random.choice(list(CAPTION_STYLES.keys()))
@@ -177,10 +179,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     active_color = cfg["active"]
     primary_color = cfg["primary"]
 
-    for p in phrases:
+    for p_idx, p in enumerate(phrases):
+        next_phrase_start = phrases[p_idx + 1]["words"][0]["start"] if p_idx + 1 < len(phrases) else p["end"] + 0.5
         for active_idx, w in enumerate(p["words"]):
             w_start = format_ass_time(w["start"])
-            w_end = format_ass_time(w["end"])
+            if active_idx + 1 < len(p["words"]):
+                # Seamless zero-gap transition to next word in the chunk
+                w_end = format_ass_time(p["words"][active_idx + 1]["start"])
+            else:
+                # Last word in chunk: hold until next phrase begins (no dark flashes)
+                hold_until = min(w["end"] + 0.45, next_phrase_start)
+                w_end = format_ass_time(hold_until)
 
             formatted_words = []
             for idx, item in enumerate(p["words"]):
@@ -192,6 +201,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             line_text = " ".join(formatted_words)
             events.append(f"Dialogue: 0,{w_start},{w_end},Default,,0,0,0,,{line_text}")
+
+    with open(output_ass, "w", encoding="utf-8") as f:
+        f.write(ass_header + "\n".join(events))
+    print(f"Subtitles written: {len(events)} cues ({cfg['name']}).")
+    return style_key
 
     with open(output_ass, "w", encoding="utf-8") as f:
         f.write(ass_header + "\n".join(events))
@@ -257,10 +271,12 @@ def render_video(img_paths, audio_path, ass_path, output_mp4, duration: float):
         f.write("\n".join(lines) + "\n")
     
     clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+    clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
+    fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
     # crop=in_w:in_h-50:0:0 strips the bottom-right corner AI logo cleanly before upscaling
     filter_complex = (
         f"[0:v]fps=30,crop=in_w:in_h-50:0:0,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-        f"ass='{clean_ass}'[vfinal];"
+        f"ass='{clean_ass}'{fonts_arg}[vfinal];"
         f"[1:a][2:a]amix=inputs=2:duration=first:weights=1.0 0.15[afinal]"
     )
     

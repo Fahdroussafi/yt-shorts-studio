@@ -185,6 +185,7 @@ Respond ONLY with valid JSON using this exact schema:
     "act4_seal": "37-41s dynamic branded outro: Follow {brand_name} for [dynamic topic-specific promise]"
   }},
   "keywords": ["dark-crowd", "interrogation", "cctv-footage", "eye-contact", "shadows", "emergency-light", "tunnel", "subway"],
+  "search_tags": ["real search phrase 1", "multi word search tag 2", "dark psychology tricks", "survival facts", "human behavior psychology"],
   "description": "2-sentence high-stakes description with Subscribe to {brand_handle}, #shorts and 5 hashtags",
   "pinned_comment": "Polarizing debate question to trigger intense comment arguments",
   "voice": "{profile.get('voice_recommended', 'en-US-ChristopherNeural')}"
@@ -196,6 +197,23 @@ def clean_and_assemble_script(parsed: dict, brand_name: str, brand_handle: str, 
     acts = parsed.get("script_acts", {})
     full_script = f"{acts.get('act1_hook', '')} {acts.get('act2_mechanism', '')} {acts.get('act3_directive', '')} {acts.get('act4_seal', '')}".strip()
     parsed["script"] = full_script
+
+    # Ensure search_tags is always a clean list of multi-word search phrases
+    raw_tags = parsed.get("search_tags", [])
+    if isinstance(raw_tags, str):
+        parsed["search_tags"] = [t.strip() for t in raw_tags.split(",") if t.strip()]
+    elif not isinstance(raw_tags, list) or not raw_tags:
+        # Fallback to rich niche tags
+        n_name = profile.get("name", "Dark Psychology").lower()
+        parsed["search_tags"] = [
+            f"{n_name} facts",
+            "human behavior psychology",
+            "dark psychology",
+            "psychology facts",
+            "body language secrets",
+            "survival hacks",
+            "life saving psychology"
+        ]
 
     if brand_name.lower() != "shadowmind":
         for key in ["title", "script", "description", "pinned_comment"]:

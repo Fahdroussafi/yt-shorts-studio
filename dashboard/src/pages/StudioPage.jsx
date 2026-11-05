@@ -11,6 +11,8 @@ export default function StudioPage() {
     studioKeywords, setStudioKeywords,
     studioTitle, setStudioTitle,
     studioComment, setStudioComment,
+    visualMode, setVisualMode,
+    studioSearchTags, setStudioSearchTags,
     isProducing, handleStartProduction,
     taskStatus, generatingIdea, autoGenerateAndFillStudio,
     videos, setPreviewVideo, handleDeleteVideo
@@ -92,15 +94,85 @@ export default function StudioPage() {
           />
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-mono uppercase text-slate-400">Footage Search Keywords (Comma separated)</label>
-          <input
-            type="text"
-            value={studioKeywords}
-            onChange={(e) => setStudioKeywords(e.target.value)}
-            placeholder="e.g. dark city, robot, thinking, emergency, crowd"
-            className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white font-mono"
-          />
+        {/* Visual Engine Mode */}
+        <div className="space-y-2">
+          <label className="text-xs font-mono uppercase text-slate-400">Visual Engine & Retention Mode</label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <button
+              type="button"
+              onClick={() => setVisualMode('cinematic_cuts')}
+              className={`p-3 rounded-xl border text-left transition flex flex-col justify-between ${
+                visualMode === 'cinematic_cuts'
+                  ? 'bg-violet-950/40 border-violet-500 text-white'
+                  : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
+              }`}
+            >
+              <div className="font-bold text-xs flex items-center space-x-1.5 text-white">
+                <span>🎬</span>
+                <span>Cinematic Cuts</span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Dynamic stock cuts (8-10 scenes) with no-repeat tracking</p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setVisualMode('parkour_brainrot')}
+              className={`p-3 rounded-xl border text-left transition flex flex-col justify-between ${
+                visualMode === 'parkour_brainrot'
+                  ? 'bg-emerald-950/40 border-emerald-500 text-white shadow-lg shadow-emerald-500/10'
+                  : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
+              }`}
+            >
+              <div className="font-bold text-xs flex items-center space-x-1.5 text-emerald-400">
+                <span>🎮</span>
+                <span>Minecraft Parkour</span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Hypnotic vertical parkour loop (100%+ retention, 3s render)</p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setVisualMode('split_retention')}
+              className={`p-3 rounded-xl border text-left transition flex flex-col justify-between ${
+                visualMode === 'split_retention'
+                  ? 'bg-cyan-950/40 border-cyan-500 text-white shadow-lg shadow-cyan-500/10'
+                  : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
+              }`}
+            >
+              <div className="font-bold text-xs flex items-center space-x-1.5 text-cyan-400">
+                <span>⚡</span>
+                <span>Split-Screen Retention</span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">50/50: Story scenes top, hypnotic parkour bottom</p>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-mono uppercase text-slate-400">
+              {visualMode === 'parkour_brainrot' ? 'Gameplay Tags (Bypassed for Local Parkour)' : 'Footage Keywords (Comma separated)'}
+            </label>
+            <input
+              type="text"
+              value={studioKeywords}
+              onChange={(e) => setStudioKeywords(e.target.value)}
+              placeholder="e.g. dark city, robot, thinking, emergency, crowd"
+              disabled={visualMode === 'parkour_brainrot'}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white font-mono disabled:opacity-40"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-mono uppercase text-slate-400">High-Intent Search Tags (For YouTube SEO)</label>
+            <input
+              type="text"
+              value={studioSearchTags}
+              onChange={(e) => setStudioSearchTags(e.target.value)}
+              placeholder="e.g. psychology facts, human behavior, survival paradox"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white font-mono"
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

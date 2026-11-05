@@ -507,3 +507,161 @@ def get_next_short_id(videos_dir: str) -> str:
             max_num = max(max_num, int(m.group(1)))
     next_num = max_num + 1
     return f"short_{next_num:02d}"
+
+
+# ==============================================================================
+# SOURCE OF TRUTH: 1M - 15M+ VIEW VIRAL OUTLIER VAULT
+# Battle-tested hooks, survival paradoxes, and dark true stories that hook 100% of scrollers.
+# ==============================================================================
+VIRAL_OUTLIERS_VAULT = [
+    {
+        "id": "outlier_bystander_emergency",
+        "category": "survival_paradox",
+        "views_baseline": "8.4M Views",
+        "title": "Why a Crowd of 100 People Will Watch You Die #shorts #psychology",
+        "concept": "The Bystander Emergency Paradox & Diffusion of Responsibility",
+        "hook": "If you collapse in front of a crowd of one hundred people, you are five times more likely to die than in front of a single stranger.",
+        "search_tags": ["bystander effect", "survival facts", "crowd psychology", "emergency response", "dark psychology", "human behavior", "psychology facts"],
+        "visual_keywords": ["dark-crowd", "subway-station", "walking-alone", "emergency-light", "silhouette"]
+    },
+    {
+        "id": "outlier_forced_teaming_parking",
+        "category": "fbi_interrogation_trap",
+        "views_baseline": "6.2M Views",
+        "title": "If a Stranger Uses This Word in a Parking Garage, Run #shorts #darkpsychology",
+        "concept": "Forced Teaming Predator Grooming & Situational Defense",
+        "hook": "If a stranger approaches you in an empty parking garage and uses the word 'WE,' your physical safety is in immediate danger.",
+        "search_tags": ["forced teaming", "self defense tips", "situational awareness", "predator tactics", "gavin de becker", "dark psychology", "safety hacks"],
+        "visual_keywords": ["dark-street", "silhouette", "cctv-camera", "stare", "tunnel"]
+    },
+    {
+        "id": "outlier_monster_study_orphans",
+        "category": "forbidden_experiment",
+        "views_baseline": "4.8M Views",
+        "title": "The Monster Study: The Forbidden Orphan Experiment #shorts #darkhistory",
+        "concept": "The 1939 Wendell Johnson Stuttering Monster Study",
+        "hook": "In 1939, researchers took twenty-two healthy orphans and told them they were broken stutterers until their brains permanently broke.",
+        "search_tags": ["monster study", "dark history", "unethical experiments", "forbidden science", "human psychology", "creepy history", "psychological horror"],
+        "visual_keywords": ["interrogation-room", "dark-room", "whisper", "silhouette", "shadows"]
+    },
+    {
+        "id": "outlier_false_accusation_trap",
+        "category": "fbi_interrogation_trap",
+        "views_baseline": "5.1M Views",
+        "title": "Never Deny a False Accusation Like This #shorts #darkpsychology",
+        "concept": "Presupposition Traps & Interrogation Law",
+        "hook": "When someone falsely accuses you in front of a group, answering their question directly makes everyone believe you are one hundred percent guilty.",
+        "search_tags": ["false accusations", "interrogation tactics", "body language", "manipulation defense", "dark psychology", "negotiation rules", "power dynamics"],
+        "visual_keywords": ["interrogation-room", "eye-contact", "stare", "chess", "shadows"]
+    },
+    {
+        "id": "outlier_universe_25_mice",
+        "category": "forbidden_experiment",
+        "views_baseline": "7.9M Views",
+        "title": "Universe 25: When Mice Built Paradise and Went Extinct #shorts #darkhistory",
+        "concept": "The Calhoun Behavioral Sink & Social Extinction Paradox",
+        "hook": "Scientists gave a colony of mice infinite food, zero predators, and complete luxury. Within two years, every single one of them died.",
+        "search_tags": ["universe 25", "behavioral sink", "dark history", "social experiments", "psychology facts", "john calhoun", "human civilization"],
+        "visual_keywords": ["dark-room", "cctv-camera", "silhouette", "tunnel", "dramatic-lighting"]
+    },
+    {
+        "id": "outlier_four_second_silence",
+        "category": "fbi_interrogation_trap",
+        "views_baseline": "9.3M Views",
+        "title": "The 4-Second Silence Rule That Destroys Disrespect #shorts #darkpsychology",
+        "concept": "Crisis Negotiation Silence Leverage",
+        "hook": "If an aggressive person demands an answer from you right now, staying completely silent for four seconds destroys their leverage.",
+        "search_tags": ["4 second silence", "negotiation tactics", "fbi interrogation", "power dynamics", "body language", "confidence hacks", "dark psychology"],
+        "visual_keywords": ["eye-contact", "stare", "silhouette", "interrogation-room", "shadows"]
+    },
+    {
+        "id": "outlier_reverse_chronology_liar",
+        "category": "fbi_interrogation_trap",
+        "views_baseline": "6.7M Views",
+        "title": "Never Watch a Liar's Eyes. Use This 4-Second Trap Instead #shorts #darkpsychology",
+        "concept": "Cognitive Load Reverse Chronology Lie Detection",
+        "hook": "If you suspect someone is lying to your face, never watch their eyes. Ask them to tell their story backwards instead.",
+        "search_tags": ["how to spot a liar", "lie detection", "fbi interrogation", "body language", "dark psychology", "human behavior", "reverse chronology"],
+        "visual_keywords": ["cctv-camera", "eye-contact", "stare", "interrogation-room", "whisper"]
+    },
+    {
+        "id": "outlier_milgram_65_shock",
+        "category": "forbidden_experiment",
+        "views_baseline": "3.9M Views",
+        "title": "The Terrifying 65% Obedience Experiment #shorts #history",
+        "concept": "The Milgram Electric Shock Obedience Study",
+        "hook": "Sixty-five percent of ordinary people will shock an innocent stranger until they are dead, simply because a man in a lab coat tells them to.",
+        "search_tags": ["milgram experiment", "human obedience", "dark history", "psychological experiments", "authority bias", "shock test", "psychology facts"],
+        "visual_keywords": ["interrogation-room", "emergency-light", "silhouette", "dark-room", "shadows"]
+    },
+    {
+        "id": "outlier_square_waves_ocean",
+        "category": "survival_paradox",
+        "views_baseline": "12.4M Views",
+        "title": "If You See Square Waves in the Ocean, Run #shorts #survival",
+        "concept": "Cross Sea Square Waves Drowning Anomaly",
+        "hook": "If you ever look out at the ocean and see the water forming a checkerboard square pattern, get out of the water immediately.",
+        "search_tags": ["square waves", "cross sea", "ocean hazards", "survival facts", "emergency tips", "life saving rules", "nature phenomena"],
+        "visual_keywords": ["rain-window", "tunnel", "emergency-light", "dark-street", "walking-alone"]
+    },
+    {
+        "id": "outlier_normalcy_bias_freeze",
+        "category": "survival_paradox",
+        "views_baseline": "5.5M Views",
+        "title": "Why 70% of People Freeze and Die When an Alarm Sounds #shorts #survival",
+        "concept": "Mass Emergency Normalcy Bias & Social Contagion",
+        "hook": "When a building fire alarm screams, seventy percent of victims do not run. They look around, fix their hair, and wait to die.",
+        "search_tags": ["normalcy bias", "disaster psychology", "survival facts", "crowd freeze", "emergency response", "dark psychology", "life saving hacks"],
+        "visual_keywords": ["dark-crowd", "emergency-light", "subway-station", "walking-alone", "smoke"]
+    },
+    {
+        "id": "outlier_fish_smell_electrical",
+        "category": "survival_paradox",
+        "views_baseline": "14.2M Views",
+        "title": "If Your Bedroom Smells Like Fish, Leave Immediately #shorts #survival",
+        "concept": "Electrical Arcing & Silent House Fire Warning",
+        "hook": "If your bedroom or living room suddenly smells like rotten fish and you have not cooked seafood, do not look for trash. Evacuate immediately.",
+        "search_tags": ["home safety", "survival hacks", "electrical fire", "life saving tips", "emergency facts", "safety warning", "house fire facts"],
+        "visual_keywords": ["dark-room", "emergency-light", "smoke", "silhouette", "dark-street"]
+    },
+    {
+        "id": "outlier_schrodinger_joke_disrespect",
+        "category": "fbi_interrogation_trap",
+        "views_baseline": "8.1M Views",
+        "title": "How to Silence Someone Who Insults You #shorts #darkpsychology",
+        "concept": "Schrodinger's Joke Disrespect Neutralization",
+        "hook": "When someone insults you disguised as a joke in front of a group, never laugh along. Ask them this exact four-word question with a deadpan stare.",
+        "search_tags": ["how to handle insults", "social dominance", "comeback psychology", "body language", "dark psychology", "respect hacks", "power dynamics"],
+        "visual_keywords": ["stare", "eye-contact", "dark-crowd", "whisper", "silhouette"]
+    },
+    {
+        "id": "outlier_hofling_95_nurse",
+        "category": "forbidden_experiment",
+        "views_baseline": "4.1M Views",
+        "title": "Why 95% of Nurses Will Inject a Lethal Dose on Command #shorts #psychology",
+        "concept": "The Hofling Hospital Telephone Obedience Study",
+        "hook": "Twenty-one out of twenty-two registered nurses agreed to administer a lethal dose of unauthorized medicine after a single stranger called on the phone.",
+        "search_tags": ["hofling hospital study", "medical psychology", "authority bias", "dark history", "psychological compliance", "true crime psychology", "milgram"],
+        "visual_keywords": ["dark-room", "whisper", "emergency-light", "cctv-camera", "interrogation-room"]
+    },
+    {
+        "id": "outlier_gaslighting_paper_trail",
+        "category": "fbi_interrogation_trap",
+        "views_baseline": "3.8M Views",
+        "title": "The 5-Word Email That Destroys Workplace Gaslighters #shorts #psychology",
+        "concept": "Corporate Paper Trail & Hostile Reality Distortion Defense",
+        "hook": "When a toxic boss or coworker tries to deny what they told you in private, never argue. Send this five-word email within thirty minutes.",
+        "search_tags": ["workplace psychology", "gaslighting counters", "toxic coworkers", "corporate politics", "manipulation defense", "paper trail", "career advice"],
+        "visual_keywords": ["chess", "interrogation-room", "silhouette", "cctv-camera", "whisper"]
+    },
+    {
+        "id": "outlier_stanford_prison_zimbardo",
+        "category": "forbidden_experiment",
+        "views_baseline": "6.3M Views",
+        "title": "Give an Average Student Sunglasses and a Baton #shorts #darkhistory",
+        "concept": "De-Individuation & The Stanford Prison Abyss",
+        "hook": "Give an average college student a pair of mirrored sunglasses and a wooden baton, and within six days they become a sadist.",
+        "search_tags": ["stanford prison experiment", "human cruelty", "dark history", "deindividuation", "psychological experiments", "philip zimbardo", "dark psychology"],
+        "visual_keywords": ["interrogation-room", "cctv-camera", "dark-room", "stare", "shadows"]
+    }
+]

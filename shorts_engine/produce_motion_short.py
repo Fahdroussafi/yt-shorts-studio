@@ -7,6 +7,7 @@ import random
 import asyncio
 import requests
 import subprocess
+import urllib.parse
 import imageio_ffmpeg
 from typing import Optional, List, Dict, Set
 
@@ -14,8 +15,10 @@ FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.join(BASE_DIR, "shorts_engine"))
 
-from engine import format_ass_time, generate_voice, get_audio_duration, build_ass_subtitles, strip_watermarks
+from engine import format_ass_time, generate_voice, get_audio_duration, build_ass_subtitles, strip_watermarks, FONTS_DIR
 from idea_bank import NICHE_PROFILES
+
+GAMEPLAY_DIR = os.path.join(BASE_DIR, "shorts_engine", "gameplay")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -179,17 +182,19 @@ def harvest_candidates_for_query(query: str) -> List[str]:
         except Exception as e:
             print(f"Pixabay fetch note: {e}")
 
-    # 3. Mixkit Pages 1 to 5 (Extended depth)
-    for page in range(1, 6):
+    # 3. Mixkit Pages 1 to 2 (Fast & rate-limit safe)
+    for page in (1, 2):
         try:
-            page_url = f"https://mixkit.co/free-stock-video/{q_clean}/" if page == 1 else f"https://mixkit.co/free-stock-video/{q_clean}/?page={page}"
-            r = requests.get(page_url, headers=HEADERS, timeout=8)
+            page_url = f"https://mixkit.co/free-stock-video/{q_clean}/" if page == 1 else f"https://mixkit.co/free-stock-video/{q_clean}/?page=2"
+            r = requests.get(page_url, headers=HEADERS, timeout=6)
             if r.status_code == 200:
                 found = re.findall(r'https://assets\.mixkit\.co/videos/\d+/\d+-(?:1080|720|360)\.mp4', r.text)
                 for f in found:
                     hd = re.sub(r'-\d+\.mp4$', '-720.mp4', f) if 'mixkit.co' in f else f
                     if hd not in results:
                         results.append(hd)
+            elif r.status_code == 429:
+                break
         except Exception:
             pass
 
@@ -371,7 +376,9 @@ def render_motion_video(
     grade_filter = f"[vbase]{color_cfg['filter']}[vgraded]"
 
     clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
-    subtitle_filter = f"[vgraded]ass='{clean_ass}'[vfinal]"
+    clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
+    fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
+    subtitle_filter = f"[vgraded]ass='{clean_ass}'{fonts_arg}[vfinal]"
 
     # Audio mix with procedural tension bed
     audio_input_idx = len(clip_paths)
@@ -407,6 +414,156 @@ def render_motion_video(
         raise RuntimeError("FFmpeg render failed")
     print(f"Motion video rendered: {output_mp4}")
 
+
+def get_gameplay_clip(gameplay_pref: str = "minecraft") -> str:
+    """Finds a gameplay background video from the local gameplay bank."""
+    if not os.path.exists(GAMEPLAY_DIR):
+        os.makedirs(GAMEPLAY_DIR, exist_ok=True)
+    files = [os.path.join(GAMEPLAY_DIR, f) for f in os.listdir(GAMEPLAY_DIR) if f.endswith(".mp4")]
+    if not files:
+        raise RuntimeError("No gameplay clips found in shorts_engine/gameplay bank.")
+    pref = [f for f in files if gameplay_pref.lower() in os.path.basename(f).lower()]
+    return random.choice(pref if pref else files)
+
+
+def render_gameplay_short(
+    audio_path: str,
+    ass_path: str,
+    output_mp4: str,
+    duration: float,
+    gameplay_path: Optional[str] = None
+):
+    """Renders 60/30fps vertical hypnotic Minecraft Parkour / Satisfying Short in ~3-4 seconds."""
+    if not gameplay_path or not os.path.exists(gameplay_path):
+        gameplay_path = get_gameplay_clip()
+    print(f"[4/5] Rendering High-Retention Gameplay short ({duration:.2f}s) from {os.path.basename(gameplay_path)}...")
+    clip_dur = get_video_duration(gameplay_path)
+    max_offset = max(0.0, clip_dur - duration - 2.0)
+    offset = round(random.uniform(0.0, max_offset), 2) if max_offset > 5.0 else 0.0
+
+    flip = ",hflip" if random.random() < 0.35 else ""
+    clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+    clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
+    fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
+
+    filter_complex = (
+        f"[0:v]trim=start={offset}:duration={duration:.2f},setpts=PTS-STARTPTS,fps=30,"
+        f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+        f"eq=contrast=1.08:saturation=1.12{flip},"
+        f"ass='{clean_ass}'{fonts_arg}[vfinal];"
+        f"[1:a][2:a]amix=inputs=2:duration=first:weights=1.0 0.12[afinal]"
+    )
+
+    cmd = [
+        FFMPEG, "-y",
+        "-ss", f"{offset:.2f}",
+        "-t", f"{duration:.2f}",
+        "-i", gameplay_path,
+        "-i", audio_path,
+        "-f", "lavfi", "-t", f"{duration:.2f}",
+        "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.03,lowpass=f=140",
+        "-filter_complex", filter_complex,
+        "-map", "[vfinal]",
+        "-map", "[afinal]",
+        "-c:v", "libx264",
+        "-preset", "faster",
+        "-crf", "19",
+        "-threads", "2",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-t", f"{duration:.2f}",
+        output_mp4
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        print("FFmpeg gameplay render error:", res.stderr[-800:])
+        raise RuntimeError("FFmpeg gameplay render failed")
+    print(f"Gameplay short rendered: {output_mp4}")
+
+
+def render_split_retention_short(
+    clip_paths: list,
+    audio_path: str,
+    ass_path: str,
+    output_mp4: str,
+    duration: float,
+    gameplay_path: Optional[str] = None
+):
+    """Renders 50/50 Split-Screen (Top: Cinematic Story Cuts, Bottom: Minecraft Parkour, Center: Bold Captions)."""
+    if not gameplay_path or not os.path.exists(gameplay_path):
+        gameplay_path = get_gameplay_clip("minecraft")
+    print(f"[4/5] Rendering 50/50 Split-Screen video (Story Visuals + Parkour, {duration:.2f}s)...")
+    clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+    clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
+    fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
+
+    cuts = clip_paths[:min(6, len(clip_paths))] if clip_paths else []
+    per_cut = duration / max(1, len(cuts))
+
+    inputs = []
+    top_parts = []
+    for i, c in enumerate(cuts):
+        inputs.extend(["-stream_loop", "-1", "-i", c])
+        top_parts.append(
+            f"[{i}:v]trim=duration={per_cut:.3f},setpts=PTS-STARTPTS,fps=30,"
+            f"scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[top_{i}]"
+        )
+    concat_top = "".join(f"[top_{i}]" for i in range(len(cuts)))
+    top_chain = f"{concat_top}concat=n={len(cuts)}:v=1:a=0[vtop]" if cuts else ""
+
+    gameplay_input_idx = len(cuts)
+    inputs.extend(["-stream_loop", "-1", "-i", gameplay_path])
+    gp_dur = get_video_duration(gameplay_path)
+    gp_offset = round(random.uniform(0.0, max(0.0, gp_dur - duration - 2.0)), 2)
+
+    bottom_chain = (
+        f"[{gameplay_input_idx}:v]trim=start={gp_offset}:duration={duration:.2f},setpts=PTS-STARTPTS,fps=30,"
+        f"scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[vbottom]"
+    )
+
+    stack_chain = "[vtop][vbottom]vstack=inputs=2[vstacked]"
+    div_chain = "[vstacked]drawbox=y=958:color=black@0.9:width=1080:height=4:t=fill[vdivided]"
+    sub_chain = f"[vdivided]ass='{clean_ass}'{fonts_arg}[vfinal]"
+
+    audio_input_idx = len(inputs)
+    synth_input_idx = audio_input_idx + 1
+    audio_chain = f"[{audio_input_idx}:a][{synth_input_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.12[afinal]"
+
+    filter_chains = []
+    if top_parts:
+        filter_chains.extend(top_parts)
+    if top_chain:
+        filter_chains.append(top_chain)
+    filter_chains.extend([bottom_chain, stack_chain, div_chain, sub_chain, audio_chain])
+    full_filter = ";".join(filter_chains)
+
+    cmd = [
+        FFMPEG, "-y",
+        *inputs,
+        "-i", audio_path,
+        "-f", "lavfi", "-t", f"{duration:.2f}",
+        "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.03,lowpass=f=140",
+        "-filter_complex", full_filter,
+        "-map", "[vfinal]",
+        "-map", "[afinal]",
+        "-c:v", "libx264",
+        "-preset", "faster",
+        "-crf", "19",
+        "-threads", "2",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-t", f"{duration:.2f}",
+        output_mp4
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        print("FFmpeg split render error:", res.stderr[-800:])
+        raise RuntimeError("FFmpeg split render failed")
+    print(f"Split retention short rendered: {output_mp4}")
+
+
 async def produce_motion_short(
     video_id: str,
     script_text: str,
@@ -414,7 +571,8 @@ async def produce_motion_short(
     seo_meta: dict,
     niche: str = "dark_psychology",
     clip_history_file: Optional[str] = None,
-    target_dir: Optional[str] = None
+    target_dir: Optional[str] = None,
+    visual_mode: str = "cinematic_cuts"
 ):
     if not target_dir:
         target_dir = os.path.join(BASE_DIR, "videos", video_id)
@@ -425,54 +583,74 @@ async def produce_motion_short(
     output_mp4 = os.path.join(target_dir, f"{video_id}.mp4")
     meta_file = os.path.join(target_dir, "seo_metadata.txt")
 
-    print(f"\n=== PRODUCING REAL-MOTION SHORT: {video_id.upper()} (Niche: {niche}) ===")
+    print(f"\n=== PRODUCING REAL-MOTION SHORT: {video_id.upper()} (Niche: {niche} | Mode: {visual_mode}) ===")
     words = await generate_voice(script_text, audio_file)
     dur = get_audio_duration(audio_file)
     print(f"Audio Duration: {dur:.2f}s")
 
     build_ass_subtitles(words, ass_file)
 
-    # High-retention rapid pacing: cut every 2.4 to 2.8 seconds (~12 to 18 cuts for a 40s video)
-    target_cuts = max(12, min(18, round(dur / 2.6)))
+    if visual_mode == "parkour_brainrot":
+        # Pure Hypnotic Gameplay (Minecraft Parkour / Subway Surfers)
+        gameplay_file = get_gameplay_clip("minecraft")
+        render_gameplay_short(audio_file, ass_file, output_mp4, dur, gameplay_file)
 
-    profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
-    niche_bank = profile.get("visual_bank", ["thinking", "shadows", "mirror", "dark-street"])
+    elif visual_mode == "split_retention":
+        # 50/50 Split Screen: Top Story Visuals + Bottom Minecraft Parkour
+        gameplay_file = get_gameplay_clip("minecraft")
+        profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
+        niche_bank = profile.get("visual_bank", ["thinking", "shadows", "mirror", "dark-street"])
+        kws = list(clip_keywords)[:4] if clip_keywords else random.sample(niche_bank, 4)
+        clip_paths = []
+        used_in_video: Set[str] = set()
+        clip_history = load_clip_history(clip_history_file)
+        for idx, kw in enumerate(kws):
+            c_path = os.path.join(target_dir, f"clip_{idx}.mp4")
+            _, _ = download_clip_with_smart_fallback(kw, c_path, niche, used_in_video, clip_history)
+            clip_paths.append(c_path)
+        render_split_retention_short(clip_paths, audio_file, ass_file, output_mp4, dur, gameplay_file)
 
-    # Expand keywords if fewer provided than target cuts
-    expanded_keywords = list(clip_keywords) if clip_keywords else []
-    while len(expanded_keywords) < target_cuts:
-        fresh = random.choice([k for k in niche_bank if k not in expanded_keywords] or niche_bank)
-        expanded_keywords.append(fresh)
+    else:
+        # Standard Multi-Cut High Pacing Cinematic Stock
+        target_cuts = max(12, min(18, round(dur / 2.6)))
+        profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
+        niche_bank = profile.get("visual_bank", ["thinking", "shadows", "mirror", "dark-street"])
+        expanded_keywords = list(clip_keywords) if clip_keywords else []
+        while len(expanded_keywords) < target_cuts:
+            fresh = random.choice([k for k in niche_bank if k not in expanded_keywords] or niche_bank)
+            expanded_keywords.append(fresh)
+        expanded_keywords = expanded_keywords[:target_cuts]
 
-    expanded_keywords = expanded_keywords[:target_cuts]
+        clip_history = load_clip_history(clip_history_file)
+        used_in_video: Set[str] = set()
+        chosen_urls: List[str] = []
+        clip_paths: List[str] = []
 
-    clip_history = load_clip_history(clip_history_file)
-    used_in_video: Set[str] = set()
-    chosen_urls: List[str] = []
-    clip_paths: List[str] = []
+        print(f"[3/5] Scraping & downloading {len(expanded_keywords)} unique stock clips (No-Repeat Algorithm)...")
+        for idx, kw in enumerate(expanded_keywords):
+            clip_path = os.path.join(target_dir, f"clip_{idx}.mp4")
+            _, chosen_url = download_clip_with_smart_fallback(
+                query=kw,
+                dest_path=clip_path,
+                niche=niche,
+                used_in_video=used_in_video,
+                clip_history=clip_history
+            )
+            chosen_urls.append(chosen_url)
+            clip_paths.append(clip_path)
 
-    print(f"[3/5] Scraping & downloading {len(expanded_keywords)} unique stock clips (No-Repeat Algorithm)...")
-    for idx, kw in enumerate(expanded_keywords):
-        clip_path = os.path.join(target_dir, f"clip_{idx}.mp4")
-        _, chosen_url = download_clip_with_smart_fallback(
-            query=kw,
-            dest_path=clip_path,
-            niche=niche,
-            used_in_video=used_in_video,
-            clip_history=clip_history
-        )
-        chosen_urls.append(chosen_url)
-        clip_paths.append(clip_path)
+        record_clip_usage(clip_history_file, chosen_urls)
+        render_motion_video(clip_paths, audio_file, ass_file, output_mp4, dur)
 
-    # Record clips in user history
-    record_clip_usage(clip_history_file, chosen_urls)
-
-    render_motion_video(clip_paths, audio_file, ass_file, output_mp4, dur)
     strip_watermarks(output_mp4)
 
     with open(meta_file, "w", encoding="utf-8") as f:
         f.write(f"TITLE:\n{seo_meta['title']}\n\n")
         f.write(f"DESCRIPTION:\n{seo_meta['description']}\n\n")
+        if "search_tags" in seo_meta and seo_meta["search_tags"]:
+            st = seo_meta["search_tags"]
+            tags_str = ", ".join(st) if isinstance(st, list) else str(st)
+            f.write(f"TAGS:\n{tags_str}\n\n")
         f.write(f"PINNED COMMENT:\n{seo_meta['pinned_comment']}\n")
 
     mb = os.path.getsize(output_mp4) / (1024 * 1024)
