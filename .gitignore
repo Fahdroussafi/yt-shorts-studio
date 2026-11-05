@@ -22,6 +22,8 @@ auth/users.json
 videos/
 branding/avatar.jpg
 branding/banner.jpg
+shorts_engine/gameplay/*.mp4
+*.mp4
 
 # Python
 __pycache__/
