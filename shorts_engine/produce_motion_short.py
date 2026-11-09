@@ -108,6 +108,30 @@ COLOR_LOOKS = {
     }
 }
 
+# Ambient Procedural Audio Bed Presets
+AUDIO_BEDS = {
+    "deep_heartbeat": {
+        "name": "Deep Sub-Bass Heartbeat",
+        "filter": "anoisesrc=d=60:c=brown:r=44100:a=0.04,lowpass=f=95,tremolo=f=1.2:d=0.7",
+        "weight": 0.14
+    },
+    "dark_drone": {
+        "name": "Dark Ambient Drone",
+        "filter": "anoisesrc=d=60:c=brown:r=44100:a=0.05,lowpass=f=120",
+        "weight": 0.13
+    },
+    "subtle_tension": {
+        "name": "Subtle High-Tension Rumble",
+        "filter": "anoisesrc=d=60:c=pink:r=44100:a=0.03,lowpass=f=140",
+        "weight": 0.12
+    },
+    "clock_tick": {
+        "name": "Psychological Clockwork Pulse",
+        "filter": "anoisesrc=d=60:c=pink:r=44100:a=0.035,lowpass=f=160,tremolo=f=2.0:d=0.9",
+        "weight": 0.15
+    }
+}
+
 # Verified Physical Stock Video Slugs (Mixkit verified 20-40 HD clips each)
 VERIFIED_STOCK_SLUGS = {
     "tunnel", "subway", "security-camera", "crowd", "eye", "police", "prison",

@@ -1675,8 +1675,13 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
                     "generation_type": f"story_series_part_{ep_idx}"
                 }
 
-        with ThreadPoolExecutor(max_workers=series_count) as executor:
-            episodes = list(executor.map(_generate_single_part, range(1, series_count + 1)))
+        # Generate series parts sequentially with slight pause to avoid Groq burst-rate limit
+        episodes = []
+        for ep_num in range(1, series_count + 1):
+            ep_res = _generate_single_part(ep_num)
+            episodes.append(ep_res)
+            if ep_num < series_count:
+                time.sleep(0.35)
 
         return {
             "is_series": True,
@@ -1799,7 +1804,8 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                 record_clip_usage,
                 render_motion_video,
                 render_gameplay_short,
-                render_split_retention_short
+                render_split_retention_short,
+                extract_timeline_visual_queries
             )
             from idea_bank import NICHE_PROFILES
 
@@ -1849,22 +1855,21 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
 
             elif v_mode == "split_retention":
                 niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
-                profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
-                niche_bank = profile.get("visual_bank", ["thinking", "shadows", "mirror", "dark-street", "candle"])
-                target_cuts = 3  # High quality story scenes for top half
-                expanded_keywords = list(req.clip_keywords) if req.clip_keywords else []
-                while len(expanded_keywords) < target_cuts:
-                    fresh = random.choice([k for k in niche_bank if k not in expanded_keywords] or niche_bank)
-                    expanded_keywords.append(fresh)
-                expanded_keywords = expanded_keywords[:target_cuts]
+                target_cuts = 4  # High quality story scenes for top half
+                timeline_queries = extract_timeline_visual_queries(
+                    script_text=clean_script,
+                    target_cuts=target_cuts,
+                    keywords_from_prompt=req.clip_keywords,
+                    niche=niche
+                )
 
-                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Visual Mode: Split-Screen Retention. Fetching {len(expanded_keywords)} top-tier narrative clips...")
+                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Visual Mode: Split-Screen Retention. Fetching {len(timeline_queries)} timeline clips: {timeline_queries}...")
                 clip_history_file = os.path.join(u_dir, "clip_history.json")
                 clip_history = load_clip_history(clip_history_file)
                 used_in_video = set()
                 chosen_urls = []
 
-                for idx, kw in enumerate(expanded_keywords):
+                for idx, kw in enumerate(timeline_queries):
                     clip_path = os.path.join(target_dir, f"clip_{idx}.mp4")
                     _, chosen_url = await asyncio.to_thread(
                         download_clip_with_smart_fallback,
@@ -1884,24 +1889,22 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
 
             else:  # cinematic_cuts
                 niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
-                profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
-                niche_bank = profile.get("visual_bank", ["thinking", "shadows", "mirror", "dark-street", "candle"])
+                target_cuts = max(8, min(14, round(dur / 3.0)))
+                timeline_queries = extract_timeline_visual_queries(
+                    script_text=clean_script,
+                    target_cuts=target_cuts,
+                    keywords_from_prompt=req.clip_keywords,
+                    niche=niche
+                )
 
-                target_cuts = max(6, min(10, round(dur / 4.2)))
-                expanded_keywords = list(req.clip_keywords) if req.clip_keywords else []
-                while len(expanded_keywords) < target_cuts:
-                    fresh = random.choice([k for k in niche_bank if k not in expanded_keywords] or niche_bank)
-                    expanded_keywords.append(fresh)
-                expanded_keywords = expanded_keywords[:target_cuts]
-
-                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Scraping & downloading {len(expanded_keywords)} unique stock clips (No-Repeat Algorithm)...")
+                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Scraping & downloading {len(timeline_queries)} script-synchronized stock clips: {timeline_queries}...")
 
                 clip_history_file = os.path.join(u_dir, "clip_history.json")
                 clip_history = load_clip_history(clip_history_file)
                 used_in_video = set()
                 chosen_urls = []
 
-                for idx, kw in enumerate(expanded_keywords):
+                for idx, kw in enumerate(timeline_queries):
                     clip_path = os.path.join(target_dir, f"clip_{idx}.mp4")
                     _, chosen_url = await asyncio.to_thread(
                         download_clip_with_smart_fallback,

@@ -105,8 +105,8 @@ def validate_viral_script(data: dict, niche: str) -> Tuple[bool, str]:
     # Verify Word Count Bounds (High Retention Pace)
     full_text = f"{act1} {act2} {act3} {act4}"
     word_count = len(full_text.split())
-    if word_count < 85 or word_count > 155:
-        return False, f"Total spoken word count is {word_count} words (Must be 90-150 words for ~40s retention)"
+    if word_count < 65 or word_count > 165:
+        return False, f"Total spoken word count is {word_count} words (Must be 65-165 words for ~30-45s retention)"
 
     # Verify Act 3 contains actionable quote / counter-phrase
     if '"' not in act3 and "'" not in act3 and "say" not in act3.lower() and "whisper" not in act3.lower() and "look" not in act3.lower():
@@ -233,13 +233,14 @@ def clean_and_assemble_script(parsed: dict, brand_name: str, brand_handle: str, 
     parsed["chosen_angle"] = chosen_angle
     return parsed
 
-def generate_with_groq_lpu(prompt: str, api_key: str, user_tracker_file: Optional[str] = None) -> Optional[dict]:
+def generate_with_groq_lpu(prompt: str, api_key: str) -> Optional[dict]:
     """Generates viral script using Groq Cloud LPU in ~0.6 seconds."""
-    # Prioritize 120b & 27b high reasoning models. Avoid strict response_format on gpt-oss to prevent HTTP 400.
-    models = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"]
+    # Prioritize qwen/qwen3.8-27b (fastest native json_object), then openai/gpt-oss-120b and 20b with ample max_tokens
+    models = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "allam-2-7b"]
     for model_name in models:
         try:
             url = "https://api.groq.com/openai/v1/chat/completions"
+            max_tok = 3500 if "gpt-oss" in model_name else 1400
             payload = {
                 "model": model_name,
                 "messages": [
@@ -247,22 +248,24 @@ def generate_with_groq_lpu(prompt: str, api_key: str, user_tracker_file: Optiona
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.68,
-                "max_tokens": 1200
+                "max_tokens": max_tok
             }
             # Only add response_format for models that natively support json_object without schema conflict
-            if "qwen" in model_name or "llama-3.3" in model_name:
+            if "qwen" in model_name:
                 payload["response_format"] = {"type": "json_object"}
 
             res = requests.post(url, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json=payload, timeout=10)
             if res.status_code == 200:
-                try:
-                    from usage_tracker import record_ai_request
-                    record_ai_request(tracker_file=user_tracker_file)
-                except Exception:
-                    pass
-
                 data = res.json()
-                content = data["choices"][0]["message"]["content"]
+                choice = data["choices"][0]
+                content = choice.get("message", {}).get("content") or ""
+                # If content is empty but model provided reasoning with json, search reasoning
+                if not content.strip():
+                    reasoning_text = choice.get("message", {}).get("reasoning") or ""
+                    match_r = re.search(r'(\{[\s\S]*\})', reasoning_text)
+                    if match_r:
+                        content = match_r.group(1)
+
                 # Strip reasoning think tags if present
                 clean_content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
                 # Match inner json if enclosed in tags or markdown
@@ -334,7 +337,7 @@ def generate_ai_script(
     # 1. Primary: Groq LPU (0.6s)
     parsed = None
     if api_key:
-        parsed = generate_with_groq_lpu(prompt, api_key, user_tracker_file)
+        parsed = generate_with_groq_lpu(prompt, api_key)
 
     # 2. Limitless Fallback: OpenAI / DeepSeek Zero-Key API
     if not parsed:
@@ -348,11 +351,19 @@ def generate_ai_script(
             # One quick recovery attempt
             rec_prompt = prompt + f"\nRE-ATTEMPT FIX: {reason}. Ensure Act 1 starts with 'you'/'your' directly."
             if api_key:
-                parsed = generate_with_groq_lpu(rec_prompt, api_key, user_tracker_file)
+                parsed = generate_with_groq_lpu(rec_prompt, api_key)
             if not parsed:
                 parsed = generate_with_pollinations_free_ai(rec_prompt)
 
     if parsed:
+        # Strictly record 1 single AI request per finalized script
+        if parsed.get("model_used", "").startswith("groq-"):
+            try:
+                from usage_tracker import record_ai_request
+                record_ai_request(tracker_file=user_tracker_file)
+            except Exception:
+                pass
+
         final_data = clean_and_assemble_script(parsed, brand_name, brand_handle, profile, chosen_angle)
         record_topic_history(topic_history_file, final_data.get("title", ""), niche, chosen_angle)
         return final_data
