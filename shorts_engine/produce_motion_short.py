@@ -15,6 +15,23 @@ FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.join(BASE_DIR, "shorts_engine"))
 
+# Load environment variables from .env if present
+def _load_env_fallback():
+    env_path = os.path.join(BASE_DIR, ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        if k.strip() not in os.environ:
+                            os.environ[k.strip()] = v.strip().strip("'\"")
+        except Exception:
+            pass
+
+_load_env_fallback()
+
 from engine import format_ass_time, generate_voice, get_audio_duration, build_ass_subtitles, strip_watermarks, FONTS_DIR
 from idea_bank import NICHE_PROFILES
 
@@ -31,6 +48,9 @@ CACHE_TTL = 6 * 3600  # 6 hours
 
 def extract_clip_id(url: str) -> str:
     """Extracts a unique, stable clip identifier from a stock video URL."""
+    m_uns = re.search(r'images\.unsplash\.com/photo-([a-zA-Z0-9_-]+)', url)
+    if m_uns:
+        return f"uns_{m_uns.group(1)[:25]}"
     m = re.search(r'/videos/(\d+)/', url)
     if m:
         return f"mix_{m.group(1)}"
@@ -304,6 +324,24 @@ def harvest_candidates_for_query(query: str) -> List[str]:
         except Exception:
             pass
 
+    # 4. Unsplash API (High-Resolution Portrait Stills for Ken Burns Motion Cuts)
+    unsplash_key = os.environ.get("UNSPLASH_ACCESS_KEY")
+    if unsplash_key:
+        try:
+            u_clean = query.strip().replace("-", " ")
+            u_url = f"https://api.unsplash.com/search/photos?query={urllib.parse.quote_plus(u_clean)}&orientation=portrait&per_page=12"
+            ur = requests.get(u_url, headers={"Authorization": f"Client-ID {unsplash_key}"}, timeout=6)
+            if ur.status_code == 200:
+                udata = ur.json()
+                for p in udata.get("results", []):
+                    urls = p.get("urls", {})
+                    # Prefer raw or regular high-res image
+                    cand = urls.get("regular") or urls.get("full") or urls.get("small")
+                    if cand and cand not in results:
+                        results.append(cand)
+        except Exception as e:
+            print(f"Unsplash fetch note: {e}")
+
     _QUERY_CACHE[q_clean] = (now, results)
     return results
 
@@ -384,15 +422,52 @@ def download_clip_with_smart_fallback(
         try:
             r = requests.get(selected_url, headers=HEADERS, stream=True, timeout=25)
             if r.status_code == 200:
-                with open(dest_path, "wb") as f:
-                    for chunk in r.iter_content(chunk_size=1024 * 64):
-                        if chunk:
-                            f.write(chunk)
+                is_image = "images.unsplash.com" in selected_url or r.headers.get("Content-Type", "").startswith("image/")
+                if is_image:
+                    # Download image to temp and convert to 1080x1920 30fps Ken Burns smooth pan/zoom mp4
+                    temp_img = dest_path + ".jpg"
+                    with open(temp_img, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1024 * 64):
+                            if chunk:
+                                f.write(chunk)
 
-                if os.path.exists(dest_path) and os.path.getsize(dest_path) > 100000:
-                    mb = round(os.path.getsize(dest_path) / (1024 * 1024), 2)
-                    print(f"  Saved clip: {dest_path} ({mb} MB)")
-                    return dest_path, selected_url
+                    # Dynamic Ken Burns Zoom/Pan animation
+                    zoom_cmd = [
+                        FFMPEG, "-y",
+                        "-loop", "1",
+                        "-i", temp_img,
+                        "-t", "4.5",
+                        "-vf", (
+                            "scale=1200:2133:force_original_aspect_ratio=increase,"
+                            "crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2,"
+                            "zoompan=z='min(zoom+0.0015,1.15)':d=135:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,"
+                            "fps=30,setsar=1"
+                        ),
+                        "-c:v", "libx264",
+                        "-preset", "faster",
+                        "-crf", "19",
+                        "-pix_fmt", "yuv420p",
+                        dest_path
+                    ]
+                    z_res = subprocess.run(zoom_cmd, capture_output=True, text=True)
+                    if os.path.exists(temp_img):
+                        try: os.remove(temp_img)
+                        except Exception: pass
+
+                    if z_res.returncode == 0 and os.path.exists(dest_path) and os.path.getsize(dest_path) > 20000:
+                        mb = round(os.path.getsize(dest_path) / (1024 * 1024), 2)
+                        print(f"  Saved Unsplash Ken Burns motion clip: {dest_path} ({mb} MB)")
+                        return dest_path, selected_url
+                else:
+                    with open(dest_path, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1024 * 64):
+                            if chunk:
+                                f.write(chunk)
+
+                    if os.path.exists(dest_path) and os.path.getsize(dest_path) > 100000:
+                        mb = round(os.path.getsize(dest_path) / (1024 * 1024), 2)
+                        print(f"  Saved clip: {dest_path} ({mb} MB)")
+                        return dest_path, selected_url
         except Exception as e:
             print(f"  Clip download error ({selected_url}): {e}")
 
@@ -500,6 +575,33 @@ def render_motion_video(
     print(f"Motion video rendered: {output_mp4}")
 
 
+def fetch_unsplash_thumbnail(query: str, dest_path: str) -> Optional[str]:
+    """Downloads a high-CTR portrait thumbnail from Unsplash for the video topic."""
+    unsplash_key = os.environ.get("UNSPLASH_ACCESS_KEY")
+    if not unsplash_key:
+        return None
+    try:
+        u_clean = query.strip().replace("-", " ")
+        u_url = f"https://api.unsplash.com/search/photos?query={urllib.parse.quote_plus(u_clean)}&orientation=portrait&per_page=6"
+        ur = requests.get(u_url, headers={"Authorization": f"Client-ID {unsplash_key}"}, timeout=7)
+        if ur.status_code == 200:
+            udata = ur.json()
+            results = udata.get("results", [])
+            if results:
+                # Top candidate high-res image
+                cand_url = results[0].get("urls", {}).get("regular") or results[0].get("urls", {}).get("full")
+                if cand_url:
+                    r = requests.get(cand_url, headers=HEADERS, timeout=20)
+                    if r.status_code == 200 and len(r.content) > 10000:
+                        with open(dest_path, "wb") as f:
+                            f.write(r.content)
+                        print(f"  Saved Unsplash portrait thumbnail: {dest_path}")
+                        return dest_path
+    except Exception as e:
+        print(f"Unsplash thumbnail error: {e}")
+    return None
+
+
 def get_gameplay_clip(gameplay_pref: str = "minecraft") -> str:
     """Finds a gameplay background video from the local gameplay bank."""
     if not os.path.exists(GAMEPLAY_DIR):
@@ -532,7 +634,7 @@ def render_gameplay_short(
     fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
 
     filter_complex = (
-        f"[0:v]trim=start={offset}:duration={duration:.2f},setpts=PTS-STARTPTS,fps=30,"
+        f"[0:v]trim=duration={duration:.2f},setpts=PTS-STARTPTS,fps=30,"
         f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
         f"eq=contrast=1.08:saturation=1.12{flip},"
         f"ass='{clean_ass}'{fonts_arg}[vfinal];"
@@ -541,6 +643,7 @@ def render_gameplay_short(
 
     cmd = [
         FFMPEG, "-y",
+        "-stream_loop", "-1",
         "-ss", f"{offset:.2f}",
         "-t", f"{duration:.2f}",
         "-i", gameplay_path,
@@ -564,6 +667,11 @@ def render_gameplay_short(
     if res.returncode != 0:
         print("FFmpeg gameplay render error:", res.stderr[-800:])
         raise RuntimeError("FFmpeg gameplay render failed")
+
+    # Minimum size guard: Ensure output has full video frames
+    if not os.path.exists(output_mp4) or os.path.getsize(output_mp4) < 1_500_000:
+        raise RuntimeError(f"Gameplay render generated an incomplete/empty video ({os.path.getsize(output_mp4) if os.path.exists(output_mp4) else 0} bytes).")
+
     print(f"Gameplay short rendered: {output_mp4}")
 
 
@@ -597,13 +705,13 @@ def render_split_retention_short(
     concat_top = "".join(f"[top_{i}]" for i in range(len(cuts)))
     top_chain = f"{concat_top}concat=n={len(cuts)}:v=1:a=0[vtop]" if cuts else ""
 
-    gameplay_input_idx = len(cuts)
-    inputs.extend(["-stream_loop", "-1", "-i", gameplay_path])
     gp_dur = get_video_duration(gameplay_path)
-    gp_offset = round(random.uniform(0.0, max(0.0, gp_dur - duration - 2.0)), 2)
+    gp_offset = round(random.uniform(0.0, max(0.0, gp_dur - duration - 2.0)), 2) if gp_dur > duration + 2.0 else 0.0
+    gameplay_input_idx = len(cuts)
+    inputs.extend(["-stream_loop", "-1", "-ss", f"{gp_offset:.2f}", "-t", f"{duration:.2f}", "-i", gameplay_path])
 
     bottom_chain = (
-        f"[{gameplay_input_idx}:v]trim=start={gp_offset}:duration={duration:.2f},setpts=PTS-STARTPTS,fps=30,"
+        f"[{gameplay_input_idx}:v]trim=duration={duration:.2f},setpts=PTS-STARTPTS,fps=30,"
         f"scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[vbottom]"
     )
 

@@ -33,21 +33,46 @@ async def generate_voice(text: str, voice_file: str, voice: str = "en-US-Christo
     if brand_name and brand_name.lower() not in text.lower():
         text = text.rstrip(" .,!?:;-") + f". Follow {brand_name} for more."
 
-    comm = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
+    # Validate voice against known working voices to prevent "No audio was received" errors
+    working_voices = ["en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-EricNeural", "en-GB-RyanNeural"]
+    selected_voice = voice if voice in working_voices else "en-US-ChristopherNeural"
+
     words = []
-    
-    with open(voice_file, "wb") as f:
-        async for chunk in comm.stream():
-            if chunk["type"] == "audio":
-                f.write(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                start_sec = chunk["offset"] / 10_000_000
-                dur_sec = chunk["duration"] / 10_000_000
-                words.append({
-                    "word": chunk["text"],
-                    "start": start_sec,
-                    "end": start_sec + dur_sec
-                })
+    try:
+        comm = edge_tts.Communicate(text, selected_voice, rate=rate, boundary="WordBoundary")
+        with open(voice_file, "wb") as f:
+            async for chunk in comm.stream():
+                if chunk["type"] == "audio":
+                    f.write(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    start_sec = chunk["offset"] / 10_000_000
+                    dur_sec = chunk["duration"] / 10_000_000
+                    words.append({
+                        "word": chunk["text"],
+                        "start": start_sec,
+                        "end": start_sec + dur_sec
+                    })
+    except Exception as e:
+        print(f"Edge-TTS failed with {selected_voice} ({e}), falling back to en-US-ChristopherNeural...")
+        words = []
+        comm = edge_tts.Communicate(text, "en-US-ChristopherNeural", rate=rate, boundary="WordBoundary")
+        with open(voice_file, "wb") as f:
+            async for chunk in comm.stream():
+                if chunk["type"] == "audio":
+                    f.write(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    start_sec = chunk["offset"] / 10_000_000
+                    dur_sec = chunk["duration"] / 10_000_000
+                    words.append({
+                        "word": chunk["text"],
+                        "start": start_sec,
+                        "end": start_sec + dur_sec
+                    })
+
+    # Guard against 0-byte audio
+    if not os.path.exists(voice_file) or os.path.getsize(voice_file) < 500:
+        raise RuntimeError(f"Voice synthesis failed to produce audio file for voice '{selected_voice}'.")
+
     print(f"Generated {len(words)} word timestamps.")
     return words
 

@@ -1550,22 +1550,6 @@ def get_usage(user: dict = Depends(require_auth)):
     return summary
 
 
-@app.post("/api/usage/reset")
-def reset_usage(user: dict = Depends(require_auth)):
-    """Resets daily quota usage counters to 0 for current Pacific Time day (User Scoped)."""
-    paths = get_user_paths(user)
-    from usage_tracker import save_tracker, get_current_pt_date, AI_DAILY_LIMIT, YOUTUBE_DAILY_LIMIT
-    fresh = {
-        "date_pt": get_current_pt_date(),
-        "ai_requests": 0,
-        "youtube_units": 0,
-        "ai_limit": AI_DAILY_LIMIT,
-        "youtube_limit": YOUTUBE_DAILY_LIMIT
-    }
-    save_tracker(fresh, paths["usage_file"])
-    return {"success": True, "message": "Daily usage counters reset to 0"}
-
-
 @app.get("/api/next-short-id")
 def get_next_id(user: dict = Depends(require_auth)):
     """Calculates next sequential short folder ID automatically for the user's library."""
@@ -1805,7 +1789,8 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                 render_motion_video,
                 render_gameplay_short,
                 render_split_retention_short,
-                extract_timeline_visual_queries
+                extract_timeline_visual_queries,
+                fetch_unsplash_thumbnail
             )
             from idea_bank import NICHE_PROFILES
 
@@ -1945,6 +1930,14 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                     elif val_name == "desc": desc_to_save = target_str
                     elif val_name == "pinned": pinned_to_save = target_str
 
+            # 7. Unsplash High-CTR Thumbnail Generation
+            thumb_path = os.path.join(target_dir, "thumbnail.jpg")
+            thumb_query = (req.clip_keywords[0] if req.clip_keywords else "") or req.title or "cinematic mystery"
+            try:
+                await asyncio.to_thread(fetch_unsplash_thumbnail, thumb_query, thumb_path)
+            except Exception as te:
+                print(f"Thumbnail generation note: {te}")
+
             tags_str = ", ".join(req.search_tags) if req.search_tags else ""
             with open(meta_file, "w", encoding="utf-8") as f:
                 f.write(f"TITLE:\n{title_to_save}\n\n")
@@ -1969,6 +1962,8 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             PRODUCTION_TASKS[task_id]["log"].append(f"[SUCCESS] Real-motion short generated ({mb} MB): {file_name}")
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             PRODUCTION_TASKS[task_id]["status"] = "failed"
             PRODUCTION_TASKS[task_id]["error"] = str(e)
             PRODUCTION_TASKS[task_id]["log"].append(f"[ERROR] Production failed: {str(e)}")
@@ -2095,7 +2090,13 @@ def upload_to_youtube(req: UploadRequest, user: dict = Depends(require_auth)):
             "scheduled": req.publish_at
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        err_msg = str(e)
+        if "invalid_grant" in err_msg.lower() or "expired or revoked" in err_msg.lower():
+            raise HTTPException(
+                status_code=401,
+                detail="YouTube OAuth token expired or revoked. Go to Channel Settings and reconnect your YouTube account."
+            )
+        raise HTTPException(status_code=500, detail=err_msg)
 
 
 @app.patch("/api/videos/{short_id}/schedule")

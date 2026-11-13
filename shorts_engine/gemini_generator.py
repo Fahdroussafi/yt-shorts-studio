@@ -161,15 +161,18 @@ MANDATORY 4-ACT ARCHITECTURE (STRICT RULES):
      * NEVER start with "There is a...", "Did you know...", or "A psychologist proved...".
      * NEVER use the words "human behavioral glitch" or "psychological glitch".
      * NEVER name clinical effects in Act 1.
-2. ACT 2 MECHANISM (4-21s | 45-52 words):
+2. ACT 2 MECHANISM (4-17s | 35-44 words):
    - Explain the evolutionary brain trap, predator tactic, or cognitive betrayal causing this danger. Keep it visceral and cinematic.
-3. ACT 3 DIRECTIVE (21-37s | 38-46 words):
+3. ACT 3 DIRECTIVE (17-31s | 28-36 words):
    - Give the viewer an exact physical counter-move AND a verbatim spoken script in quotation marks ("...") they can use to break the trap.
-4. ACT 4 DYNAMIC BRANDED OUTRO (37-41s | 10-14 words - MANDATORY):
+4. ACT 4 DYNAMIC BRANDED OUTRO (31-35s | 10-14 words - MANDATORY):
    - MUST call out your channel name using this formula:
      "Follow {brand_name} for [dynamic, context-specific reason tailored directly to this topic]."
 5. TOTAL SPOKEN WORDS:
-   - Strictly between 95 and 135 words total across all acts.
+   - Strictly between 85 and 110 words total across all acts (~33-42s fast pacing).
+6. TITLE RULE (CRITICAL FOR SHORTS FEED CTR):
+   - Use plain, visceral everyday English (e.g. "Why Crowds Ignore Dying People (The Fix)").
+   - NEVER put academic jargon, experiment names, years, or clinical terms in the title (no "Compliance Loop", "Forced Teaming", "Rosenhan", "1974", "Presupposition").
 
 NEGATIVE FILTER:
 - Never mention: [{forbidden}].
@@ -224,10 +227,10 @@ def clean_and_assemble_script(parsed: dict, brand_name: str, brand_handle: str, 
 
     voice_pool = [
         profile.get("voice_recommended", "en-US-ChristopherNeural"),
+        "en-US-ChristopherNeural",
         "en-US-GuyNeural",
         "en-US-EricNeural",
-        "en-GB-RyanNeural",
-        "en-US-AndrewMultilingualNeural"
+        "en-GB-RyanNeural"
     ]
     parsed["voice"] = random.choice(voice_pool)
     parsed["chosen_angle"] = chosen_angle

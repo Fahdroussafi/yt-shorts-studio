@@ -296,35 +296,18 @@ export default function Layout() {
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
                 <span>$0.00 Cost Stack</span>
               </span>
-              <div className="flex items-center space-x-1">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await authFetch('/api/usage/reset', { method: 'POST' });
-                      fetchUsage();
-                    } catch (e) {
-                      console.error('Failed to reset usage:', e);
-                    }
-                  }}
-                  className="hover:text-amber-400 px-1.5 py-0.5 hover:bg-slate-800/80 rounded transition text-[10px] font-mono text-slate-500 hover:text-slate-300"
-                  title="Reset daily usage counter back to 0"
-                >
-                  Reset
-                </button>
-                <button 
-                  type="button"
-                  onClick={fetchUsage} 
-                  disabled={loadingUsage}
-                  className="hover:text-cyan-400 px-2 py-1 hover:bg-slate-800/80 rounded-lg transition flex items-center space-x-1 border border-transparent hover:border-slate-700/60" 
-                  title="Sync Daily API Quota & AI Status"
-                >
-                  <RefreshCw className={`w-3 h-3 ${loadingUsage ? 'animate-spin text-cyan-400' : 'text-slate-400'}`} />
-                  <span className="text-[10px] font-mono text-slate-400">
-                    {loadingUsage ? 'Syncing...' : 'Sync'}
-                  </span>
-                </button>
-              </div>
+              <button 
+                type="button"
+                onClick={fetchUsage} 
+                disabled={loadingUsage}
+                className="hover:text-cyan-400 px-2 py-1 hover:bg-slate-800/80 rounded-lg transition flex items-center space-x-1 border border-transparent hover:border-slate-700/60" 
+                title="Sync Daily API Quota & AI Status"
+              >
+                <RefreshCw className={`w-3 h-3 ${loadingUsage ? 'animate-spin text-cyan-400' : 'text-slate-400'}`} />
+                <span className="text-[10px] font-mono text-slate-400">
+                  {loadingUsage ? 'Syncing...' : 'Sync'}
+                </span>
+              </button>
             </div>
           </div>
         </aside>
