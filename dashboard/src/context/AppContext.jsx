@@ -130,6 +130,7 @@ export function AppProvider({ children }) {
   const [dispatchTime, setDispatchTime] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
+  const [batchProgress, setBatchProgress] = useState(null);
 
   // FIX: Prevent background scrolling whenever ANY modal is active
   useEffect(() => {
@@ -736,40 +737,93 @@ export function AppProvider({ children }) {
     }
   };
 
+  const formatPublishAt = (t) => {
+    if (!t) return null;
+    if (t.includes('Z')) return t;
+    return `${t.replace(' ', 'T')}${t.length === 16 ? ':00.000Z' : 'Z'}`;
+  };
+
+  const uploadSingleVideo = async (videoId, privacyStatus, publishAt) => {
+    const res = await authFetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_id: videoId,
+        privacy_status: privacyStatus,
+        publish_at: publishAt ? formatPublishAt(publishAt) : null
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, video_id: videoId, error: data.detail || `HTTP ${res.status}`, status: res.status };
+    }
+    return { success: true, ...data };
+  };
+
   const handleUpload = async () => {
     setUploading(true);
     setUploadResult(null);
     try {
-      const formatPublishAt = (t) => {
-        if (!t) return null;
-        if (t.includes('Z')) return t;
-        return `${t.replace(' ', 'T')}${t.length === 16 ? ':00.000Z' : 'Z'}`;
-      };
-
-      const payload = {
-        video_id: dispatchVideoId,
-        privacy_status: dispatchMode,
-        publish_at: dispatchMode === 'scheduled' && dispatchTime ? formatPublishAt(dispatchTime) : null
-      };
-
-      const res = await authFetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setUploadResult({ success: true, ...data });
+      const result = await uploadSingleVideo(
+        dispatchVideoId,
+        dispatchMode,
+        dispatchMode === 'scheduled' ? dispatchTime : null
+      );
+      setUploadResult(result);
+      if (result.success) {
+        fetchVideos();
         fetchStats();
         fetchUsage();
-      } else {
-        setUploadResult({ success: false, error: data.detail });
       }
     } catch (e) {
       setUploadResult({ success: false, error: e.message });
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleBatchUpload = async (items) => {
+    if (!items || items.length === 0) return;
+    setUploading(true);
+    setUploadResult(null);
+    const results = [];
+    setBatchProgress({ active: true, current: 0, total: items.length, currentId: items[0].videoId, results: [] });
+
+    try {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        setBatchProgress({
+          active: true,
+          current: i + 1,
+          total: items.length,
+          currentId: item.videoId,
+          results: [...results]
+        });
+        let res;
+        try {
+          res = await uploadSingleVideo(item.videoId, 'scheduled', item.publishAt);
+        } catch (err) {
+          res = { success: false, video_id: item.videoId, error: err.message };
+        }
+        results.push({ ...res, scheduledAt: item.publishAt });
+        setBatchProgress({
+          active: true,
+          current: i + 1,
+          total: items.length,
+          currentId: item.videoId,
+          results: [...results]
+        });
+        if (!res.success) {
+          // Stop batch on auth/quota/upload error instead of burning remaining calls
+          break;
+        }
+      }
+      fetchVideos();
+      fetchStats();
+      fetchUsage();
+    } finally {
+      setUploading(false);
+      setBatchProgress((prev) => (prev ? { ...prev, active: false } : null));
     }
   };
 
@@ -820,7 +874,8 @@ export function AppProvider({ children }) {
     dispatchVideoId, setDispatchVideoId,
     dispatchMode, setDispatchMode,
     dispatchTime, setDispatchTime,
-    uploading, uploadResult, handleUpload
+    uploading, uploadResult, handleUpload,
+    batchProgress, handleBatchUpload
   };
 
   return (
