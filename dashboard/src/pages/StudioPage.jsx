@@ -13,7 +13,7 @@ export default function StudioPage() {
     studioComment, setStudioComment,
     visualMode, setVisualMode,
     studioSearchTags, setStudioSearchTags,
-    isProducing, handleStartProduction,
+    isProducing, pendingTaskQueue, handleStartProduction,
     taskStatus, generatingIdea, autoGenerateAndFillStudio,
     videos, setPreviewVideo, handleDeleteVideo
   } = useApp();
@@ -206,19 +206,31 @@ export default function StudioPage() {
           className="w-full py-3.5 rounded-xl bg-gradient-to-r from-violet-600 via-purple-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 disabled:opacity-50 text-white font-bold text-base flex items-center justify-center space-x-2 transition shadow-xl shadow-violet-600/20"
         >
           {isProducing ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5 fill-current" />}
-          <span>{isProducing ? 'Producing Real-Motion HD Short...' : 'Render 1080x1920 Short'}</span>
+          <span>
+            {isProducing
+              ? pendingTaskQueue?.length > 0
+                ? `Producing Series (${pendingTaskQueue.length} more queued)...`
+                : 'Producing Real-Motion HD Short...'
+              : 'Render 1080x1920 Short'}
+          </span>
         </button>
       </div>
 
       {/* Progress & Log Card */}
       {taskStatus && (
         <div className="p-5 rounded-2xl bg-[#12121a] border border-slate-800/80 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-bold text-sm text-white flex items-center space-x-2">
               <Layers className="w-4 h-4 text-violet-400" />
-              <span>Production Pipeline Status</span>
+              <span>Production Pipeline Status{taskStatus.video_id ? ` — ${taskStatus.video_id.toUpperCase()}` : ''}</span>
             </h3>
-            <span className={`text-xs font-mono uppercase font-bold px-2.5 py-1 rounded-full ${
+            <div className="flex items-center space-x-2">
+              {pendingTaskQueue?.length > 0 && (
+                <span className="text-[11px] font-mono px-2.5 py-1 rounded-full bg-amber-950/70 text-amber-300 border border-amber-800/60">
+                  Next: {pendingTaskQueue.map((t) => (t.videoId || '').toUpperCase()).join(', ')}
+                </span>
+              )}
+              <span className={`text-xs font-mono uppercase font-bold px-2.5 py-1 rounded-full ${
               taskStatus.status === 'completed'
                 ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/60'
                 : taskStatus.status === 'failed'
@@ -231,6 +243,7 @@ export default function StudioPage() {
                 ? `Queued (#${taskStatus.queue_position})`
                 : taskStatus.status}
             </span>
+            </div>
           </div>
 
           <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800/60">
