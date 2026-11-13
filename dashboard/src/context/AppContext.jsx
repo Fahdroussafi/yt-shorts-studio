@@ -124,6 +124,7 @@ export function AppProvider({ children }) {
   const [taskStatus, setTaskStatus] = useState(null);
   const [isProducing, setIsProducing] = useState(false);
   const [pendingTaskQueue, setPendingTaskQueue] = useState([]);
+  const [seriesTasks, setSeriesTasks] = useState([]);
 
   // Dispatcher State
   const [dispatchVideoId, setDispatchVideoId] = useState('');
@@ -193,24 +194,38 @@ export function AppProvider({ children }) {
 
   // Poll task status if producing
   useEffect(() => {
-    if (!activeTaskId || !isProducing) return;
+    if (!isProducing) return;
+    if (seriesTasks.length === 0 && !activeTaskId) return;
+
     const interval = setInterval(async () => {
       try {
+        if (seriesTasks.length > 0) {
+          let anyNewlyDone = false;
+          const updated = await Promise.all(
+            seriesTasks.map(async (t) => {
+              if (t.status === 'completed' || t.status === 'failed') return t;
+              const res = await authFetch(`/api/produce/status/${t.taskId}`);
+              if (!res.ok) return t;
+              const data = await res.json();
+              if (data.status === 'completed' || data.status === 'failed') anyNewlyDone = true;
+              return { ...t, ...data };
+            })
+          );
+          setSeriesTasks(updated);
+          if (anyNewlyDone) fetchVideos();
+          if (updated.every((t) => t.status === 'completed' || t.status === 'failed')) {
+            setIsProducing(false);
+          }
+          return;
+        }
+
         const res = await authFetch(`/api/produce/status/${activeTaskId}`);
         if (res.ok) {
           const data = await res.json();
           setTaskStatus(data);
           if (data.status === 'completed' || data.status === 'failed') {
             fetchVideos();
-            if (pendingTaskQueue.length > 0) {
-              const [nextTask, ...rest] = pendingTaskQueue;
-              setPendingTaskQueue(rest);
-              setActiveTaskId(nextTask.taskId);
-              if (nextTask.videoId) setStudioVideoId(nextTask.videoId);
-              showToast(`${nextTask.videoId?.toUpperCase() || 'Next part'} active in Studio (${rest.length} queued)`, 'info');
-            } else {
-              setIsProducing(false);
-            }
+            setIsProducing(false);
           }
         }
       } catch (err) {
@@ -218,7 +233,7 @@ export function AppProvider({ children }) {
       }
     }, 2000);
     return () => clearInterval(interval);
-  }, [activeTaskId, isProducing, pendingTaskQueue]);
+  }, [activeTaskId, isProducing, seriesTasks]);
 
   // API Call Handlers
   const fetchStats = async () => {
@@ -697,6 +712,7 @@ export function AppProvider({ children }) {
     showToast(`Quick starting ${idea.next_id || studioVideoId} in Studio...`, 'info');
     setIsProducing(true);
     setPendingTaskQueue([]);
+    setSeriesTasks([]);
     setTaskStatus({ status: 'queued', progress: 5, log: ['Initializing production request from Idea Lab...'] });
 
     try {
@@ -714,17 +730,39 @@ export function AppProvider({ children }) {
     sendIdeaToStudio(episodes[0], navigate);
     setIsProducing(true);
     setPendingTaskQueue([]);
-    setTaskStatus({ status: 'queued', progress: 5, log: [`Queueing ${episodes.length}-part series in Studio...`] });
+    setTaskStatus(null);
+    setSeriesTasks(
+      episodes.map((ep, idx) => ({
+        taskId: null,
+        videoId: ep.next_id || `part_${idx + 1}`,
+        title: ep.title || `Part ${idx + 1}`,
+        part: ep.series_part || idx + 1,
+        total: ep.series_total || episodes.length,
+        status: 'queued',
+        progress: 5,
+        log: ['[QUEUE] Submitting to production pipeline...']
+      }))
+    );
 
     try {
       const queued = [];
-      for (const ep of episodes) {
+      for (let i = 0; i < episodes.length; i++) {
+        const ep = episodes[i];
         const payload = buildIdeaPayload(ep);
         const taskId = await enqueueProduce(payload);
-        queued.push({ taskId, videoId: payload.video_id });
+        queued.push({
+          taskId,
+          videoId: payload.video_id,
+          title: payload.title,
+          part: ep.series_part || i + 1,
+          total: ep.series_total || episodes.length,
+          status: 'queued',
+          progress: 5,
+          log: ['[QUEUE] Queued on VPS render pipeline...']
+        });
       }
+      setSeriesTasks(queued);
       setActiveTaskId(queued[0].taskId);
-      setPendingTaskQueue(queued.slice(1));
       showToast(`Queued all ${queued.length} parts in Studio!`, 'success');
     } catch (e) {
       showToast(`Series queue error: ${e.message}`, 'error');
@@ -739,6 +777,7 @@ export function AppProvider({ children }) {
     }
     setIsProducing(true);
     setPendingTaskQueue([]);
+    setSeriesTasks([]);
     setTaskStatus({ status: 'queued', progress: 5, log: ['Initializing production request...'] });
 
     try {
@@ -896,7 +935,7 @@ export function AppProvider({ children }) {
     studioComment, setStudioComment,
     visualMode, setVisualMode,
     studioSearchTags, setStudioSearchTags,
-    activeTaskId, taskStatus, isProducing, pendingTaskQueue, handleStartProduction,
+    activeTaskId, taskStatus, isProducing, pendingTaskQueue, seriesTasks, handleStartProduction,
     dispatchVideoId, setDispatchVideoId,
     dispatchMode, setDispatchMode,
     dispatchTime, setDispatchTime,

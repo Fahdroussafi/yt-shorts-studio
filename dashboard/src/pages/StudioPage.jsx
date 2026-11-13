@@ -13,7 +13,7 @@ export default function StudioPage() {
     studioComment, setStudioComment,
     visualMode, setVisualMode,
     studioSearchTags, setStudioSearchTags,
-    isProducing, pendingTaskQueue, handleStartProduction,
+    isProducing, seriesTasks, handleStartProduction,
     taskStatus, generatingIdea, autoGenerateAndFillStudio,
     videos, setPreviewVideo, handleDeleteVideo
   } = useApp();
@@ -208,29 +208,111 @@ export default function StudioPage() {
           {isProducing ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5 fill-current" />}
           <span>
             {isProducing
-              ? pendingTaskQueue?.length > 0
-                ? `Producing Series (${pendingTaskQueue.length} more queued)...`
+              ? seriesTasks?.length > 1
+                ? `Producing ${seriesTasks.length}-Part Series (${seriesTasks.filter((t) => t.status === 'completed').length}/${seriesTasks.length} Done)...`
                 : 'Producing Real-Motion HD Short...'
               : 'Render 1080x1920 Short'}
           </span>
         </button>
       </div>
 
-      {/* Progress & Log Card */}
-      {taskStatus && (
+      {/* Multi-Screen Dynamic Series Grid (2 or 3 parts side-by-side) */}
+      {seriesTasks?.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-sm text-white flex items-center space-x-2">
+              <Layers className="w-4 h-4 text-amber-400" />
+              <span>Multi-Part Series Pipeline ({seriesTasks.filter((t) => t.status === 'completed').length}/{seriesTasks.length} Completed)</span>
+            </h3>
+          </div>
+          <div className={`grid grid-cols-1 gap-4 ${seriesTasks.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
+            {seriesTasks.map((t) => {
+              const badgeClass =
+                t.status === 'completed'
+                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/60'
+                  : t.status === 'failed'
+                    ? 'bg-red-950 text-red-300 border border-red-800/60'
+                    : t.status === 'queued'
+                      ? 'bg-amber-950 text-amber-300 border border-amber-800/60 animate-pulse'
+                      : 'bg-cyan-950 text-cyan-300 border border-cyan-800/60 animate-pulse';
+
+              return (
+                <div key={t.videoId} className="p-4 rounded-2xl bg-[#12121a] border border-slate-800/80 space-y-3 flex flex-col justify-between">
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-mono font-bold text-violet-300">
+                        PART {t.part}/{t.total} • {(t.videoId || '').toUpperCase()}
+                      </span>
+                      <span className={`text-[10px] font-mono uppercase font-bold px-2 py-0.5 rounded-full ${badgeClass}`}>
+                        {t.status === 'queued' && t.queue_position ? `Queue #${t.queue_position}` : t.status}
+                      </span>
+                    </div>
+
+                    <div className="text-xs font-bold text-white line-clamp-2 min-h-[2rem]" title={t.title}>
+                      {t.title}
+                    </div>
+
+                    <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden border border-slate-800/60">
+                      <div
+                        style={{ width: `${t.progress || 0}%` }}
+                        className={`h-full transition-all duration-300 ${
+                          t.status === 'completed'
+                            ? 'bg-emerald-500'
+                            : t.status === 'failed'
+                              ? 'bg-red-500'
+                              : 'bg-gradient-to-r from-violet-500 to-cyan-400'
+                        }`}
+                      />
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-black/60 border border-slate-800/80 font-mono text-[10px] text-slate-300 h-28 overflow-y-auto space-y-1">
+                      {(t.log || []).map((l, idx) => (
+                        <div key={idx} className={l.includes('[ERROR]') ? 'text-red-400 font-bold' : l.includes('[SUCCESS]') ? 'text-emerald-400 font-bold' : l.includes('[QUEUE]') ? 'text-amber-400' : 'text-slate-400'}>
+                          {l}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {t.status === 'completed' && (
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const v = videos.find((x) => x.id === t.videoId);
+                          if (v) setPreviewVideo(v);
+                          else navigate('/vault');
+                        }}
+                        className="flex-1 py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs flex items-center justify-center space-x-1 transition"
+                      >
+                        <Play className="w-3 h-3 text-cyan-400" />
+                        <span>Preview</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteVideo(t.videoId)}
+                        className="py-1.5 px-2.5 rounded-lg bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800/60 font-bold text-xs transition"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Single Short Progress & Log Card */}
+      {taskStatus && (!seriesTasks || seriesTasks.length === 0) && (
         <div className="p-5 rounded-2xl bg-[#12121a] border border-slate-800/80 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-bold text-sm text-white flex items-center space-x-2">
               <Layers className="w-4 h-4 text-violet-400" />
               <span>Production Pipeline Status{taskStatus.video_id ? ` — ${taskStatus.video_id.toUpperCase()}` : ''}</span>
             </h3>
-            <div className="flex items-center space-x-2">
-              {pendingTaskQueue?.length > 0 && (
-                <span className="text-[11px] font-mono px-2.5 py-1 rounded-full bg-amber-950/70 text-amber-300 border border-amber-800/60">
-                  Next: {pendingTaskQueue.map((t) => (t.videoId || '').toUpperCase()).join(', ')}
-                </span>
-              )}
-              <span className={`text-xs font-mono uppercase font-bold px-2.5 py-1 rounded-full ${
+            <span className={`text-xs font-mono uppercase font-bold px-2.5 py-1 rounded-full ${
               taskStatus.status === 'completed'
                 ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/60'
                 : taskStatus.status === 'failed'
@@ -243,7 +325,6 @@ export default function StudioPage() {
                 ? `Queued (#${taskStatus.queue_position})`
                 : taskStatus.status}
             </span>
-            </div>
           </div>
 
           <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800/60">
