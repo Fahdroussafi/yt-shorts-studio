@@ -123,6 +123,7 @@ export function AppProvider({ children }) {
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [taskStatus, setTaskStatus] = useState(null);
   const [isProducing, setIsProducing] = useState(false);
+  const [pendingTaskQueue, setPendingTaskQueue] = useState([]);
 
   // Dispatcher State
   const [dispatchVideoId, setDispatchVideoId] = useState('');
@@ -200,8 +201,16 @@ export function AppProvider({ children }) {
           const data = await res.json();
           setTaskStatus(data);
           if (data.status === 'completed' || data.status === 'failed') {
-            setIsProducing(false);
             fetchVideos();
+            if (pendingTaskQueue.length > 0) {
+              const [nextTask, ...rest] = pendingTaskQueue;
+              setPendingTaskQueue(rest);
+              setActiveTaskId(nextTask.taskId);
+              if (nextTask.videoId) setStudioVideoId(nextTask.videoId);
+              showToast(`${nextTask.videoId?.toUpperCase() || 'Next part'} active in Studio (${rest.length} queued)`, 'info');
+            } else {
+              setIsProducing(false);
+            }
           }
         }
       } catch (err) {
@@ -209,7 +218,7 @@ export function AppProvider({ children }) {
       }
     }, 2000);
     return () => clearInterval(interval);
-  }, [activeTaskId, isProducing]);
+  }, [activeTaskId, isProducing, pendingTaskQueue]);
 
   // API Call Handlers
   const fetchStats = async () => {
@@ -654,43 +663,71 @@ export function AppProvider({ children }) {
     }
   };
 
+  const enqueueProduce = async (payload) => {
+    const res = await authFetch('/api/produce', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    return data.task_id;
+  };
+
+  const buildIdeaPayload = (idea) => {
+    const kws = Array.isArray(idea.keywords) ? idea.keywords : (idea.keywords || '').split(',').map(s => s.trim()).filter(Boolean);
+    const tags = Array.isArray(idea.search_tags) ? idea.search_tags : (idea.search_tags || studioSearchTags || '').split(',').map(s => s.trim()).filter(Boolean);
+    const vid = idea.next_id || studioVideoId;
+    return {
+      video_id: vid,
+      script_text: idea.script,
+      clip_keywords: kws,
+      search_tags: tags,
+      visual_mode: idea.visual_mode || visualMode,
+      title: idea.title || `${vid} #shorts`,
+      description: idea.description,
+      pinned_comment: idea.pinned_comment,
+      voice: idea.voice || studioVoice,
+      niche: idea.niche || selectedNiche
+    };
+  };
+
   const handleQuickProduce = async (idea, navigate) => {
     sendIdeaToStudio(idea, navigate);
     showToast(`Quick starting ${idea.next_id || studioVideoId} in Studio...`, 'info');
     setIsProducing(true);
+    setPendingTaskQueue([]);
     setTaskStatus({ status: 'queued', progress: 5, log: ['Initializing production request from Idea Lab...'] });
 
     try {
-      const kws = Array.isArray(idea.keywords) ? idea.keywords : (idea.keywords || '').split(',').map(s => s.trim()).filter(Boolean);
-      const tags = Array.isArray(idea.search_tags) ? idea.search_tags : (idea.search_tags || studioSearchTags || '').split(',').map(s => s.trim()).filter(Boolean);
-      const res = await authFetch('/api/produce', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          video_id: idea.next_id || studioVideoId,
-          script_text: idea.script,
-          clip_keywords: kws,
-          search_tags: tags,
-          visual_mode: idea.visual_mode || visualMode,
-          title: idea.title || `${idea.next_id || studioVideoId} #shorts`,
-          description: idea.description,
-          pinned_comment: idea.pinned_comment,
-          voice: idea.voice || studioVoice,
-          niche: idea.niche || selectedNiche
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setActiveTaskId(data.task_id);
-        showToast("Production started in Studio!", "success");
-      } else {
-        const err = await res.json();
-        showToast(`Error starting production: ${err.detail}`, "error");
-        setIsProducing(false);
-      }
+      const taskId = await enqueueProduce(buildIdeaPayload(idea));
+      setActiveTaskId(taskId);
+      showToast("Production started in Studio!", "success");
     } catch (e) {
-      showToast(`Network error: ${e.message}`, "error");
+      showToast(`Error starting production: ${e.message}`, "error");
+      setIsProducing(false);
+    }
+  };
+
+  const handleProduceSeries = async (episodes, navigate) => {
+    if (!episodes || episodes.length === 0) return;
+    sendIdeaToStudio(episodes[0], navigate);
+    setIsProducing(true);
+    setPendingTaskQueue([]);
+    setTaskStatus({ status: 'queued', progress: 5, log: [`Queueing ${episodes.length}-part series in Studio...`] });
+
+    try {
+      const queued = [];
+      for (const ep of episodes) {
+        const payload = buildIdeaPayload(ep);
+        const taskId = await enqueueProduce(payload);
+        queued.push({ taskId, videoId: payload.video_id });
+      }
+      setActiveTaskId(queued[0].taskId);
+      setPendingTaskQueue(queued.slice(1));
+      showToast(`Queued all ${queued.length} parts in Studio!`, 'success');
+    } catch (e) {
+      showToast(`Series queue error: ${e.message}`, 'error');
       setIsProducing(false);
     }
   };
@@ -701,38 +738,27 @@ export function AppProvider({ children }) {
       return;
     }
     setIsProducing(true);
+    setPendingTaskQueue([]);
     setTaskStatus({ status: 'queued', progress: 5, log: ['Initializing production request...'] });
 
     try {
       const kws = studioKeywords.split(',').map(s => s.trim()).filter(Boolean);
       const tags = studioSearchTags.split(',').map(s => s.trim()).filter(Boolean);
-      const res = await authFetch('/api/produce', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          video_id: studioVideoId,
-          script_text: studioScript,
-          clip_keywords: kws,
-          search_tags: tags,
-          visual_mode: visualMode,
-          title: studioTitle || `${studioVideoId} #shorts`,
-          description: studioDesc,
-          pinned_comment: studioComment,
-          voice: studioVoice,
-          niche: selectedNiche
-        })
+      const taskId = await enqueueProduce({
+        video_id: studioVideoId,
+        script_text: studioScript,
+        clip_keywords: kws,
+        search_tags: tags,
+        visual_mode: visualMode,
+        title: studioTitle || `${studioVideoId} #shorts`,
+        description: studioDesc,
+        pinned_comment: studioComment,
+        voice: studioVoice,
+        niche: selectedNiche
       });
-
-      if (res.ok) {
-        const data = await res.json();
-        setActiveTaskId(data.task_id);
-      } else {
-        const err = await res.json();
-        showToast(`Error starting production: ${err.detail}`, "error");
-        setIsProducing(false);
-      }
+      setActiveTaskId(taskId);
     } catch (e) {
-      showToast(`Network error: ${e.message}`, "error");
+      showToast(`Error starting production: ${e.message}`, "error");
       setIsProducing(false);
     }
   };
@@ -860,7 +886,7 @@ export function AppProvider({ children }) {
     ideaConcept, setIdeaConcept,
     generatingIdea, generatedIdea,
     handleGenerateIdea, autoGenerateAndFillStudio,
-    sendIdeaToStudio, handleQuickProduce,
+    sendIdeaToStudio, handleQuickProduce, handleProduceSeries,
     studioVideoId, setStudioVideoId,
     studioVoice, setStudioVoice,
     studioScript, setStudioScript,
@@ -870,7 +896,7 @@ export function AppProvider({ children }) {
     studioComment, setStudioComment,
     visualMode, setVisualMode,
     studioSearchTags, setStudioSearchTags,
-    activeTaskId, taskStatus, isProducing, handleStartProduction,
+    activeTaskId, taskStatus, isProducing, pendingTaskQueue, handleStartProduction,
     dispatchVideoId, setDispatchVideoId,
     dispatchMode, setDispatchMode,
     dispatchTime, setDispatchTime,

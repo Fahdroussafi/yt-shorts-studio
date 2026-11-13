@@ -11,7 +11,7 @@ export default function IdeasPage() {
     ideaConcept, setIdeaConcept,
     generatingIdea, generatedIdea,
     handleGenerateIdea,
-    sendIdeaToStudio, handleQuickProduce,
+    sendIdeaToStudio, handleQuickProduce, handleProduceSeries,
     isProducing, showToast
   } = useApp();
 
@@ -165,13 +165,19 @@ export default function IdeasPage() {
         {/* Render Multi-Part Series or Single Idea */}
         {generatedIdea?.is_series && !generatingIdea && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
               <span className="text-xs font-mono font-bold text-amber-400 uppercase">
                 Story Series Trilogy ({generatedIdea.episodes?.length} Connected Episodes)
               </span>
-              <span className="text-[10px] text-slate-400 font-mono">
-                Click "Send to Studio" on any episode to load its full script & tags
-              </span>
+              <button
+                type="button"
+                onClick={() => handleProduceSeries(generatedIdea.episodes, navigate)}
+                disabled={isProducing || !generatedIdea.episodes?.length}
+                className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold text-xs flex items-center space-x-1.5 shadow-lg shadow-amber-600/20 disabled:opacity-50 transition"
+              >
+                <Zap className="w-3.5 h-3.5 fill-current" />
+                <span>Produce All {generatedIdea.episodes?.length} Parts in Studio</span>
+              </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {(generatedIdea.episodes || []).map((ep, idx) => (
