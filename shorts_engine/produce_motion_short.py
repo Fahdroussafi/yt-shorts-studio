@@ -15,6 +15,12 @@ FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.join(BASE_DIR, "shorts_engine"))
 
+
+def _run_ffmpeg(cmd: List[str]) -> subprocess.CompletedProcess:
+    """Runs FFmpeg at lower CPU priority on Linux/VPS so web UI and SSH stay responsive."""
+    full_cmd = (["nice", "-n", "10"] + cmd) if os.name != "nt" else cmd
+    return subprocess.run(full_cmd, capture_output=True, text=True)
+
 # Load environment variables from .env if present
 def _load_env_fallback():
     env_path = os.path.join(BASE_DIR, ".env")
@@ -444,12 +450,12 @@ def download_clip_with_smart_fallback(
                             "fps=30,setsar=1"
                         ),
                         "-c:v", "libx264",
-                        "-preset", "faster",
+                        "-preset", "veryfast",
                         "-crf", "19",
                         "-pix_fmt", "yuv420p",
                         dest_path
                     ]
-                    z_res = subprocess.run(zoom_cmd, capture_output=True, text=True)
+                    z_res = _run_ffmpeg(zoom_cmd)
                     if os.path.exists(temp_img):
                         try: os.remove(temp_img)
                         except Exception: pass
@@ -558,7 +564,7 @@ def render_motion_video(
         "-map", "[vfinal]",
         "-map", "[afinal]",
         "-c:v", "libx264",
-        "-preset", "faster",
+        "-preset", "veryfast",
         "-crf", "19",
         "-threads", "2",
         "-pix_fmt", "yuv420p",
@@ -568,7 +574,7 @@ def render_motion_video(
         output_mp4
     ]
 
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    res = _run_ffmpeg(cmd)
     if res.returncode != 0:
         print("FFmpeg error:", res.stderr[-1000:])
         raise RuntimeError("FFmpeg render failed")
@@ -654,7 +660,7 @@ def render_gameplay_short(
         "-map", "[vfinal]",
         "-map", "[afinal]",
         "-c:v", "libx264",
-        "-preset", "faster",
+        "-preset", "veryfast",
         "-crf", "19",
         "-threads", "2",
         "-pix_fmt", "yuv420p",
@@ -663,7 +669,7 @@ def render_gameplay_short(
         "-t", f"{duration:.2f}",
         output_mp4
     ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    res = _run_ffmpeg(cmd)
     if res.returncode != 0:
         print("FFmpeg gameplay render error:", res.stderr[-800:])
         raise RuntimeError("FFmpeg gameplay render failed")
@@ -741,7 +747,7 @@ def render_split_retention_short(
         "-map", "[vfinal]",
         "-map", "[afinal]",
         "-c:v", "libx264",
-        "-preset", "faster",
+        "-preset", "veryfast",
         "-crf", "19",
         "-threads", "2",
         "-pix_fmt", "yuv420p",
@@ -750,7 +756,7 @@ def render_split_retention_short(
         "-t", f"{duration:.2f}",
         output_mp4
     ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    res = _run_ffmpeg(cmd)
     if res.returncode != 0:
         print("FFmpeg split render error:", res.stderr[-800:])
         raise RuntimeError("FFmpeg split render failed")
