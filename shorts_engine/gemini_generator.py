@@ -146,35 +146,32 @@ def build_prompt_and_schema(
     recent_avoid = ", ".join(f'"{t}"' for t in recent_titles[-8:]) if recent_titles else "None"
 
     if niche == "gta6_launch":
-        prompt = f"""You are an elite YouTube Gaming Shorts Strategist for '{brand_name}' ({brand_handle}).
-Write a 30-second viral GTA 6 YouTube Short engineered for 100%+ retention, fast pacing, and zero swipe-away.
+        prompt = f"""You are a real human gaming YouTuber writing a 30-second GTA 6 Short for '{brand_name}' ({brand_handle}).
+Write like a real gamer talking naturally into a mic — short, punchy, conversational sentences. ZERO robotic AI phrasing, ZERO spec-sheet dumping.
 
 TARGET TOPIC: "{chosen_angle}"
 CHANNEL BRAND NAME: "{brand_name}"
 CHANNEL HANDLE: "{brand_handle}"
 
-MANDATORY 4-ACT GAMING SHORTS ARCHITECTURE:
-1. ACT 1 HOOK (0-3s | 14-20 words):
-   - MUST address the player ("YOU" / "YOUR") in the first 6 words with an urgent console, frame-rate, storage, or hidden GTA 6 detail.
-   - MUST include a real, verified number or spec (e.g. "62 percent", "30 FPS", "225 gigabytes", "10 gigabytes").
-   - NEVER start with "Did you know...", "In this video...", or generic intros.
-2. ACT 2 BREAKDOWN (3-17s | 32-42 words):
-   - Deliver ONLY real, technically accurate hardware, preload, or gameplay facts (ALWAYS state exact units — e.g. "10 GB of RAM", NEVER just "10 gigabytes"):
-     * Series S: 4 TFLOPS GPU, 10 GB of RAM (8 GB fast + 2 GB slow -> forces lower-res textures, shorter draw distance, and pop-in at high speed), 512 GB SSD (~364 GB usable), ~225 GB install.
-     * Series X: 12 TFLOPS GPU, 16 GB of RAM, 1 TB SSD (~802 GB usable), 30 FPS target.
-     * Base PS5: 10.28 TFLOPS GPU, 16 GB of RAM, Trailer 2 captured at ~2560x1152 @ 30 FPS upscaled to 4K w/ ray tracing.
-     * PS5 Pro: 16.7 TFLOPS GPU + PSSR upscaling + 2 TB SSD, same 8-core Zen 2 CPU -> still 30 FPS (sharper image, not 60 FPS).
-     * Xbox preload datamine: Tez2 found files matching AMD FSR 4.1 upscaling (unconfirmed if active at launch).
-3. ACT 3 PAYOFF / REAL ACTION (17-27s | 22-30 words):
-   - Give ONLY real, accurate console advice:
-     * GTA 6 CANNOT launch from USB external drives at all (requires internal NVMe SSD or official Expansion Card) — only move old Xbox One/360 games onto USB to free internal space, or use Xbox Cloud Gaming.
-   - STRICT HONESTY BAN: NEVER invent fake settings/menus ("SSD-only mode"), NEVER leave units ambiguous ("10 GB" without "of RAM"), and NEVER imply USB drives can run GTA 6 slowly.
-4. ACT 4 BRANDED OUTRO (27-31s | 8-12 words):
-   - MUST end with: "Follow {brand_name} for [specific GTA 6 launch truths / tech fixes]."
-5. TOTAL SPOKEN WORDS:
-   - Strictly between 75 and 100 words total (~28-35s peak Shorts retention & loop rate).
-6. TITLE RULE (MOBILE SHORTS SAFE):
-   - Under 58 characters total including #shorts #gta6. Plain punchy English, zero clickbait lies.
+STRICT WRITING RULES:
+1. ONE TOPIC ONLY: Stick strictly to "{chosen_angle}". Do NOT cram 4 consoles, TFLOPS, RAM pools, and storage into one script unless the topic specifically compares them.
+2. SOUND HUMAN:
+   - Never use parentheses (), tildes (~), slashes, or Newegg spec lists ("12 TFLOPS GPU, 16 GB RAM, ~802 GB usable").
+   - Write how people actually talk ("225 gigabytes", "512 gig Series S", "30 FPS").
+3. NO FAKE FACTS / NO MASHUPS:
+   - Never invent fake console menus or settings (no "SSD-only mode", no "30 FPS settings").
+   - Never mash unrelated numbers together (no "62% of physics").
+   - Verified facts you may use ONLY when relevant to the topic:
+     * GTA 6 launches November 19th targeting 30 FPS on PS5, PS5 Pro, Series X, and Series S (CPU runs traffic/AI simulation).
+     * Xbox preload is ~225 GB; a 512 GB Series S only has ~364 GB usable, and Series X|S games cannot launch from USB external drives (Xbox Cloud Gaming streams day one).
+     * PS5 Trailer 2 was ~1440p/2560x1152 upscaled to 4K with ray tracing; Series S will run lower resolution/lighting, and dataminer Tez2 spotted AMD FSR 4.1 files in Xbox preload.
+
+STRUCTURE (70-95 WORDS TOTAL, ~25-32 SECONDS):
+1. ACT 1 HOOK (0-3s | 12-18 words): Start with "You" / "Your" or a direct scroll-stopping observation about THIS topic. No "Did you know".
+2. ACT 2 EXPLANATION (3-18s | 30-42 words): Explain the one core point clearly like you're telling a friend.
+3. ACT 3 TAKEAWAY (18-27s | 18-25 words): Real practical tip, what to expect on Nov 19, or detail to look for.
+4. ACT 4 OUTRO (27-31s | 6-10 words): "Follow {brand_name} for real GTA 6 updates." (NEVER say "{brand_handle}" or "-y6" in spoken words).
+5. TITLE: Under 55 chars, plain human English + #shorts #gta6.
 
 NEGATIVE FILTER:
 - Never mention: [{forbidden}].
@@ -182,18 +179,18 @@ NEGATIVE FILTER:
 
 Respond ONLY with valid JSON using this exact schema:
 {{
-  "title": "Punchy GTA 6 title under 58 chars with #shorts #gta6",
+  "title": "Punchy human GTA 6 title under 55 chars with #shorts #gta6",
   "script_acts": {{
-    "act1_hook": "0-3s scroll-stopping player hook with 'you'/'your' in first 6 words + concrete spec/number",
-    "act2_mechanism": "3-17s exact hardware/preload/gameplay proof",
-    "act3_directive": "17-27s concrete day-one fix, setting, or detail to check",
-    "act4_seal": "27-31s dynamic outro: Follow {brand_name} for [specific GTA 6 promise]"
+    "act1_hook": "0-3s natural human hook on this single topic",
+    "act2_mechanism": "3-18s clear conversational explanation (no spec-sheet dump)",
+    "act3_directive": "18-27s real practical takeaway or detail to watch for",
+    "act4_seal": "27-31s clean outro: Follow {brand_name} for real GTA 6 updates."
   }},
-  "keywords": ["gaming-console", "miami-night", "neon-city", "sports-car", "police-lights", "computer-chip", "videogame-controller", "rain-street"],
-  "search_tags": ["gta 6 news", "gta 6 xbox series s", "gta 6 fps", "gta vi secrets", "gta 6 launch tips"],
-  "description": "2-sentence high-curiosity GTA 6 description with Subscribe to {brand_handle}, #shorts #gta6 #gtavi #gaming",
-  "pinned_comment": "Polarizing console/GTA 6 debate question (e.g. PS5 vs Xbox or 30fps vs graphics) to drive comments",
-  "voice": "{profile.get('voice_recommended', 'en-GB-RyanNeural')}"
+  "keywords": ["gaming-console", "miami-night", "neon-city", "sports-car", "police-lights", "videogame-controller"],
+  "search_tags": ["gta 6 news", "gta 6 gameplay", "gta 6 release", "gta vi", "gta 6 shorts"],
+  "description": "2-sentence human description about this GTA 6 topic. Subscribe to {brand_handle} #shorts #gta6 #gtavi #gaming",
+  "pinned_comment": "Short natural question gamers will argue about in comments",
+  "voice": "{profile.get('voice_recommended', 'en-US-ChristopherNeural')}"
 }}
 """
     else:

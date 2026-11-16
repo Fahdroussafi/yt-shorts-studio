@@ -166,24 +166,24 @@ NICHE_PROFILES = {
         "name": "GTA 6 & Next-Gen Gaming Tech",
         "rpm_range": "$0.25 - $0.45",
         "retention_rate": "65% - 78%",
-        "voice_recommended": "en-GB-RyanNeural",
-        "description": "GTA 6 performance breakdowns, console storage traps, datamined leaks, hidden trailer secrets, and day-one settings.",
-        "outro_phrase": "Follow {brand_name} for GTA 6 tech truths before launch day.",
+        "voice_recommended": "en-US-ChristopherNeural",
+        "description": "Human, punchy GTA 6 breakdowns: storage traps, 30 FPS console truths, trailer secrets, and launch-day tips.",
+        "outro_phrase": "Follow {brand_name} for real GTA 6 updates.",
         "forbidden_terms": ["skincare", "serum", "crypto coin", "dropshipping"],
         "hook_formulas": [
-            "If you own a 512-gigabyte Xbox Series S, installing GTA 6 wipes out sixty-two percent of your usable console before a single patch...",
-            "If you think the PS5 Pro runs GTA 6 at sixty frames per second, Rockstar's own preload data proves why you are capped at thirty...",
-            "If you look closely at frame forty-two of GTA 6 Trailer 2, Rockstar leaked a hidden physics system nobody noticed..."
+            "If you bought a 512 gig Xbox Series S for GTA 6, one game is about to eat over half your storage...",
+            "If you think the PS5 Pro runs GTA 6 at 60 FPS, here is the real reason Rockstar locked it to 30...",
+            "Look closely at GTA 6 Trailer 2 because Rockstar quietly showed how dense Vice City actually is..."
         ],
         "angles": [
-            "The 225 GB Xbox Series S Storage Trap (Why 62% of your SSD vanishes on launch day and the zero-cost cloud workaround)",
-            "Why PS5 Pro Still Runs GTA 6 at 30 FPS (CPU simulation bottleneck vs GPU pixel resolution explained simply)",
-            "The Hidden AMD FSR 4.1 Upscaler in GTA 6 Preload Files (How Tez2's datamine could save blurry console graphics)",
-            "Xbox Series S vs PS5: What Rockstar Actually Cut (Ray tracing, draw distance, and wet street reflections)",
-            "Why GTA 6 Needs 225 GB on Internal SSD (USB 3.0 drives can't launch Series X|S games; offload old titles or use Cloud Gaming)",
-            "5 Insane Vice City Physics Details Hidden in Trailer 2 (Hair, water, mud, and NPC AI)",
-            "How Rockstar Squeezed Vice City Into 10 GB of Series S RAM (Fast vs slow memory pool breakdown)",
-            "The 5-Star Police AI Upgrade in GTA 6 (Why escaping cops in Vice City is ten times harder than GTA 5)"
+            "Why GTA 6 Eats Over Half Your 512 GB Series S Storage (225 GB install vs 364 GB usable space)",
+            "Why Even the PS5 Pro Is Still Locked to 30 FPS in GTA 6 (CPU runs traffic and AI, not the GPU)",
+            "The Secret AMD FSR 4.1 Files Found in the GTA 6 Xbox Preload (How it could sharpen blurry Series S visuals)",
+            "Why GTA 6 Cannot Launch From Any USB External Drive (And how Xbox Cloud Gaming solves it on Nov 19)",
+            "Series S vs PS5 in GTA 6: What Gets Cut (Lower resolution and ray tracing, same crowds and map)",
+            "5 Insane Vice City Details in Trailer 2 You Probably Missed (Water physics, reflections, and NPC AI)",
+            "Why Night Chases in Vice City Rain Will Be the Real 30 FPS Test on Launch Day",
+            "How Rockstar Always Squeezes Huge Maps Into Weak Consoles (From San Andreas and GTA 5 to GTA 6)"
         ],
         "visual_bank": [
             "gaming-console", "miami-night", "neon-city", "sports-car", "police-lights",
