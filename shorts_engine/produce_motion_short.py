@@ -41,7 +41,7 @@ _load_env_fallback()
 from engine import format_ass_time, generate_voice, get_audio_duration, build_ass_subtitles, strip_watermarks, FONTS_DIR
 from idea_bank import NICHE_PROFILES
 
-GAMEPLAY_DIR = os.path.join(BASE_DIR, "shorts_engine", "gameplay")
+GAMEPLAY_DIR = os.environ.get("GAMEPLAY_DIR") or os.path.join(BASE_DIR, "shorts_engine", "gameplay")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

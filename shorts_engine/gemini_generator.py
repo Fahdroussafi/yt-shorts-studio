@@ -145,7 +145,52 @@ def build_prompt_and_schema(
     forbidden = ", ".join(profile.get("forbidden_tropes", []))
     recent_avoid = ", ".join(f'"{t}"' for t in recent_titles[-8:]) if recent_titles else "None"
 
-    prompt = f"""You are the world-class Head Writer for a viral YouTube Shorts channel in the '{profile['name']}' niche.
+    if niche == "gta6_launch":
+        prompt = f"""You are an elite YouTube Gaming Shorts Strategist for '{brand_name}' ({brand_handle}).
+Write a 30-second viral GTA 6 YouTube Short engineered for 100%+ retention, fast pacing, and zero swipe-away.
+
+TARGET TOPIC: "{chosen_angle}"
+CHANNEL BRAND NAME: "{brand_name}"
+CHANNEL HANDLE: "{brand_handle}"
+
+MANDATORY 4-ACT GAMING SHORTS ARCHITECTURE:
+1. ACT 1 HOOK (0-3s | 14-20 words):
+   - MUST address the player ("YOU" / "YOUR") in the first 6 words with an urgent console, frame-rate, storage, or hidden GTA 6 detail.
+   - MUST include a concrete number or spec (e.g. "62 percent", "30 FPS", "225 gigabytes", "frame 42").
+   - NEVER start with "Did you know...", "In this video...", or generic intros.
+2. ACT 2 BREAKDOWN (3-17s | 32-42 words):
+   - Deliver the exact hardware, datamine, or gameplay proof cleanly and punchily (no filler, no fluff).
+3. ACT 3 PAYOFF / ACTIONABLE FIX (17-27s | 22-30 words):
+   - Give the exact day-one setting, workaround, or detail to watch for on November 19th.
+4. ACT 4 BRANDED OUTRO (27-31s | 8-12 words):
+   - MUST end with: "Follow {brand_name} for [specific GTA 6 launch truths / tech fixes]."
+5. TOTAL SPOKEN WORDS:
+   - Strictly between 75 and 100 words total (~28-35s peak Shorts retention & loop rate).
+6. TITLE RULE (MOBILE SHORTS SAFE):
+   - Under 58 characters total including #shorts #gta6. Plain punchy English, zero clickbait lies.
+
+NEGATIVE FILTER:
+- Never mention: [{forbidden}].
+- Avoid recent topics: [{recent_avoid}].
+
+Respond ONLY with valid JSON using this exact schema:
+{{
+  "title": "Punchy GTA 6 title under 58 chars with #shorts #gta6",
+  "script_acts": {{
+    "act1_hook": "0-3s scroll-stopping player hook with 'you'/'your' in first 6 words + concrete spec/number",
+    "act2_mechanism": "3-17s exact hardware/preload/gameplay proof",
+    "act3_directive": "17-27s concrete day-one fix, setting, or detail to check",
+    "act4_seal": "27-31s dynamic outro: Follow {brand_name} for [specific GTA 6 promise]"
+  }},
+  "keywords": ["gaming-console", "miami-night", "neon-city", "sports-car", "police-lights", "computer-chip", "videogame-controller", "rain-street"],
+  "search_tags": ["gta 6 news", "gta 6 xbox series s", "gta 6 fps", "gta vi secrets", "gta 6 launch tips"],
+  "description": "2-sentence high-curiosity GTA 6 description with Subscribe to {brand_handle}, #shorts #gta6 #gtavi #gaming",
+  "pinned_comment": "Polarizing console/GTA 6 debate question (e.g. PS5 vs Xbox or 30fps vs graphics) to drive comments",
+  "voice": "{profile.get('voice_recommended', 'en-GB-RyanNeural')}"
+}}
+"""
+    else:
+        prompt = f"""You are the world-class Head Writer for a viral YouTube Shorts channel in the '{profile['name']}' niche.
 Write a masterclass viral short script designed for 100%+ retention, emotional adrenaline, and zero scroll-away.
 
 TARGET ANGLE: "{chosen_angle}"
