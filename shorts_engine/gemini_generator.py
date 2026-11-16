@@ -455,6 +455,15 @@ def generate_ai_script(
     """Unified AI script engine: Groq LPU (Primary) -> OpenAI/DeepSeek Zero-Key (Fallback)."""
     from idea_bank import record_topic_history
 
+    if niche == "gta6_launch":
+        from gta_news_engine import generate_zero_ai_gta_script
+        return generate_zero_ai_gta_script(
+            concept=concept,
+            brand_name=brand_name,
+            brand_handle=brand_handle,
+            topic_history_file=topic_history_file,
+        )
+
     prompt, chosen_angle, profile = build_prompt_and_schema(
         niche=niche,
         concept=concept,
