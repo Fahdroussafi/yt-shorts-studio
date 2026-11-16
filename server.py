@@ -1993,6 +1993,158 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                 RENDER_QUEUE_LIST.remove(task_id)
 
 
+class TwitchProduceRequest(BaseModel):
+    clip_url: str
+    clip_title: Optional[str] = "Viral GTA Moment"
+    broadcaster_name: Optional[str] = "Streamer"
+    game_name: Optional[str] = "Grand Theft Auto"
+    video_id: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+
+
+@app.get("/api/twitch/clips")
+def get_twitch_viral_clips(
+    game: str = "all",
+    hours: int = 24,
+    lang: str = "en",
+    user: dict = Depends(require_auth),
+):
+    """Fetches viral GTA Twitch clips ranked by view velocity."""
+    from twitch_clips import fetch_viral_twitch_clips
+    try:
+        clips = fetch_viral_twitch_clips(game=game, hours=hours, limit=12, lang=lang)
+        return {"clips": clips}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def run_twitch_production(task_id: str, req: TwitchProduceRequest, target_videos_dir: str, groq_key: str):
+    if task_id not in RENDER_QUEUE_LIST:
+        RENDER_QUEUE_LIST.append(task_id)
+    try:
+        async with RENDER_QUEUE_SEMAPHORE:
+            PRODUCTION_TASKS[task_id]["status"] = "processing"
+            PRODUCTION_TASKS[task_id]["progress"] = 10
+            PRODUCTION_TASKS[task_id]["log"].append("[1/4] Downloading Twitch clip via yt-dlp...")
+
+            from twitch_clips import (
+                download_twitch_clip,
+                transcribe_with_groq_whisper,
+                detect_facecam_box,
+                render_twitch_vertical_short,
+            )
+            from produce_motion_short import get_video_duration
+            from engine import build_ass_subtitles, strip_watermarks
+
+            target_dir = os.path.join(target_videos_dir, req.video_id)
+            os.makedirs(target_dir, exist_ok=True)
+            raw_mp4 = os.path.join(target_dir, "raw_clip.mp4")
+            ass_file = os.path.join(target_dir, "captions.ass")
+            output_mp4 = os.path.join(target_dir, f"{req.video_id}.mp4")
+            meta_file = os.path.join(target_dir, "seo_metadata.txt")
+            thumb_file = os.path.join(target_dir, "thumbnail.jpg")
+
+            await asyncio.to_thread(download_twitch_clip, req.clip_url, raw_mp4)
+            dur = await asyncio.to_thread(get_video_duration, raw_mp4)
+            dur = min(max(dur, 5.0), 58.0)
+
+            PRODUCTION_TASKS[task_id]["progress"] = 35
+            PRODUCTION_TASKS[task_id]["log"].append(f"[2/4] Transcribing {dur:.1f}s audio with Groq Whisper...")
+
+            words = []
+            if groq_key:
+                try:
+                    words = await asyncio.to_thread(transcribe_with_groq_whisper, raw_mp4, groq_key)
+                except Exception as we:
+                    PRODUCTION_TASKS[task_id]["log"].append(f"[WARN] Whisper skipped: {we}")
+
+            broadcaster = (req.broadcaster_name or "Streamer").strip()
+            badge = f"@{broadcaster}"
+            PRODUCTION_TASKS[task_id]["progress"] = 55
+            PRODUCTION_TASKS[task_id]["log"].append("[3/4] Detecting facecam (40/60) & building seam captions...")
+
+            facecam_box = await asyncio.to_thread(detect_facecam_box, raw_mp4, dur)
+            margin_v = 1080 if facecam_box else 520
+            build_ass_subtitles(words, ass_file, style_name="hormozi_gold", margin_v=margin_v, fontsize=84, top_badge=badge)
+
+            layout_label = "40/60 Facecam + Gameplay" if facecam_box else "Blurred Letterbox"
+            PRODUCTION_TASKS[task_id]["progress"] = 75
+            PRODUCTION_TASKS[task_id]["log"].append(f"[4/4] Rendering 1080x1920 ({layout_label}, -14 LUFS)...")
+
+            await asyncio.to_thread(render_twitch_vertical_short, raw_mp4, ass_file, output_mp4, dur, facecam_box)
+            await asyncio.to_thread(strip_watermarks, output_mp4)
+
+            if os.path.exists(raw_mp4):
+                try:
+                    os.remove(raw_mp4)
+                except Exception:
+                    pass
+
+            clean_title = (req.clip_title or "Insane GTA Moment").strip()[:45]
+            yt_title = f"{clean_title} #shorts #gta6"
+            game_tag = "gta6" if "vi" in (req.game_name or "").lower() else "gtav"
+            with open(meta_file, "w", encoding="utf-8") as f:
+                f.write(f"TITLE:\n{yt_title}\n\n")
+                f.write(
+                    f"DESCRIPTION:\n{req.clip_title} — Credit: @{broadcaster} (https://www.twitch.tv/{broadcaster.lower()})\n"
+                    f"Original Clip: {req.clip_url}\n#shorts #{game_tag} #twitchclips #gaming\n\n"
+                )
+                f.write(f"TAGS:\ngta 6 clips, gta twitch clips, {broadcaster}, {game_tag} shorts, viral gaming clips\n\n")
+                f.write(f"PINNED COMMENT:\nDrop a W for @{broadcaster} or rate this clip 1-10!\n")
+
+            if req.thumbnail_url:
+                try:
+                    import requests as req_lib
+                    tr = req_lib.get(req.thumbnail_url, timeout=10)
+                    if tr.status_code == 200 and len(tr.content) > 5000:
+                        with open(thumb_file, "wb") as tf:
+                            tf.write(tr.content)
+                except Exception:
+                    pass
+
+            mb = round(os.path.getsize(output_mp4) / (1024 * 1024), 2)
+            PRODUCTION_TASKS[task_id]["status"] = "completed"
+            PRODUCTION_TASKS[task_id]["progress"] = 100
+            PRODUCTION_TASKS[task_id]["output_file"] = os.path.basename(output_mp4)
+            PRODUCTION_TASKS[task_id]["log"].append(f"[SUCCESS] Twitch Short rendered ({mb} MB, {layout_label}): {os.path.basename(output_mp4)}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        PRODUCTION_TASKS[task_id]["status"] = "failed"
+        PRODUCTION_TASKS[task_id]["error"] = str(e)
+        PRODUCTION_TASKS[task_id]["log"].append(f"[ERROR] Twitch render failed: {str(e)}")
+    finally:
+        if task_id in RENDER_QUEUE_LIST:
+            RENDER_QUEUE_LIST.remove(task_id)
+
+
+@app.post("/api/twitch/produce")
+async def start_twitch_produce(req: TwitchProduceRequest, background_tasks: BackgroundTasks, user: dict = Depends(require_auth)):
+    """Downloads, transcribes, facecam-crops (40/60), and renders a Twitch clip to 1080x1920 Short."""
+    paths = get_user_paths(user)
+    from idea_bank import get_next_short_id
+    from gemini_generator import get_groq_key
+
+    vid = sanitize_short_id(req.video_id) if req.video_id else get_next_short_id(paths["videos_dir"])
+    req.video_id = vid
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
+    groq_key = get_groq_key(paths["key_file"], allow_fallback=is_owner)
+
+    task_id = f"task_{vid}_{int(time.time())}"
+    PRODUCTION_TASKS[task_id] = {
+        "task_id": task_id,
+        "user_id": paths["user_id"],
+        "video_id": vid,
+        "status": "queued",
+        "progress": 0,
+        "log": [],
+        "output_file": None,
+        "error": None,
+    }
+    background_tasks.add_task(run_twitch_production, task_id, req, paths["videos_dir"], groq_key)
+    return {"task_id": task_id, "video_id": vid, "status": "queued"}
+
+
 @app.post("/api/produce")
 async def start_produce(req: ProduceRequest, background_tasks: BackgroundTasks, user: dict = Depends(require_auth)):
     """Triggers end-to-end motion short production in background (User Scoped)."""

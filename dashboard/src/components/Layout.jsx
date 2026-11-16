@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { 
   Film, Eye, Cpu, RefreshCw, BarChart3, Video, Sparkles, Sliders, Send, 
-  Clock, ShieldCheck, ExternalLink, ChevronRight 
+  Clock, ShieldCheck, ExternalLink, ChevronRight, Tv 
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import AiModal from './AiModal';
@@ -197,6 +197,11 @@ export default function Layout() {
                   <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
                 )}
               </div>
+            </NavLink>
+
+            <NavLink to="/twitch-clips" className={getNavClass}>
+              <Tv className="w-4 h-4 text-purple-400" />
+              <span>Twitch Clips</span>
             </NavLink>
 
             <NavLink to="/dispatcher" className={getNavClass}>

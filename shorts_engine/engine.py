@@ -163,7 +163,7 @@ CAPTION_STYLES = {
     }
 }
 
-def build_ass_subtitles(words, output_ass: str, style_name: Optional[str] = None):
+def build_ass_subtitles(words, output_ass: str, style_name: Optional[str] = None, margin_v: int = 860, fontsize: Optional[int] = None, top_badge: Optional[str] = None):
     """Builds dynamic animated subtitles with zero-gap persistent presence."""
     import random
     if not style_name or style_name not in CAPTION_STYLES:
@@ -172,6 +172,7 @@ def build_ass_subtitles(words, output_ass: str, style_name: Optional[str] = None
         style_key = style_name
 
     cfg = CAPTION_STYLES[style_key]
+    fsize = fontsize or cfg['fontsize']
     print(f"[2/5] Creating viral subtitles [Preset: {cfg['name']}]...")
 
     phrases = []
@@ -194,12 +195,16 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{cfg['font']},{cfg['fontsize']},{cfg['primary']},&H0000FFFF,{cfg['outline']},{cfg['back']},-1,0,0,0,100,100,2,0,{cfg['border_style']},{cfg['outline_w']},{cfg['shadow_w']},2,60,60,860,1
+Style: Default,{cfg['font']},{fsize},{cfg['primary']},&H0000FFFF,{cfg['outline']},{cfg['back']},-1,0,0,0,100,100,2,0,{cfg['border_style']},{cfg['outline_w']},{cfg['shadow_w']},2,60,60,{margin_v},1
+Style: Badge,{cfg['font']},38,&H00FFFFFF,&H0000FFFF,&H00000000,&HB0101018,-1,0,0,0,100,100,1,0,3,10,0,7,36,36,42,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     events = []
+    if top_badge and phrases:
+        total_end = format_ass_time(phrases[-1]["end"] + 1.0)
+        events.append(f"Dialogue: 1,0:00:00.00,{total_end},Badge,,0,0,0,,{top_badge}")
     pop_anim = cfg.get("anim", "")
     active_color = cfg["active"]
     primary_color = cfg["primary"]
