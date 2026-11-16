@@ -156,12 +156,13 @@ CHANNEL HANDLE: "{brand_handle}"
 MANDATORY 4-ACT GAMING SHORTS ARCHITECTURE:
 1. ACT 1 HOOK (0-3s | 14-20 words):
    - MUST address the player ("YOU" / "YOUR") in the first 6 words with an urgent console, frame-rate, storage, or hidden GTA 6 detail.
-   - MUST include a concrete number or spec (e.g. "62 percent", "30 FPS", "225 gigabytes", "frame 42").
+   - MUST include a real, verified number or spec (e.g. "62 percent", "30 FPS", "225 gigabytes", "10 gigabytes").
    - NEVER start with "Did you know...", "In this video...", or generic intros.
 2. ACT 2 BREAKDOWN (3-17s | 32-42 words):
-   - Deliver the exact hardware, datamine, or gameplay proof cleanly and punchily (no filler, no fluff).
-3. ACT 3 PAYOFF / ACTIONABLE FIX (17-27s | 22-30 words):
-   - Give the exact day-one setting, workaround, or detail to watch for on November 19th.
+   - Deliver real, technically accurate hardware, preload, or gameplay facts (e.g. Series S 4 TFLOPS GPU vs 12 TFLOPS Series X, 8 GB fast + 2 GB slow RAM, 364 GB usable SSD, PS5 Trailer 2 2560x1152 @ 30 FPS, Tez2 FSR 4.1 preload files).
+3. ACT 3 PAYOFF / REAL ACTION (17-27s | 22-30 words):
+   - Give ONLY real, verifiable actions (e.g. free 225+ GB on the internal SSD, move older non-Optimized games to a USB 3.0 drive, use Xbox Cloud Gaming, or watch how 30 FPS holds in heavy rain/traffic).
+   - STRICT HONESTY BAN: NEVER invent fake console settings, fake menu toggles, or nonexistent features (e.g. NO "SSD-only mode", NO fake hidden menus). If a feature isn't confirmed, say what to actually watch for on launch day.
 4. ACT 4 BRANDED OUTRO (27-31s | 8-12 words):
    - MUST end with: "Follow {brand_name} for [specific GTA 6 launch truths / tech fixes]."
 5. TOTAL SPOKEN WORDS:

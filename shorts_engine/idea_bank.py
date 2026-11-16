@@ -180,7 +180,7 @@ NICHE_PROFILES = {
             "Why PS5 Pro Still Runs GTA 6 at 30 FPS (CPU simulation bottleneck vs GPU pixel resolution explained simply)",
             "The Hidden AMD FSR 4.1 Upscaler in GTA 6 Preload Files (How Tez2's datamine could save blurry console graphics)",
             "Xbox Series S vs PS5: What Rockstar Actually Cut (Ray tracing, draw distance, and wet street reflections)",
-            "3 Settings to Turn Off First in GTA 6 on Day One (Instant visual clarity and input latency boost)",
+            "Why GTA 6 Needs 225 GB on Internal SSD (USB 3.0 drives can't launch Series X|S games; offload old titles or use Cloud Gaming)",
             "5 Insane Vice City Physics Details Hidden in Trailer 2 (Hair, water, mud, and NPC AI)",
             "How Rockstar Squeezed Vice City Into 10 GB of Series S RAM (Fast vs slow memory pool breakdown)",
             "The 5-Star Police AI Upgrade in GTA 6 (Why escaping cops in Vice City is ten times harder than GTA 5)"
