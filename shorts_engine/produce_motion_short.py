@@ -651,14 +651,13 @@ def render_gameplay_short(
         offset = round(random.uniform(0.0, max_offset), 2) if max_offset > 1.0 else 0.0
 
         inputs.extend(["-stream_loop", "-1", "-ss", f"{offset:.2f}", "-t", f"{per_cut:.3f}", "-i", clip_file])
-        flip = ",hflip" if random.random() < 0.30 else ""
         scale_crop = (
             "scale=1166:2074:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
             if i % 2 == 0
             else "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
         )
         filter_parts.append(
-            f"[{i}:v]trim=duration={per_cut:.3f},setpts=PTS-STARTPTS,fps=30,{scale_crop},setsar=1{flip}[v{i}]"
+            f"[{i}:v]trim=duration={per_cut:.3f},setpts=PTS-STARTPTS,fps=30,{scale_crop},setsar=1[v{i}]"
         )
 
     concat_ins = "".join(f"[v{i}]" for i in range(num_cuts))
