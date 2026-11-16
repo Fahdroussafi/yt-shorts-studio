@@ -105,7 +105,8 @@ export default function StudioPage() {
                 className="flex-1 min-w-0 px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white"
               >
                 <option value="en-US-BrianNeural">Brian (Natural YouTuber Narrator - Gaming Default)</option>
-                <option value="en-US-AndrewNeural">Andrew (Warm Conversational Male)</option>
+                <option value="en-US-SteffanNeural">Steffan (Crisp Modern Male)</option>
+                <option value="en-GB-RyanNeural">Ryan (British Documentary Male)</option>
                 <option value="en-US-ChristopherNeural">Christopher (Deep Authoritative Male - Dark Psychology Default)</option>
                 <option value="en-US-GuyNeural">Guy (Engaging Storyteller - Historical Archives)</option>
                 <option value="en-US-AvaNeural">Ava (Sharp Analytical Female - Deception Profiling)</option>

@@ -1209,7 +1209,7 @@ def get_niches(_user: dict = Depends(require_auth)):
 
 
 ALLOWED_PREVIEW_VOICES = {
-    "en-US-BrianNeural", "en-US-AndrewNeural", "en-US-SteffanNeural",
+    "en-US-BrianNeural", "en-US-SteffanNeural",
     "en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-EricNeural",
     "en-GB-RyanNeural", "en-US-AvaNeural", "en-US-JennyNeural",
 }
@@ -1228,11 +1228,18 @@ async def preview_voice(voice: str = "en-US-BrianNeural", _user: dict = Depends(
     if not os.path.exists(cache_mp3) or os.path.getsize(cache_mp3) < 500:
         import edge_tts
         sample_text = "Hey, this is how your YouTube Short voiceover will sound."
-        comm = edge_tts.Communicate(sample_text, voice, rate="+0%")
-        with open(cache_mp3, "wb") as f:
+        buf = bytearray()
+        try:
+            comm = edge_tts.Communicate(sample_text, voice, rate="+0%")
             async for chunk in comm.stream():
                 if chunk["type"] == "audio":
-                    f.write(chunk["data"])
+                    buf.extend(chunk["data"])
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Voice preview unavailable ({voice}): {e}")
+        if len(buf) < 500:
+            raise HTTPException(status_code=503, detail=f"Empty audio returned for {voice}")
+        with open(cache_mp3, "wb") as f:
+            f.write(buf)
 
     return FileResponse(cache_mp3, media_type="audio/mpeg")
 
