@@ -119,6 +119,33 @@ def validate_viral_script(data: dict, niche: str) -> Tuple[bool, str]:
 # Primary: Groq LPU (0.6s) | Fallback: OpenAI / DeepSeek Free (Zero-Key)
 # =====================================================================
 
+def _fetch_gta6_news_source(history: list) -> Optional[Tuple[str, str]]:
+    """Fetches the freshest unread GTA 6 article from RockstarIntel RSS (zero-block real facts)."""
+    import html as html_lib
+    import xml.etree.ElementTree as ET
+
+    used = {str(entry.get("concept", "")).lower() for entry in history}
+    used.update(str(entry.get("title", "")).lower() for entry in history)
+    try:
+        r = requests.get("https://rockstarintel.com/feed/", headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+        if r.status_code != 200:
+            return None
+        root = ET.fromstring(r.text)
+        ns = {"content": "http://purl.org/rss/1.0/modules/content/"}
+        for it in root.findall(".//item"):
+            title = html_lib.unescape((it.findtext("title") or "").strip())
+            if not title or title.lower() in used:
+                continue
+            body = it.findtext("content:encoded", default="", namespaces=ns) or it.findtext("description", default="")
+            clean = re.sub(r"<[^>]+>", " ", body)
+            clean = html_lib.unescape(re.sub(r"\s+", " ", clean)).strip()
+            if len(clean) >= 300:
+                return title, clean
+    except Exception as e:
+        print(f"GTA6 RSS fetch note: {e}")
+    return None
+
+
 def build_prompt_and_schema(
     niche: str,
     concept: Optional[str],
@@ -134,6 +161,13 @@ def build_prompt_and_schema(
     recent_titles = [entry.get("title", "") for entry in history[-25:] if entry.get("title")]
 
     chosen_angle = concept.strip() if concept and concept.strip() else ""
+    auto_source_excerpt = None
+    if not chosen_angle and niche == "gta6_launch":
+        rss_item = _fetch_gta6_news_source(history)
+        if rss_item:
+            chosen_angle, rss_body = rss_item
+            auto_source_excerpt = f"HEADLINE: {chosen_angle}\n\n{rss_body}"[:6000]
+
     if not chosen_angle:
         angles_pool = profile.get("angles", [])
         if not angles_pool:
@@ -145,10 +179,13 @@ def build_prompt_and_schema(
     forbidden = ", ".join(profile.get("forbidden_tropes", []))
     recent_avoid = ", ".join(f'"{t}"' for t in recent_titles[-8:]) if recent_titles else "None"
 
-    is_source_text = bool(concept and len(concept.strip()) > 120)
+    is_source_text = bool(auto_source_excerpt or (concept and len(concept.strip()) > 120))
     if is_source_text:
-        source_excerpt = chosen_angle[:6000]
-        chosen_angle = source_excerpt[:120] + "..."
+        if auto_source_excerpt:
+            source_excerpt = auto_source_excerpt
+        else:
+            source_excerpt = chosen_angle[:6000]
+            chosen_angle = source_excerpt[:120] + "..."
         prompt = f"""You are a real human YouTube Shorts editor for '{brand_name}' ({brand_handle}).
 Condense ONLY the real facts from the SOURCE TRANSCRIPT / ARTICLE below into a punchy 25-32 second Short (70-95 words total).
 
