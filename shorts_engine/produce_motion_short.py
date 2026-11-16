@@ -626,33 +626,54 @@ def render_gameplay_short(
     duration: float,
     gameplay_path: Optional[str] = None
 ):
-    """Renders 60/30fps vertical hypnotic Minecraft Parkour / Satisfying Short in ~3-4 seconds."""
-    if not gameplay_path or not os.path.exists(gameplay_path):
-        gameplay_path = get_gameplay_clip()
-    print(f"[4/5] Rendering High-Retention Gameplay short ({duration:.2f}s) from {os.path.basename(gameplay_path)}...")
-    clip_dur = get_video_duration(gameplay_path)
-    max_offset = max(0.0, clip_dur - duration - 2.0)
-    offset = round(random.uniform(0.0, max_offset), 2) if max_offset > 5.0 else 0.0
+    """Renders 30fps vertical multi-cut gameplay Short (5 dynamic random scenes) for peak retention."""
+    num_cuts = 5
+    per_cut = duration / num_cuts
 
-    flip = ",hflip" if random.random() < 0.35 else ""
+    if gameplay_path and os.path.exists(gameplay_path):
+        chosen_clips = [gameplay_path] * num_cuts
+    else:
+        chosen_clips = [get_gameplay_clip() for _ in range(num_cuts)]
+
+    print(f"[4/5] Rendering High-Retention Multi-Cut Gameplay short ({duration:.2f}s, {num_cuts} scenes)...")
     clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
     clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
     fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
 
+    dur_cache: Dict[str, float] = {}
+    inputs = []
+    filter_parts = []
+    for i, clip_file in enumerate(chosen_clips):
+        if clip_file not in dur_cache:
+            dur_cache[clip_file] = get_video_duration(clip_file)
+        clip_dur = dur_cache[clip_file]
+        max_offset = max(0.0, clip_dur - per_cut - 1.5)
+        offset = round(random.uniform(0.0, max_offset), 2) if max_offset > 1.0 else 0.0
+
+        inputs.extend(["-stream_loop", "-1", "-ss", f"{offset:.2f}", "-t", f"{per_cut:.3f}", "-i", clip_file])
+        flip = ",hflip" if random.random() < 0.30 else ""
+        scale_crop = (
+            "scale=1166:2074:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
+            if i % 2 == 0
+            else "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
+        )
+        filter_parts.append(
+            f"[{i}:v]trim=duration={per_cut:.3f},setpts=PTS-STARTPTS,fps=30,{scale_crop},setsar=1{flip}[v{i}]"
+        )
+
+    concat_ins = "".join(f"[v{i}]" for i in range(num_cuts))
+    audio_idx = num_cuts
+    synth_idx = num_cuts + 1
     filter_complex = (
-        f"[0:v]trim=duration={duration:.2f},setpts=PTS-STARTPTS,fps=30,"
-        f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-        f"eq=contrast=1.08:saturation=1.12{flip},"
+        ";".join(filter_parts) + ";"
+        f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.08:saturation=1.12,"
         f"ass='{clean_ass}'{fonts_arg}[vfinal];"
-        f"[1:a][2:a]amix=inputs=2:duration=first:weights=1.0 0.12[afinal]"
+        f"[{audio_idx}:a][{synth_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.12[afinal]"
     )
 
     cmd = [
         FFMPEG, "-y",
-        "-stream_loop", "-1",
-        "-ss", f"{offset:.2f}",
-        "-t", f"{duration:.2f}",
-        "-i", gameplay_path,
+        *inputs,
         "-i", audio_path,
         "-f", "lavfi", "-t", f"{duration:.2f}",
         "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.03,lowpass=f=140",
