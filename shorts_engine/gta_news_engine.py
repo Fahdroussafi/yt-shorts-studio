@@ -176,6 +176,47 @@ def fetch_gta_articles(topic_filter: Optional[str] = None, used_titles: Optional
     return articles
 
 
+BAD_SCRIPT_REFS = (
+    "below", "above", "the table", "following steps", "click ", "gallery",
+    "this guide", "these steps", "as mentioned", "watch the video",
+)
+DANGLING_STARTS = (
+    "however,", "however ", "also,", "also ", "additionally,", "meanwhile,",
+    "with that said", "on top of that", "that's why", "furthermore,",
+)
+
+
+def _is_good_script(script: str, headline: str, brand_name: str) -> Tuple[bool, str]:
+    """Deterministic quality gate: rejects thin, broken, dangling, or reference-heavy scripts."""
+    words = script.split()
+    if len(words) < 55 or len(words) > 125:
+        return False, f"word count {len(words)} out of bounds"
+
+    low = script.lower()
+    if any(ref in low for ref in BAD_SCRIPT_REFS):
+        return False, "contains visual/page reference ('below', 'table', 'this guide')"
+
+    body_only = script.replace(f"Follow {brand_name} for more.", "").strip()
+    if body_only.lower().startswith(headline.rstrip(" .!?").lower()):
+        body_only = body_only[len(headline.rstrip(" .!?")):].lstrip(" .!?")
+
+    body_sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", body_only) if len(s.split()) >= 5]
+    if len(body_sents) < 2:
+        return False, "too few body sentences"
+
+    if body_sents[0].lower().startswith(DANGLING_STARTS):
+        return False, f"dangling opener '{body_sents[0][:25]}'"
+
+    has_fact = bool(re.search(
+        r"\b(\d+|ps5|xbox|pc|rockstar|vice city|lucia|jason|trailer|update|patch|gb|fps|hours)\b",
+        body_only.lower(),
+    ))
+    if not has_fact:
+        return False, "no concrete entity or number in body"
+
+    return True, "ok"
+
+
 def generate_zero_ai_gta_script(
     concept: Optional[str] = None,
     brand_name: str = "PixelBreach",
@@ -222,14 +263,33 @@ def generate_zero_ai_gta_script(
     if not articles:
         raise RuntimeError("No live GTA articles reachable from RSS feeds right now.")
 
-    art = random.choice(articles[:8])
-    body = art["body"]
-    if len(body) < 350 and art.get("link"):
-        fetched = _fetch_article_paragraphs(art["link"])
-        if len(fetched) > len(body):
-            body = fetched
+    pool = list(articles[:15])
+    random.shuffle(pool)
 
-    script = extract_extractive_script(art["title"], body, brand_name=brand_name)
+    art = None
+    script = ""
+    for cand in pool:
+        body = cand["body"]
+        if len(body) < 350 and cand.get("link"):
+            fetched = _fetch_article_paragraphs(cand["link"])
+            if len(fetched) > len(body):
+                body = fetched
+        cand_script = extract_extractive_script(cand["title"], body, brand_name=brand_name)
+        ok, reason = _is_good_script(cand_script, cand["title"], brand_name)
+        if ok:
+            art = cand
+            script = cand_script
+            break
+        print(f"Skipped '{cand['title'][:45]}': {reason}")
+
+    if not art:
+        art = pool[0]
+        body = art["body"]
+        if len(body) < 350 and art.get("link"):
+            fetched = _fetch_article_paragraphs(art["link"])
+            if len(fetched) > len(body):
+                body = fetched
+        script = extract_extractive_script(art["title"], body, brand_name=brand_name)
 
     # Trim title cleanly under 58 chars for mobile Shorts feed
     words = art["title"].split()
