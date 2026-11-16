@@ -160,6 +160,35 @@ NICHE_PROFILES = {
             "mirror", "silhouette", "dark-room", "interrogation-room", "shadows",
             "whisper", "cctv-camera", "eye-contact", "stare", "dark-street", "rain-window"
         ]
+    },
+    "gta6_launch": {
+        "id": "gta6_launch",
+        "name": "GTA 6 & Next-Gen Gaming Tech",
+        "rpm_range": "$0.25 - $0.45",
+        "retention_rate": "65% - 78%",
+        "voice_recommended": "en-GB-RyanNeural",
+        "description": "GTA 6 performance breakdowns, console storage traps, datamined leaks, hidden trailer secrets, and day-one settings.",
+        "outro_phrase": "Follow {brand_name} for GTA 6 tech truths before launch day.",
+        "forbidden_terms": ["skincare", "serum", "crypto coin", "dropshipping"],
+        "hook_formulas": [
+            "If you own a 512-gigabyte Xbox Series S, installing GTA 6 wipes out sixty-two percent of your usable console before a single patch...",
+            "If you think the PS5 Pro runs GTA 6 at sixty frames per second, Rockstar's own preload data proves why you are capped at thirty...",
+            "If you look closely at frame forty-two of GTA 6 Trailer 2, Rockstar leaked a hidden physics system nobody noticed..."
+        ],
+        "angles": [
+            "The 225 GB Xbox Series S Storage Trap (Why 62% of your SSD vanishes on launch day and the zero-cost cloud workaround)",
+            "Why PS5 Pro Still Runs GTA 6 at 30 FPS (CPU simulation bottleneck vs GPU pixel resolution explained simply)",
+            "The Hidden AMD FSR 4.1 Upscaler in GTA 6 Preload Files (How Tez2's datamine could save blurry console graphics)",
+            "Xbox Series S vs PS5: What Rockstar Actually Cut (Ray tracing, draw distance, and wet street reflections)",
+            "3 Settings to Turn Off First in GTA 6 on Day One (Instant visual clarity and input latency boost)",
+            "5 Insane Vice City Physics Details Hidden in Trailer 2 (Hair, water, mud, and NPC AI)",
+            "How Rockstar Squeezed Vice City Into 10 GB of Series S RAM (Fast vs slow memory pool breakdown)",
+            "The 5-Star Police AI Upgrade in GTA 6 (Why escaping cops in Vice City is ten times harder than GTA 5)"
+        ],
+        "visual_bank": [
+            "gaming-console", "miami-night", "neon-city", "sports-car", "police-lights",
+            "computer-chip", "videogame-controller", "rain-street", "palm-trees-sunset", "server-rack"
+        ]
     }
 }
 

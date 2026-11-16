@@ -44,6 +44,8 @@ _load_env_file()
 AUTH_SERVICE_URL = os.environ.get("AUTH_SERVICE_URL", "http://127.0.0.1:8051")
 JWT_SECRET = os.environ.get("JWT_SECRET", "yt-shorts-studio-secret-key-2026")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@admin.com").strip().lower()
+ADMIN_ONLY_MODE = os.environ.get("ADMIN_ONLY_MODE", "false").lower() == "true"
+DISABLE_LEGACY_MIGRATION = os.environ.get("DISABLE_LEGACY_MIGRATION", "false").lower() == "true"
 DEFAULT_BRAND_NAME = os.environ.get("DEFAULT_BRAND_NAME", "ShadowMind").strip()
 DEFAULT_CHANNEL_HANDLE = os.environ.get("DEFAULT_CHANNEL_HANDLE", "@TheShadowMindHQ-Hub").strip()
 DEFAULT_CHANNEL_URL = os.environ.get("DEFAULT_CHANNEL_URL", f"https://www.youtube.com/{DEFAULT_CHANNEL_HANDLE}").strip()
@@ -92,6 +94,8 @@ def require_auth(authorization: Optional[str] = Header(None)) -> dict:
     user = verify_jwt_token(token)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized: Invalid or expired JWT")
+    if ADMIN_ONLY_MODE and (user.get("email") or "").strip().lower() != ADMIN_EMAIL:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Exclusive studio restricted to owner account.")
     return user
 
 def sanitize_short_id(short_id: str) -> str:
@@ -132,7 +136,7 @@ app.add_middleware(
 # ==========================================
 # MULTI-TENANT STORAGE MANAGEMENT
 # ==========================================
-USERS_DATA_DIR = os.path.join(BASE_DIR, "users_data")
+USERS_DATA_DIR = os.environ.get("USERS_DATA_DIR") or os.path.join(BASE_DIR, "users_data")
 os.makedirs(USERS_DATA_DIR, exist_ok=True)
 LEGACY_CLAIM_FILE = os.path.join(USERS_DATA_DIR, ".legacy_claimed.json")
 
@@ -190,7 +194,7 @@ def get_user_paths(user: dict) -> dict:
     is_admin = (email == ADMIN_EMAIL)
 
     # Initial Migration Check: Only admin inherits the existing platform channel and shorts
-    if not os.path.exists(LEGACY_CLAIM_FILE) and is_admin:
+    if not DISABLE_LEGACY_MIGRATION and not os.path.exists(LEGACY_CLAIM_FILE) and is_admin:
         try:
             with open(LEGACY_CLAIM_FILE, "w", encoding="utf-8") as f:
                 json.dump({"owner_id": uid, "claimed_at": time.time(), "email": user.get("email")}, f, indent=2)
@@ -223,7 +227,7 @@ def get_user_paths(user: dict) -> dict:
     sc_path = os.path.join(u_dir, "stats_cache.json")
 
     # If this user is the legacy owner, ensure mappings and stats are populated from root
-    if is_legacy_owner(uid, user.get("email")):
+    if not DISABLE_LEGACY_MIGRATION and is_legacy_owner(uid, user.get("email")):
         try:
             root_vm = os.path.join(BASE_DIR, "video_mappings.json")
             if (not os.path.exists(vm_path) or os.path.getsize(vm_path) <= 4) and os.path.exists(root_vm):
@@ -461,13 +465,25 @@ def range_stream(file_path: str, start: int, end: int, chunk_size: int = 1024 * 
 async def auth_proxy(full_path: str, req: Request):
     if req.method == "OPTIONS":
         return JSONResponse({"status": "ok"})
-    
+
+    body = await req.body()
+    if ADMIN_ONLY_MODE:
+        sub_path = full_path.strip("/").lower()
+        if sub_path == "register":
+            return JSONResponse({"statusCode": 403, "message": "Registration disabled on this exclusive studio."}, status_code=403)
+        if sub_path == "login" and body:
+            try:
+                login_payload = json.loads(body.decode("utf-8"))
+                if (login_payload.get("email") or "").strip().lower() != ADMIN_EMAIL:
+                    return JSONResponse({"statusCode": 403, "message": "Access restricted to studio owner."}, status_code=403)
+            except Exception:
+                pass
+
     target_url = f"{AUTH_SERVICE_URL}/api/auth/{full_path}"
     query = str(req.query_params)
     if query:
         target_url += f"?{query}"
-        
-    body = await req.body()
+
     headers = {
         "Content-Type": req.headers.get("Content-Type", "application/json")
     }
@@ -1522,7 +1538,7 @@ def disconnect_youtube(user: dict = Depends(require_auth)):
         except Exception:
             pass
     # If legacy admin, also remove root fallback token so it never resurrects
-    if is_legacy_owner(paths["user_id"], user.get("email")):
+    if not DISABLE_LEGACY_MIGRATION and is_legacy_owner(paths["user_id"], user.get("email")):
         if os.path.exists(TOKEN_FILE):
             try:
                 os.remove(TOKEN_FILE)
@@ -2055,7 +2071,7 @@ def upload_to_youtube(req: UploadRequest, user: dict = Depends(require_auth)):
     # Non-owner accounts MUST have their own token.json in their user directory.
     if os.path.exists(paths["token_file"]):
         token_to_use = paths["token_file"]
-    elif is_legacy_owner(paths["user_id"], user.get("email")) and os.path.exists(TOKEN_FILE):
+    elif not DISABLE_LEGACY_MIGRATION and is_legacy_owner(paths["user_id"], user.get("email")) and os.path.exists(TOKEN_FILE):
         token_to_use = TOKEN_FILE
     else:
         raise HTTPException(

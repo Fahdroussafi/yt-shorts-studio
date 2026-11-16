@@ -57,6 +57,9 @@ jobs:
           sudo systemctl restart yt-desk
           sleep 2
           sudo systemctl is-active --quiet yt-desk && echo "FastAPI is active" || (echo "FastAPI restart failed" && exit 1)
+          if systemctl list-unit-files | grep -q gta-desk.service; then
+            sudo systemctl restart gta-desk || true
+          fi
           # 3. Restart NestJS Auth service
           pm2 restart yt-auth || (cd auth && pm2 start dist/main.js --name "yt-auth")
           pm2 save
