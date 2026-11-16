@@ -1651,6 +1651,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
                     "description": ai_ep.get("description", ""),
                     "pinned_comment": f"👉 Watch Part {ep_idx + 1 if ep_idx < series_count else 1} right here! Drop your thoughts below. 👇",
                     "voice": ai_ep.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
+                    "visual_mode": ai_ep.get("visual_mode"),
                     "chosen_angle": ep_concept,
                     "generation_type": f"story_series_part_{ep_idx}"
                 }
@@ -1730,6 +1731,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
             "description": ai_result.get("description", ""),
             "pinned_comment": ai_result.get("pinned_comment", "Drop your thoughts below. 👇"),
             "voice": ai_result.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
+            "visual_mode": ai_result.get("visual_mode"),
             "chosen_angle": ai_result.get("chosen_angle", req.concept or "Viral Psychology Hook"),
             "generation_type": "surprise_seed" if req.surprise else "custom_concept"
         }

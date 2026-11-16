@@ -233,7 +233,7 @@ def generate_zero_ai_gta_script(
     yt_title = f"{short_head} #shorts #gta6"
 
     if topic_history_file:
-        record_topic_history(topic_history_file, concept=art["title"], title=yt_title, script=script)
+        record_topic_history(topic_history_file, yt_title, "gta6_launch", art["title"])
 
     return {
         "title": yt_title,
