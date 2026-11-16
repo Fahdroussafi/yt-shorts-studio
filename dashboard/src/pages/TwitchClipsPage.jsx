@@ -47,6 +47,9 @@ export default function TwitchClipsPage() {
             setProducingUrl(null);
             fetchVideos();
           }
+        } else if (res.status === 404) {
+          setProducingUrl(null);
+          setActiveTask((prev) => prev ? { ...prev, status: 'failed', log: [...(prev.log || []), '[ERROR] Task lost (server restarted). Click Cut 40/60 Short again.'] } : null);
         }
       } catch (e) {
         console.error(e);
