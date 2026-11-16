@@ -249,6 +249,8 @@ def clean_and_assemble_script(parsed: dict, brand_name: str, brand_handle: str, 
         full_script = re.sub(re.escape(brand_handle), brand_name, full_script, flags=re.IGNORECASE)
         full_script = re.sub(rf"\b{re.escape(clean_handle)}\b", brand_name, full_script, flags=re.IGNORECASE)
     parsed["script"] = full_script
+    if profile.get("id") == "gta6_launch":
+        parsed["visual_mode"] = "parkour_brainrot"
 
     # Ensure search_tags is always a clean list of multi-word search phrases
     raw_tags = parsed.get("search_tags", [])
