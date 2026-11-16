@@ -26,6 +26,8 @@ BOILERPLATE_PHRASES = (
     "appeared first on", "the post ", "sign up", "follow us", "click here", "read more",
     "check out our", "for more news", "thank you!", "privacy policy", "cookie",
     "image credit", "screenshot:", "watch the trailer below", "let us know in the comments",
+    "look no further", "that's all you need", "thats all you need", "here are the steps",
+    "super handy", "time zone breakdown", "learn how to", "trying to figure out how to",
 )
 
 
@@ -41,14 +43,14 @@ def _fetch_article_paragraphs(url: str) -> str:
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=7)
         if r.status_code != 200:
             return ""
-        paras = re.findall(r"<p[^>]*>(.*?)</p>", r.text, flags=re.DOTALL | re.IGNORECASE)
+        blocks = re.findall(r"<(?:p|li)[^>]*>(.*?)</(?:p|li)>", r.text, flags=re.DOTALL | re.IGNORECASE)
         cleaned = []
-        for p in paras:
+        for p in blocks:
             t = _strip_html(p)
             low = t.lower()
-            if len(t) >= 40 and not any(bp in low for bp in BOILERPLATE_PHRASES):
-                cleaned.append(t)
-        return " ".join(cleaned[:12])
+            if len(t) >= 25 and not any(bp in low for bp in BOILERPLATE_PHRASES):
+                cleaned.append(t if t.endswith((".", "!", "?")) else t + ".")
+        return " ".join(cleaned[:16])
     except Exception:
         return ""
 
@@ -62,7 +64,7 @@ def _split_clean_sentences(text: str) -> List[str]:
         s = s.replace("<DOT>", ".").strip()
         s = re.sub(r"https?://\S+", "", s).strip()
         low = s.lower()
-        if not s or any(bp in low for bp in BOILERPLATE_PHRASES):
+        if not s or s.endswith(":") or any(bp in low for bp in BOILERPLATE_PHRASES):
             continue
         # Drop robotic multi-dot version codes like 1.002.001
         if re.search(r"\b\d+\.\d+\.\d+\b", s):
@@ -151,6 +153,8 @@ def fetch_gta_articles(topic_filter: Optional[str] = None, used_titles: Optional
                 title = html_lib.unescape((it.findtext("title") or "").strip())
                 low_t = title.lower()
                 if not any(k in low_t for k in ("gta", "grand theft auto", "vice city")):
+                    continue
+                if not topic_filter and any(skip in low_t for skip in ("time zone", "countdown", "pre-order", "preorder", "explained")):
                     continue
                 if low_t in used_titles:
                     continue
