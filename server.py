@@ -344,7 +344,8 @@ def get_user_brand(paths: dict, user: Optional[dict] = None) -> tuple:
         clean = handle.lstrip("@").strip()
         if clean.lower() in [DEFAULT_CHANNEL_HANDLE.lower().lstrip("@"), DEFAULT_BRAND_NAME.lower()]:
             return DEFAULT_BRAND_NAME, DEFAULT_CHANNEL_HANDLE
-        return clean, (f"@{clean}" if not handle.startswith("@") else handle)
+        spoken_name = clean.split("-")[0].strip() if "-" in clean else clean
+        return (spoken_name or clean), (f"@{clean}" if not handle.startswith("@") else handle)
 
     uid = paths.get("user_id", "")
     if uid and is_legacy_owner(uid):
