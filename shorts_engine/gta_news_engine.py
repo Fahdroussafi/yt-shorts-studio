@@ -202,7 +202,7 @@ def generate_zero_ai_gta_script(
             "search_tags": ["gta 6 news", "gta vi", "gta 6 update", "gaming shorts"],
             "description": f"{first_line}. Subscribe to {brand_handle} #shorts #gta6 #gtavi #gaming",
             "pinned_comment": "What do you think about this? Drop your take below.",
-            "voice": "en-US-ChristopherNeural",
+            "voice": "en-US-BrianNeural",
             "visual_mode": "parkour_brainrot",
             "source": "extractive_zero_ai",
         }

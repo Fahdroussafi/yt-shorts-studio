@@ -24,7 +24,7 @@ def format_ass_time(seconds: float) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}.{centis:02d}"
 
 
-async def generate_voice(text: str, voice_file: str, voice: str = "en-US-ChristopherNeural", rate: str = "+6%", brand_name: Optional[str] = None):
+async def generate_voice(text: str, voice_file: str, voice: str = "en-US-ChristopherNeural", rate: str = "+0%", brand_name: Optional[str] = None):
     import edge_tts
     print("[1/5] Synthesizing voiceover with edge-tts...")
     
@@ -34,7 +34,10 @@ async def generate_voice(text: str, voice_file: str, voice: str = "en-US-Christo
         text = text.rstrip(" .,!?:;-") + f". Follow {brand_name} for more."
 
     # Validate voice against known working voices to prevent "No audio was received" errors
-    working_voices = ["en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-EricNeural", "en-GB-RyanNeural"]
+    working_voices = [
+        "en-US-BrianNeural", "en-US-AndrewNeural", "en-US-SteffanNeural",
+        "en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-EricNeural", "en-GB-RyanNeural"
+    ]
     selected_voice = voice if voice in working_voices else "en-US-ChristopherNeural"
 
     words = []
