@@ -244,6 +244,10 @@ Respond ONLY with valid JSON using this exact schema:
 def clean_and_assemble_script(parsed: dict, brand_name: str, brand_handle: str, profile: dict, chosen_angle: str) -> dict:
     acts = parsed.get("script_acts", {})
     full_script = f"{acts.get('act1_hook', '')} {acts.get('act2_mechanism', '')} {acts.get('act3_directive', '')} {acts.get('act4_seal', '')}".strip()
+    clean_handle = brand_handle.lstrip("@").strip()
+    if clean_handle and clean_handle.lower() != brand_name.lower():
+        full_script = re.sub(re.escape(brand_handle), brand_name, full_script, flags=re.IGNORECASE)
+        full_script = re.sub(rf"\b{re.escape(clean_handle)}\b", brand_name, full_script, flags=re.IGNORECASE)
     parsed["script"] = full_script
 
     # Ensure search_tags is always a clean list of multi-word search phrases

@@ -1825,9 +1825,13 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             brand_name, brand_handle = get_user_brand(user_paths_mock)
 
             clean_script = req.script_text.strip()
+            clean_handle_str = brand_handle.lstrip("@").strip()
+            if clean_handle_str and clean_handle_str.lower() != brand_name.lower():
+                clean_script = re.sub(re.escape(brand_handle), brand_name, clean_script, flags=re.IGNORECASE)
+                clean_script = re.sub(rf"\b{re.escape(clean_handle_str)}\b", brand_name, clean_script, flags=re.IGNORECASE)
             if brand_name.lower() != DEFAULT_BRAND_NAME.lower():
-                clean_script = re.sub(r'(?i)\btheshadowmindhq(?:-hub)?\b', brand_handle.lstrip("@"), clean_script)
-                clean_script = re.sub(r'(?i)@ShadowMind\b', brand_handle, clean_script)
+                clean_script = re.sub(r'(?i)\btheshadowmindhq(?:-hub)?\b', brand_name, clean_script)
+                clean_script = re.sub(r'(?i)@ShadowMind\b', brand_name, clean_script)
                 clean_script = re.sub(rf'(?i)\b{DEFAULT_BRAND_NAME}\b', brand_name, clean_script)
 
             if brand_name.lower() not in clean_script.lower():
