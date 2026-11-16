@@ -108,14 +108,18 @@ export default function IdeasPage() {
             <span>Or enter a specific topic/angle to draft:</span>
             <span className="text-[10px] text-slate-500 font-normal">Type an angle or keyword</span>
           </div>
-          <div className="flex space-x-3">
-            <input
-              type="text"
+          <div className="flex items-start space-x-3">
+            <textarea
+              rows={3}
               value={ideaConcept}
               onChange={(e) => setIdeaConcept(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && ideaConcept.trim()) handleGenerateIdea(); }}
-              placeholder="e.g. 'Door in the face technique', '4-second silence rule', 'Gaslighting counters'..."
-              className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white placeholder:text-slate-600"
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && ideaConcept.trim()) handleGenerateIdea(); }}
+              placeholder={
+                selectedNiche === 'gta6_launch'
+                  ? "Paste a real YouTube video transcript / gaming article (>120 chars = Strict Source-Only Rewrite), or enter a topic..."
+                  : "Enter a topic OR paste a real source transcript/article..."
+              }
+              className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white placeholder:text-slate-600 resize-y"
             />
             <button
               type="button"

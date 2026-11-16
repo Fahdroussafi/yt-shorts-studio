@@ -145,7 +145,44 @@ def build_prompt_and_schema(
     forbidden = ", ".join(profile.get("forbidden_tropes", []))
     recent_avoid = ", ".join(f'"{t}"' for t in recent_titles[-8:]) if recent_titles else "None"
 
-    if niche == "gta6_launch":
+    is_source_text = bool(concept and len(concept.strip()) > 120)
+    if is_source_text:
+        source_excerpt = chosen_angle[:6000]
+        chosen_angle = source_excerpt[:120] + "..."
+        prompt = f"""You are a real human YouTube Shorts editor for '{brand_name}' ({brand_handle}).
+Condense ONLY the real facts from the SOURCE TRANSCRIPT / ARTICLE below into a punchy 25-32 second Short (70-95 words total).
+
+SOURCE TEXT (TRUTH ONLY — DO NOT INVENT ANYTHING OUTSIDE THIS):
+\"\"\"
+{source_excerpt}
+\"\"\"
+
+STRICT RULES:
+1. ZERO INVENTED FACTS: Use ONLY numbers, hardware specs, console names, and claims explicitly stated in SOURCE TEXT. Never guess, extrapolate, or add outside claims.
+2. SOUND LIKE A REAL HUMAN: Short conversational sentences for voiceover. No parentheses, no robotic spec lists.
+3. ACT 1 HOOK (0-3s | 12-18 words): Start with "You" / "Your" in the first 6 words framing the sharpest real point from SOURCE TEXT.
+4. ACT 2 EXPLANATION (3-18s | 30-42 words): Deliver the core proof/fact cleanly from SOURCE TEXT.
+5. ACT 3 TAKEAWAY (18-27s | 18-25 words): Practical takeaway or conclusion directly from SOURCE TEXT.
+6. ACT 4 OUTRO (27-31s | 6-10 words): "Follow {brand_name} for more." (NEVER say "{brand_handle}" in spoken words).
+7. TITLE: Under 55 chars, plain human English + #shorts.
+
+Respond ONLY with valid JSON using this exact schema:
+{{
+  "title": "Punchy title under 55 chars with #shorts",
+  "script_acts": {{
+    "act1_hook": "0-3s hook with 'you'/'your' in first 6 words based strictly on SOURCE TEXT",
+    "act2_mechanism": "3-18s core fact from SOURCE TEXT",
+    "act3_directive": "18-27s takeaway from SOURCE TEXT",
+    "act4_seal": "27-31s outro: Follow {brand_name} for more."
+  }},
+  "keywords": ["gaming-console", "miami-night", "neon-city", "sports-car", "videogame-controller"],
+  "search_tags": ["gta 6 news", "gta 6 breakdown", "gaming shorts", "gta vi"],
+  "description": "2-sentence summary based strictly on SOURCE TEXT. Subscribe to {brand_handle} #shorts #gaming",
+  "pinned_comment": "Natural question about the video topic to spark comments",
+  "voice": "{profile.get('voice_recommended', 'en-US-ChristopherNeural')}"
+}}
+"""
+    elif niche == "gta6_launch":
         prompt = f"""You are a real human gaming YouTuber writing a 30-second GTA 6 Short for '{brand_name}' ({brand_handle}).
 Write like a real gamer talking naturally into a mic — short, punchy, conversational sentences. ZERO robotic AI phrasing, ZERO spec-sheet dumping.
 

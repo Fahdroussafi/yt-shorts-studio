@@ -1193,6 +1193,8 @@ def get_niches(_user: dict = Depends(require_auth)):
     from idea_bank import NICHE_PROFILES
     out = []
     for p in NICHE_PROFILES.values():
+        if not ADMIN_ONLY_MODE and p["id"] == "gta6_launch":
+            continue
         out.append({
             "id": p["id"],
             "name": p["name"],
@@ -1564,6 +1566,7 @@ def get_usage(user: dict = Depends(require_auth)):
     summary["gemini"]["has_key"] = has_ai_key
     summary["ai"] = summary.get("ai", summary["gemini"])
     summary["ai"]["has_key"] = has_ai_key
+    summary["studio_mode"] = "gta" if ADMIN_ONLY_MODE else "standard"
     return summary
 
 

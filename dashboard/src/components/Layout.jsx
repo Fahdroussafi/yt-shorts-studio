@@ -199,10 +199,12 @@ export default function Layout() {
               </div>
             </NavLink>
 
-            <NavLink to="/twitch-clips" className={getNavClass}>
-              <Tv className="w-4 h-4 text-purple-400" />
-              <span>Twitch Clips</span>
-            </NavLink>
+            {usage?.studio_mode === 'gta' && (
+              <NavLink to="/twitch-clips" className={getNavClass}>
+                <Tv className="w-4 h-4 text-purple-400" />
+                <span>Twitch Clips</span>
+              </NavLink>
+            )}
 
             <NavLink to="/dispatcher" className={getNavClass}>
               <Send className="w-4 h-4 text-emerald-400" />
