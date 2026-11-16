@@ -168,56 +168,64 @@ def transcribe_with_groq_whisper(video_path: str, groq_key: str) -> List[Dict]:
 
 def detect_facecam_box(video_path: str, duration: float) -> Optional[Tuple[int, int, int, int]]:
     """Detects a streamer facecam corner/edge box and returns (w, h, x, y) in 1.406:1 (40% top) ratio."""
+    cap = None
     try:
         import cv2
-    except ImportError:
+        if not hasattr(cv2, "CascadeClassifier"):
+            return None
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return None
+
+        cascade = cv2.CascadeClassifier(os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml"))
+        vid_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        vid_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        if vid_w < 320 or vid_h < 240:
+            return None
+
+        detections = []
+        for frac in (0.15, 0.45, 0.75):
+            cap.set(cv2.CAP_PROP_POS_MSEC, max(500.0, duration * frac * 1000.0))
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = cascade.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=5, minSize=(45, 45))
+            for (fx, fy, fw, fh) in faces:
+                # Ignore huge center IRL faces (>38% of frame height); target corner/edge facecams
+                if fh < vid_h * 0.38:
+                    detections.append((fx, fy, fw, fh))
+
+        if not detections:
+            return None
+
+        # Use median face position
+        detections.sort(key=lambda b: b[0] + b[1])
+        fx, fy, fw, fh = detections[len(detections) // 2]
+        cx = fx + fw // 2
+        cy = fy + fh // 2
+
+        # Target 1080:768 aspect ratio (1.40625) around detected face
+        crop_h = max(int(fh * 2.8), int(vid_h * 0.28))
+        crop_h = min(crop_h, int(vid_h * 0.48))
+        crop_w = int(crop_h * (1080.0 / 768.0))
+        if crop_w > vid_w:
+            crop_w = vid_w
+            crop_h = int(crop_w * (768.0 / 1080.0))
+
+        x0 = max(0, min(vid_w - crop_w, cx - crop_w // 2))
+        y0 = max(0, min(vid_h - crop_h, cy - crop_h // 2))
+        return (crop_w, crop_h, x0, y0)
+    except Exception as e:
+        print(f"Facecam detection fallback: {e}")
         return None
-
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        return None
-
-    cascade = cv2.CascadeClassifier(os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml"))
-    vid_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-    vid_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-    if vid_w < 320 or vid_h < 240:
-        cap.release()
-        return None
-
-    detections = []
-    for frac in (0.15, 0.45, 0.75):
-        cap.set(cv2.CAP_PROP_POS_MSEC, max(500.0, duration * frac * 1000.0))
-        ok, frame = cap.read()
-        if not ok:
-            continue
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = cascade.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=5, minSize=(45, 45))
-        for (fx, fy, fw, fh) in faces:
-            # Ignore huge center IRL faces (>38% of frame height); target corner/edge facecams
-            if fh < vid_h * 0.38:
-                detections.append((fx, fy, fw, fh))
-    cap.release()
-
-    if not detections:
-        return None
-
-    # Use median face position
-    detections.sort(key=lambda b: b[0] + b[1])
-    fx, fy, fw, fh = detections[len(detections) // 2]
-    cx = fx + fw // 2
-    cy = fy + fh // 2
-
-    # Target 1080:768 aspect ratio (1.40625) around detected face
-    crop_h = max(int(fh * 2.8), int(vid_h * 0.28))
-    crop_h = min(crop_h, int(vid_h * 0.48))
-    crop_w = int(crop_h * (1080.0 / 768.0))
-    if crop_w > vid_w:
-        crop_w = vid_w
-        crop_h = int(crop_w * (768.0 / 1080.0))
-
-    x0 = max(0, min(vid_w - crop_w, cx - crop_w // 2))
-    y0 = max(0, min(vid_h - crop_h, cy - crop_h // 2))
-    return (crop_w, crop_h, x0, y0)
+    finally:
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
 
 
 def render_twitch_vertical_short(
