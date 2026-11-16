@@ -36,7 +36,8 @@ async def generate_voice(text: str, voice_file: str, voice: str = "en-US-Christo
     # Validate voice against known working voices to prevent "No audio was received" errors
     working_voices = [
         "en-US-BrianNeural", "en-US-AndrewNeural", "en-US-SteffanNeural",
-        "en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-EricNeural", "en-GB-RyanNeural"
+        "en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-EricNeural",
+        "en-GB-RyanNeural", "en-US-AvaNeural", "en-US-JennyNeural"
     ]
     selected_voice = voice if voice in working_voices else "en-US-ChristopherNeural"
 

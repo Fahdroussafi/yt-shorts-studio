@@ -1208,6 +1208,35 @@ def get_niches(_user: dict = Depends(require_auth)):
     return out
 
 
+ALLOWED_PREVIEW_VOICES = {
+    "en-US-BrianNeural", "en-US-AndrewNeural", "en-US-SteffanNeural",
+    "en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-EricNeural",
+    "en-GB-RyanNeural", "en-US-AvaNeural", "en-US-JennyNeural",
+}
+
+
+@app.get("/api/voice-preview")
+async def preview_voice(voice: str = "en-US-BrianNeural", _user: dict = Depends(require_auth)):
+    """Generates and caches a short MP3 voice sample so users can preview voices in Studio."""
+    if voice not in ALLOWED_PREVIEW_VOICES:
+        raise HTTPException(status_code=400, detail="Unsupported voice selection")
+
+    cache_dir = os.path.join(BASE_DIR, ".voice_previews")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_mp3 = os.path.join(cache_dir, f"{voice}.mp3")
+
+    if not os.path.exists(cache_mp3) or os.path.getsize(cache_mp3) < 500:
+        import edge_tts
+        sample_text = "Hey, this is how your YouTube Short voiceover will sound."
+        comm = edge_tts.Communicate(sample_text, voice, rate="+0%")
+        with open(cache_mp3, "wb") as f:
+            async for chunk in comm.stream():
+                if chunk["type"] == "audio":
+                    f.write(chunk["data"])
+
+    return FileResponse(cache_mp3, media_type="audio/mpeg")
+
+
 def verify_groq_api_key(key: str) -> tuple:
     if not key or not isinstance(key, str):
         return False, "API key cannot be empty."

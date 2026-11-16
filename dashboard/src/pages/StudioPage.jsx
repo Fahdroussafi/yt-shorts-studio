@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sliders, Sparkles, RefreshCw, Play, Layers, Check, Trash2 } from 'lucide-react';
+import { Sliders, Sparkles, RefreshCw, Play, Layers, Check, Trash2, Volume2, Square } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export default function StudioPage() {
   const {
+    authFetch, showToast,
     studioVideoId, setStudioVideoId,
     studioVoice, setStudioVoice,
     studioScript, setStudioScript,
@@ -19,6 +20,38 @@ export default function StudioPage() {
   } = useApp();
 
   const navigate = useNavigate();
+  const [previewingVoice, setPreviewingVoice] = useState(false);
+  const voiceAudioRef = useRef(null);
+
+  const handleToggleVoicePreview = async () => {
+    if (previewingVoice && voiceAudioRef.current) {
+      voiceAudioRef.current.pause();
+      voiceAudioRef.current.currentTime = 0;
+      setPreviewingVoice(false);
+      return;
+    }
+    setPreviewingVoice(true);
+    try {
+      const res = await authFetch(`/api/voice-preview?voice=${encodeURIComponent(studioVoice)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      voiceAudioRef.current = audio;
+      audio.onended = () => {
+        setPreviewingVoice(false);
+        URL.revokeObjectURL(url);
+      };
+      audio.onerror = () => {
+        setPreviewingVoice(false);
+        URL.revokeObjectURL(url);
+      };
+      await audio.play();
+    } catch (e) {
+      setPreviewingVoice(false);
+      showToast?.(`Voice preview failed: ${e.message}`, 'error');
+    }
+  };
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
@@ -65,18 +98,33 @@ export default function StudioPage() {
 
           <div className="space-y-1.5">
             <label className="text-xs font-mono uppercase text-slate-400">Voiceover Model (Edge-TTS)</label>
-            <select
-              value={studioVoice}
-              onChange={(e) => setStudioVoice(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white"
-            >
-              <option value="en-US-BrianNeural">Brian (Natural YouTuber Narrator - Gaming Default)</option>
-              <option value="en-US-AndrewNeural">Andrew (Warm Conversational Male)</option>
-              <option value="en-US-ChristopherNeural">Christopher (Deep Authoritative Male - Dark Psychology Default)</option>
-              <option value="en-US-GuyNeural">Guy (Engaging Storyteller - Historical Archives)</option>
-              <option value="en-US-AvaNeural">Ava (Sharp Analytical Female - Deception Profiling)</option>
-              <option value="en-US-JennyNeural">Jenny (Calm Intimate Female - Non-Verbal Dynamics)</option>
-            </select>
+            <div className="flex items-center space-x-2">
+              <select
+                value={studioVoice}
+                onChange={(e) => setStudioVoice(e.target.value)}
+                className="flex-1 min-w-0 px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white"
+              >
+                <option value="en-US-BrianNeural">Brian (Natural YouTuber Narrator - Gaming Default)</option>
+                <option value="en-US-AndrewNeural">Andrew (Warm Conversational Male)</option>
+                <option value="en-US-ChristopherNeural">Christopher (Deep Authoritative Male - Dark Psychology Default)</option>
+                <option value="en-US-GuyNeural">Guy (Engaging Storyteller - Historical Archives)</option>
+                <option value="en-US-AvaNeural">Ava (Sharp Analytical Female - Deception Profiling)</option>
+                <option value="en-US-JennyNeural">Jenny (Calm Intimate Female - Non-Verbal Dynamics)</option>
+              </select>
+              <button
+                type="button"
+                onClick={handleToggleVoicePreview}
+                className={`px-3 py-2.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 transition shrink-0 ${
+                  previewingVoice
+                    ? 'bg-red-950/60 border-red-700 text-red-300'
+                    : 'bg-slate-900 border-slate-800 hover:border-cyan-500 text-cyan-300'
+                }`}
+                title="Preview selected voice"
+              >
+                {previewingVoice ? <Square className="w-3.5 h-3.5 fill-current" /> : <Volume2 className="w-4 h-4" />}
+                <span>{previewingVoice ? 'Stop' : 'Listen'}</span>
+              </button>
+            </div>
           </div>
         </div>
 
