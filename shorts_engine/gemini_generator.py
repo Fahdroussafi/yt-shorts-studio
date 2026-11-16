@@ -159,15 +159,16 @@ MANDATORY 4-ACT GAMING SHORTS ARCHITECTURE:
    - MUST include a real, verified number or spec (e.g. "62 percent", "30 FPS", "225 gigabytes", "10 gigabytes").
    - NEVER start with "Did you know...", "In this video...", or generic intros.
 2. ACT 2 BREAKDOWN (3-17s | 32-42 words):
-   - Deliver ONLY real, technically accurate hardware, preload, or gameplay facts:
-     * Series S: 4 TFLOPS GPU, 10 GB RAM (8 GB fast + 2 GB slow), 512 GB SSD (~364 GB usable), ~225 GB install.
-     * Series X: 12 TFLOPS GPU, 16 GB RAM, 1 TB SSD (~802 GB usable), 30 FPS target.
-     * Base PS5: 10.28 TFLOPS GPU, 16 GB RAM, Trailer 2 captured at ~2560x1152 @ 30 FPS upscaled to 4K w/ ray tracing.
-     * PS5 Pro: 16.7 TFLOPS GPU + PSSR upscaling + 2 TB SSD, but SAME 8-core Zen 2 CPU -> still targeting 30 FPS (sharper image, not 60 FPS).
+   - Deliver ONLY real, technically accurate hardware, preload, or gameplay facts (ALWAYS state exact units — e.g. "10 GB of RAM", NEVER just "10 gigabytes"):
+     * Series S: 4 TFLOPS GPU, 10 GB of RAM (8 GB fast + 2 GB slow -> forces lower-res textures, shorter draw distance, and pop-in at high speed), 512 GB SSD (~364 GB usable), ~225 GB install.
+     * Series X: 12 TFLOPS GPU, 16 GB of RAM, 1 TB SSD (~802 GB usable), 30 FPS target.
+     * Base PS5: 10.28 TFLOPS GPU, 16 GB of RAM, Trailer 2 captured at ~2560x1152 @ 30 FPS upscaled to 4K w/ ray tracing.
+     * PS5 Pro: 16.7 TFLOPS GPU + PSSR upscaling + 2 TB SSD, same 8-core Zen 2 CPU -> still 30 FPS (sharper image, not 60 FPS).
      * Xbox preload datamine: Tez2 found files matching AMD FSR 4.1 upscaling (unconfirmed if active at launch).
 3. ACT 3 PAYOFF / REAL ACTION (17-27s | 22-30 words):
-   - Give ONLY real, verifiable actions (e.g. free 225+ GB on the internal SSD, move older non-Optimized games to a USB 3.0 drive, use Xbox Cloud Gaming, or watch how 30 FPS holds in heavy rain/traffic).
-   - STRICT HONESTY BAN: NEVER invent fake console settings, fake menu toggles, or nonexistent features (e.g. NO "SSD-only mode", NO fake hidden menus). If a feature isn't confirmed, say what to actually watch for on launch day.
+   - Give ONLY real, accurate console advice:
+     * GTA 6 CANNOT launch from USB external drives at all (requires internal NVMe SSD or official Expansion Card) — only move old Xbox One/360 games onto USB to free internal space, or use Xbox Cloud Gaming.
+   - STRICT HONESTY BAN: NEVER invent fake settings/menus ("SSD-only mode"), NEVER leave units ambiguous ("10 GB" without "of RAM"), and NEVER imply USB drives can run GTA 6 slowly.
 4. ACT 4 BRANDED OUTRO (27-31s | 8-12 words):
    - MUST end with: "Follow {brand_name} for [specific GTA 6 launch truths / tech fixes]."
 5. TOTAL SPOKEN WORDS:
