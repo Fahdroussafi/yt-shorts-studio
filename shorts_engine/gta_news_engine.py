@@ -182,8 +182,12 @@ def generate_zero_ai_gta_script(
     from idea_bank import load_topic_history, record_topic_history
 
     history = load_topic_history(topic_history_file)
-    used_titles = {str(e.get("concept", "")).lower() for e in history}
-    used_titles.update(str(e.get("title", "")).lower() for e in history)
+    used_titles = set()
+    for e in history:
+        for k in ("angle", "concept", "title"):
+            val = str(e.get(k, "")).strip().lower()
+            if val:
+                used_titles.add(val)
 
     # Case 1: User pasted source text (>120 chars) -> extractive summarize directly, zero AI
     if concept and len(concept.strip()) > 120:
@@ -214,7 +218,7 @@ def generate_zero_ai_gta_script(
     if not articles:
         raise RuntimeError("No live GTA articles reachable from RSS feeds right now.")
 
-    art = articles[0]
+    art = random.choice(articles[:8])
     body = art["body"]
     if len(body) < 350 and art.get("link"):
         fetched = _fetch_article_paragraphs(art["link"])
