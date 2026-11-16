@@ -2021,8 +2021,9 @@ def get_twitch_viral_clips(
 async def run_twitch_production(task_id: str, req: TwitchProduceRequest, target_videos_dir: str, groq_key: str):
     if task_id not in RENDER_QUEUE_LIST:
         RENDER_QUEUE_LIST.append(task_id)
+    sem = get_render_semaphore()
     try:
-        async with RENDER_QUEUE_SEMAPHORE:
+        async with sem:
             PRODUCTION_TASKS[task_id]["status"] = "processing"
             PRODUCTION_TASKS[task_id]["progress"] = 10
             PRODUCTION_TASKS[task_id]["log"].append("[1/4] Downloading Twitch clip via yt-dlp...")
