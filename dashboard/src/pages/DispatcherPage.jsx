@@ -43,6 +43,7 @@ export default function DispatcherPage() {
   const [tab, setTab] = useState('single'); // 'single' | 'batch'
   const [startDate, setStartDate] = useState(() => getNextAvailableDateStr(stats?.videos));
   const [dailyTime, setDailyTime] = useState('19:00');
+  const [postsPerDay, setPostsPerDay] = useState(1); // 1 | 2
   const [selectedIds, setSelectedIds] = useState([]);
 
   const quotaRemaining = usage?.youtube?.uploads_remaining ?? 6;
@@ -84,15 +85,32 @@ export default function DispatcherPage() {
   };
 
   const batchPlan = useMemo(() => {
-    let dayIdx = 0;
+    const occupied = new Set(
+      (stats?.videos || [])
+        .map((v) => (v.publish_at ? new Date(v.publish_at).toISOString().slice(0, 16) : null))
+        .filter(Boolean)
+    );
+    const slotTimes = postsPerDay === 2 ? ['15:00', dailyTime || '19:00'] : [dailyTime || '19:00'];
+    let slotCursor = 0;
+
     return readyVideos
       .filter((v) => selectedIds.includes(v.id))
       .map((v) => {
-        const publishAt = addDaysToDate(startDate, dayIdx, dailyTime);
-        dayIdx += 1;
+        let publishAt = '';
+        while (slotCursor < 365) {
+          const dayOffset = Math.floor(slotCursor / slotTimes.length);
+          const timeSlot = slotTimes[slotCursor % slotTimes.length];
+          slotCursor += 1;
+          const candidate = addDaysToDate(startDate, dayOffset, timeSlot);
+          if (!occupied.has(candidate)) {
+            occupied.add(candidate);
+            publishAt = candidate;
+            break;
+          }
+        }
         return { videoId: v.id, title: v.title, size_mb: v.size_mb, publishAt };
       });
-  }, [readyVideos, selectedIds, startDate, dailyTime]);
+  }, [readyVideos, selectedIds, startDate, dailyTime, postsPerDay, stats]);
 
   return (
     <div className="space-y-6 max-w-3xl mx-auto">
@@ -250,7 +268,7 @@ export default function DispatcherPage() {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 bg-slate-900/60 rounded-xl border border-slate-800">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 bg-slate-900/60 rounded-xl border border-slate-800">
             <div className="space-y-1">
               <label className="text-[11px] font-mono uppercase text-slate-400 flex items-center space-x-1">
                 <Calendar className="w-3.5 h-3.5 text-blue-400" />
@@ -267,7 +285,7 @@ export default function DispatcherPage() {
             <div className="space-y-1">
               <label className="text-[11px] font-mono uppercase text-slate-400 flex items-center space-x-1">
                 <Clock className="w-3.5 h-3.5 text-blue-400" />
-                <span>Daily Release Time (UTC)</span>
+                <span>Primary Time (UTC)</span>
               </label>
               <input
                 type="time"
@@ -275,6 +293,21 @@ export default function DispatcherPage() {
                 onChange={(e) => setDailyTime(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 focus:border-blue-500 outline-none text-sm text-white font-mono"
               />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] font-mono uppercase text-slate-400 flex items-center space-x-1">
+                <Layers className="w-3.5 h-3.5 text-blue-400" />
+                <span>Cadence</span>
+              </label>
+              <select
+                value={postsPerDay}
+                onChange={(e) => setPostsPerDay(Number(e.target.value))}
+                className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 focus:border-blue-500 outline-none text-sm text-white font-mono"
+              >
+                <option value={1}>1 / Day ({dailyTime})</option>
+                <option value={2}>2 / Day (15:00 & {dailyTime})</option>
+              </select>
             </div>
           </div>
 

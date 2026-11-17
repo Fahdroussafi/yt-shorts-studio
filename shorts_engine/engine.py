@@ -168,7 +168,7 @@ CAPTION_STYLES = {
     }
 }
 
-def build_ass_subtitles(words, output_ass: str, style_name: Optional[str] = None, margin_v: int = 860, fontsize: Optional[int] = None, top_badge: Optional[str] = None):
+def build_ass_subtitles(words, output_ass: str, style_name: Optional[str] = None, margin_v: int = 860, fontsize: Optional[int] = None, top_badge: Optional[str] = None, hook_banner: Optional[str] = None):
     """Builds dynamic animated subtitles with zero-gap persistent presence."""
     import random
     if not style_name or style_name not in CAPTION_STYLES:
@@ -202,6 +202,7 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,{cfg['font']},{fsize},{cfg['primary']},&H0000FFFF,{cfg['outline']},{cfg['back']},-1,0,0,0,100,100,2,0,{cfg['border_style']},{cfg['outline_w']},{cfg['shadow_w']},2,60,60,{margin_v},1
 Style: Badge,{cfg['font']},38,&H00FFFFFF,&H0000FFFF,&H00000000,&HB0101018,-1,0,0,0,100,100,1,0,3,10,0,7,36,36,42,1
+Style: HookBanner,{cfg['font']},54,&H0000D7FF,&H0000FFFF,&H00000000,&HD00C0C14,-1,0,0,0,100,100,2,0,3,16,0,8,50,50,340,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -210,6 +211,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if top_badge and phrases:
         total_end = format_ass_time(phrases[-1]["end"] + 1.0)
         events.append(f"Dialogue: 1,0:00:00.00,{total_end},Badge,,0,0,0,,{top_badge}")
+    if hook_banner and phrases:
+        total_end = format_ass_time(phrases[-1]["end"] + 1.0)
+        clean_banner = hook_banner.replace("{", "").replace("}", "").strip().upper()
+        events.append(f"Dialogue: 2,0:00:00.00,{total_end},HookBanner,,0,0,0,,{clean_banner}")
     pop_anim = cfg.get("anim", "")
     active_color = cfg["active"]
     primary_color = cfg["primary"]

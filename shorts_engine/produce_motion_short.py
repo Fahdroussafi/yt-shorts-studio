@@ -628,7 +628,7 @@ def render_gameplay_short(
     cinema_frame: bool = False
 ):
     """Renders 30fps vertical multi-cut gameplay Short (5 dynamic random scenes) for peak retention."""
-    num_cuts = 5
+    num_cuts = 8 if cinema_frame else 5
     per_cut = duration / num_cuts
 
     if gameplay_path and os.path.exists(gameplay_path):
@@ -670,18 +670,22 @@ def render_gameplay_short(
     concat_ins = "".join(f"[v{i}]" for i in range(num_cuts))
     audio_idx = num_cuts
     if cinema_frame:
+        synth_idx = num_cuts + 1
         filter_complex = (
             ";".join(filter_parts) + ";"
             f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.06:saturation=1.10,split=2[bg_src][fg_src];"
             f"[bg_src]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:4,setsar=1[vbg];"
             f"[fg_src]scale=1080:-2,setsar=1[vfg];"
             f"[vbg][vfg]overlay=(W-w)/2:(H-h)/2,ass='{clean_ass}'{fonts_arg}[vfinal];"
-            f"[{audio_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[afinal]"
+            f"[{audio_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
+            f"[avoice][{synth_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.06[afinal]"
         )
         cmd = [
             FFMPEG, "-y",
             *inputs,
             "-i", audio_path,
+            "-f", "lavfi", "-t", f"{duration:.2f}",
+            "-i", "sine=frequency=58:sample_rate=44100,lowpass=f=110,volume=0.05",
             "-filter_complex", filter_complex,
             "-map", "[vfinal]",
             "-map", "[afinal]",
