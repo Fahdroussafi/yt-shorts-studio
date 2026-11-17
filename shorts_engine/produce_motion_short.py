@@ -550,7 +550,10 @@ def render_motion_video(
     audio_input_idx = len(clip_paths)
     synth_input_idx = len(clip_paths) + 1
     bed_weight = audio_cfg.get("weight", 0.14)
-    audio_filter = f"[{audio_input_idx}:a][{synth_input_idx}:a]amix=inputs=2:duration=first:weights=1.0 {bed_weight}[afinal]"
+    audio_filter = (
+        f"[{audio_input_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
+        f"[avoice][{synth_input_idx}:a]amix=inputs=2:duration=first:weights=1.0 {bed_weight}[afinal]"
+    )
 
     full_filter = ";".join(filter_parts) + ";" + concat_filter + ";" + grade_filter + ";" + subtitle_filter + ";" + audio_filter
 
@@ -705,7 +708,8 @@ def render_gameplay_short(
             ";".join(filter_parts) + ";"
             f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.08:saturation=1.12,"
             f"ass='{clean_ass}'{fonts_arg}[vfinal];"
-            f"[{audio_idx}:a][{synth_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.12[afinal]"
+            f"[{audio_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
+            f"[avoice][{synth_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.08[afinal]"
         )
         cmd = [
             FFMPEG, "-y",
@@ -784,7 +788,10 @@ def render_split_retention_short(
 
     audio_input_idx = len(inputs)
     synth_input_idx = audio_input_idx + 1
-    audio_chain = f"[{audio_input_idx}:a][{synth_input_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.12[afinal]"
+    audio_chain = (
+        f"[{audio_input_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
+        f"[avoice][{synth_input_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.08[afinal]"
+    )
 
     filter_chains = []
     if top_parts:

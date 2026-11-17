@@ -1885,23 +1885,19 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
 
             # 1. Voice with Micro-variation
             voice_choice = req.voice or ("en-US-AndrewMultilingualNeural" if ADMIN_ONLY_MODE else "en-US-ChristopherNeural")
-            tts_rate = "+4%" if use_cinema_frame else "+0%"
-            words = await generate_voice(clean_script, audio_file, voice=voice_choice, rate=tts_rate, brand_name=brand_name)
+            words = await generate_voice(clean_script, audio_file, voice=voice_choice, rate="+4%", brand_name=brand_name)
             dur = get_audio_duration(audio_file)
             PRODUCTION_TASKS[task_id]["progress"] = 30
             PRODUCTION_TASKS[task_id]["log"].append(f"[2/5] Voice synthesized ({dur:.2f}s, {voice_choice}). Building viral ASS subtitles...")
 
-            hook_banner = None
-            top_badge = None
-            if use_cinema_frame:
-                raw_t = re.sub(r"#\S+", "", req.title or "").strip()
-                b_words = []
-                for w in raw_t.split():
-                    if len(" ".join(b_words + [w])) > 40:
-                        break
-                    b_words.append(w)
-                hook_banner = " ".join(b_words) if b_words else "GTA 6 BREAKING NEWS"
-                top_badge = f"@{brand_name}"
+            raw_t = re.sub(r"#\S+", "", req.title or "").strip()
+            b_words = []
+            for w in raw_t.split():
+                if len(" ".join(b_words + [w])) > 40:
+                    break
+                b_words.append(w)
+            hook_banner = " ".join(b_words) if b_words else ("GTA 6 BREAKING NEWS" if use_cinema_frame else None)
+            top_badge = f"@{brand_name}" if use_cinema_frame else None
 
             # 2. Subtitles with Pop-In Animations & High-Contrast Colors
             caption_style_used = build_ass_subtitles(
