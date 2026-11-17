@@ -166,7 +166,7 @@ NICHE_PROFILES = {
         "name": "GTA 6 & Next-Gen Gaming Tech",
         "rpm_range": "$0.25 - $0.45",
         "retention_rate": "65% - 78%",
-        "voice_recommended": "en-US-BrianNeural",
+        "voice_recommended": "en-US-AndrewMultilingualNeural",
         "description": "Human, punchy GTA 6 breakdowns: storage traps, 30 FPS console truths, trailer secrets, and launch-day tips.",
         "outro_phrase": "Follow {brand_name} for real GTA 6 updates.",
         "forbidden_terms": ["skincare", "serum", "crypto coin", "dropshipping"],

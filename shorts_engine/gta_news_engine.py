@@ -152,7 +152,7 @@ def fetch_gta_articles(topic_filter: Optional[str] = None, used_titles: Optional
             for it in root.findall(".//item")[:20]:
                 title = html_lib.unescape((it.findtext("title") or "").strip())
                 low_t = title.lower()
-                if not any(k in low_t for k in ("gta", "grand theft auto", "vice city")):
+                if not any(k in low_t for k in ("gta 6", "gta vi", "grand theft auto 6", "grand theft auto vi")):
                     continue
                 if not topic_filter and any(skip in low_t for skip in ("time zone", "countdown", "pre-order", "preorder", "explained")):
                     continue
@@ -247,7 +247,7 @@ def generate_zero_ai_gta_script(
             "search_tags": ["gta 6 news", "gta vi", "gta 6 update", "gaming shorts"],
             "description": f"{first_line}. Subscribe to {brand_handle} #shorts #gta6 #gtavi #gaming",
             "pinned_comment": "What do you think about this? Drop your take below.",
-            "voice": "en-US-BrianNeural",
+            "voice": "en-US-AndrewMultilingualNeural",
             "visual_mode": "parkour_brainrot",
             "source": "extractive_zero_ai",
         }
@@ -291,14 +291,21 @@ def generate_zero_ai_gta_script(
                 body = fetched
         script = extract_extractive_script(art["title"], body, brand_name=brand_name)
 
-    # Trim title cleanly under 58 chars for mobile Shorts feed
-    words = art["title"].split()
+    # Build clean title without mid-phrase chopping (up to 65 chars + #shorts #gta6)
+    base_title = re.split(r"\s*[—–|:]\s*", art["title"].strip())[0]
+    if len(base_title) < 20:
+        base_title = art["title"].strip()
+    words = base_title.split()
     short_head = ""
     for w in words:
-        if len(short_head) + len(w) + 1 > 43:
+        if len(short_head) + len(w) + 1 > 65:
             break
         short_head = f"{short_head} {w}".strip()
-    yt_title = f"{short_head} #shorts #gta6"
+    dangling_end = {"a", "an", "the", "as", "to", "for", "of", "in", "on", "with", "and", "or", "by", "at", "grand"}
+    head_words = short_head.split()
+    while len(head_words) > 3 and head_words[-1].lower().strip(",.-:") in dangling_end:
+        head_words.pop()
+    yt_title = f"{' '.join(head_words)} #shorts #gta6"
 
     if topic_history_file:
         record_topic_history(topic_history_file, yt_title, "gta6_launch", art["title"])
@@ -310,7 +317,7 @@ def generate_zero_ai_gta_script(
         "search_tags": ["gta 6 news", "gta vi", "gta 6 update", "gta 6 release", "gaming shorts"],
         "description": f"{art['title']} (Source: {art['outlet']} — {art['link']}). Subscribe to {brand_handle} #shorts #gta6 #gtavi #gaming",
         "pinned_comment": "Are you ready for launch day? Drop your console below.",
-        "voice": "en-US-ChristopherNeural",
+        "voice": "en-US-AndrewMultilingualNeural",
         "visual_mode": "parkour_brainrot",
         "source": f"rss_{art['outlet'].lower().replace(' ', '_')}_zero_ai",
     }

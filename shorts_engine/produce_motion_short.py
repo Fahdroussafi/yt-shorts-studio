@@ -624,7 +624,8 @@ def render_gameplay_short(
     ass_path: str,
     output_mp4: str,
     duration: float,
-    gameplay_path: Optional[str] = None
+    gameplay_path: Optional[str] = None,
+    cinema_frame: bool = False
 ):
     """Renders 30fps vertical multi-cut gameplay Short (5 dynamic random scenes) for peak retention."""
     num_cuts = 5
@@ -635,7 +636,7 @@ def render_gameplay_short(
     else:
         chosen_clips = [get_gameplay_clip() for _ in range(num_cuts)]
 
-    print(f"[4/5] Rendering High-Retention Multi-Cut Gameplay short ({duration:.2f}s, {num_cuts} scenes)...")
+    print(f"[4/5] Rendering High-Retention Multi-Cut Gameplay short ({duration:.2f}s, {num_cuts} scenes, cinema={cinema_frame})...")
     clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
     clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
     fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
@@ -651,44 +652,76 @@ def render_gameplay_short(
         offset = round(random.uniform(0.0, max_offset), 2) if max_offset > 1.0 else 0.0
 
         inputs.extend(["-stream_loop", "-1", "-ss", f"{offset:.2f}", "-t", f"{per_cut:.3f}", "-i", clip_file])
-        scale_crop = (
-            "scale=1166:2074:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
-            if i % 2 == 0
-            else "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
-        )
-        filter_parts.append(
-            f"[{i}:v]trim=duration={per_cut:.3f},setpts=PTS-STARTPTS,fps=30,{scale_crop},setsar=1[v{i}]"
-        )
+        if cinema_frame:
+            filter_parts.append(
+                f"[{i}:v]trim=duration={per_cut:.3f},setpts=PTS-STARTPTS,fps=30,"
+                f"scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1[v{i}]"
+            )
+        else:
+            scale_crop = (
+                "scale=1166:2074:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
+                if i % 2 == 0
+                else "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
+            )
+            filter_parts.append(
+                f"[{i}:v]trim=duration={per_cut:.3f},setpts=PTS-STARTPTS,fps=30,{scale_crop},setsar=1[v{i}]"
+            )
 
     concat_ins = "".join(f"[v{i}]" for i in range(num_cuts))
     audio_idx = num_cuts
-    synth_idx = num_cuts + 1
-    filter_complex = (
-        ";".join(filter_parts) + ";"
-        f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.08:saturation=1.12,"
-        f"ass='{clean_ass}'{fonts_arg}[vfinal];"
-        f"[{audio_idx}:a][{synth_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.12[afinal]"
-    )
-
-    cmd = [
-        FFMPEG, "-y",
-        *inputs,
-        "-i", audio_path,
-        "-f", "lavfi", "-t", f"{duration:.2f}",
-        "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.03,lowpass=f=140",
-        "-filter_complex", filter_complex,
-        "-map", "[vfinal]",
-        "-map", "[afinal]",
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "19",
-        "-threads", "2",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-t", f"{duration:.2f}",
-        output_mp4
-    ]
+    if cinema_frame:
+        filter_complex = (
+            ";".join(filter_parts) + ";"
+            f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.06:saturation=1.10,split=2[bg_src][fg_src];"
+            f"[bg_src]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:4,setsar=1[vbg];"
+            f"[fg_src]scale=1080:-2,setsar=1[vfg];"
+            f"[vbg][vfg]overlay=(W-w)/2:(H-h)/2,ass='{clean_ass}'{fonts_arg}[vfinal];"
+            f"[{audio_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[afinal]"
+        )
+        cmd = [
+            FFMPEG, "-y",
+            *inputs,
+            "-i", audio_path,
+            "-filter_complex", filter_complex,
+            "-map", "[vfinal]",
+            "-map", "[afinal]",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "19",
+            "-threads", "2",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-t", f"{duration:.2f}",
+            output_mp4
+        ]
+    else:
+        synth_idx = num_cuts + 1
+        filter_complex = (
+            ";".join(filter_parts) + ";"
+            f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.08:saturation=1.12,"
+            f"ass='{clean_ass}'{fonts_arg}[vfinal];"
+            f"[{audio_idx}:a][{synth_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.12[afinal]"
+        )
+        cmd = [
+            FFMPEG, "-y",
+            *inputs,
+            "-i", audio_path,
+            "-f", "lavfi", "-t", f"{duration:.2f}",
+            "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.03,lowpass=f=140",
+            "-filter_complex", filter_complex,
+            "-map", "[vfinal]",
+            "-map", "[afinal]",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "19",
+            "-threads", "2",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-t", f"{duration:.2f}",
+            output_mp4
+        ]
     res = _run_ffmpeg(cmd)
     if res.returncode != 0:
         print("FFmpeg gameplay render error:", res.stderr[-800:])

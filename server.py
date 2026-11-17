@@ -1209,6 +1209,7 @@ def get_niches(_user: dict = Depends(require_auth)):
 
 
 ALLOWED_PREVIEW_VOICES = {
+    "en-US-AndrewMultilingualNeural", "en-US-BrianMultilingualNeural",
     "en-US-BrianNeural", "en-US-SteffanNeural",
     "en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-EricNeural",
     "en-GB-RyanNeural", "en-US-AvaNeural", "en-US-JennyNeural",
@@ -1886,19 +1887,24 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             PRODUCTION_TASKS[task_id]["progress"] = 30
             PRODUCTION_TASKS[task_id]["log"].append(f"[2/5] Voice synthesized ({dur:.2f}s, {voice_choice}). Building viral ASS subtitles...")
 
+            v_mode = getattr(req, "visual_mode", "cinematic_cuts") or "cinematic_cuts"
+            use_cinema_frame = ADMIN_ONLY_MODE and v_mode == "parkour_brainrot"
+
             # 2. Subtitles with Pop-In Animations & High-Contrast Colors
-            caption_style_used = build_ass_subtitles(words, ass_file)
+            caption_style_used = build_ass_subtitles(words, ass_file, margin_v=520 if use_cinema_frame else 860)
             PRODUCTION_TASKS[task_id]["progress"] = 50
             PRODUCTION_TASKS[task_id]["log"].append(f"[2/5] Dynamic subtitles baked [Style: {caption_style_used}].")
 
             # 3. Visual Mode Handling (cinematic_cuts, parkour_brainrot, split_retention)
-            v_mode = getattr(req, "visual_mode", "cinematic_cuts") or "cinematic_cuts"
             clip_paths = []
 
             if v_mode == "parkour_brainrot":
                 PRODUCTION_TASKS[task_id]["progress"] = 70
-                PRODUCTION_TASKS[task_id]["log"].append("[3/5] Visual Mode: Hypnotic Gameplay Loop (Minecraft Parkour / Subway Surfers). Instant local slicing...")
-                await asyncio.to_thread(render_gameplay_short, audio_file, ass_file, output_mp4, dur, None)
+                PRODUCTION_TASKS[task_id]["log"].append(
+                    "[3/5] Visual Mode: GTA 6 Cinema Frame (5-Cut 1080p)..." if use_cinema_frame
+                    else "[3/5] Visual Mode: Hypnotic Gameplay Loop (Minecraft Parkour / Subway Surfers). Instant local slicing..."
+                )
+                await asyncio.to_thread(render_gameplay_short, audio_file, ass_file, output_mp4, dur, None, use_cinema_frame)
 
             elif v_mode == "split_retention":
                 niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
