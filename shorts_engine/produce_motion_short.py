@@ -54,6 +54,9 @@ CACHE_TTL = 6 * 3600  # 6 hours
 
 def extract_clip_id(url: str) -> str:
     """Extracts a unique, stable clip identifier from a stock video URL."""
+    m_pix = re.search(r'pixabay\.com/video/[^/]+/[^/]+/[^/]+/(\d+)-', url)
+    if m_pix:
+        return f"pix_{m_pix.group(1)}"
     m_uns = re.search(r'images\.unsplash\.com/photo-([a-zA-Z0-9_-]+)', url)
     if m_uns:
         return f"uns_{m_uns.group(1)[:25]}"
@@ -63,9 +66,6 @@ def extract_clip_id(url: str) -> str:
     m2 = re.search(r'mixkit-([^.]+?)(?:-\d+)?\.', url)
     if m2:
         return f"mix_{m2.group(1)[:25]}"
-    m4 = re.search(r'pexels-video-(\d+)', url)
-    if m4:
-        return f"pex_{m4.group(1)}"
     import hashlib
     return "clip_" + hashlib.md5(url.encode()).hexdigest()[:12]
 
@@ -166,50 +166,59 @@ VERIFIED_STOCK_SLUGS = {
     "dark-street", "traffic", "train", "door", "clock", "stairs"
 }
 
-# Semantic dictionary mapping script triggers / spoken concepts to verified visual slugs
+# Semantic dictionary mapping concrete spoken cues to literal stock-video queries (no false-positive traps)
 SCRIPT_VISUAL_TRIGGER_MAP = [
-    # CCTV & Surveillance
-    (re.compile(r'\b(cctv|camera|surveillance|footage|security|monitor|watch(?:ing)?|record(?:ed)?)\b', re.I), "security-camera"),
-    # Underground / Tunnel / Subway
-    (re.compile(r'\b(subway|train|metro|platform|commute)\b', re.I), "subway"),
-    (re.compile(r'\b(tunnel|claustrophobic|underground|hallway|corridor|passage)\b', re.I), "tunnel"),
-    # Crowd & Strangers
-    (re.compile(r'\b(crowd|people|stranger|strangers|bystander|bystanders|group|public|hundred people)\b', re.I), "crowd"),
-    # Eye contact & Staring / Face
-    (re.compile(r'\b(eye|eyes|stare|staring|blink|gaze|look into|eye contact)\b', re.I), "eye"),
-    # Police & Interrogation & Traps
-    (re.compile(r'\b(police|interrogation|fbi|detective|cop|arrest|handcuff|suspect|interrogate)\b', re.I), "police"),
-    (re.compile(r'\b(prison|jail|cell|inmate|behind bars|cage|guilty|verdict)\b', re.I), "prison"),
-    # Hospital, Medicine & Brain Experiments
-    (re.compile(r'\b(hospital|nurse|doctor|patient|injection|medicine|needle|clinical|ward)\b', re.I), "hospital"),
-    (re.compile(r'\b(experiment|scientist|laboratory|lab|study|researchers|brain|neural)\b', re.I), "laboratory"),
-    # Danger / Water / Fire
-    (re.compile(r'\b(ocean|sea|water|waves|drown|drowning|shore|beach)\b', re.I), "ocean"),
-    (re.compile(r'\b(fire|burn|flame|blaze|spark|smoke|alarm|fire alarm)\b', re.I), "fire"),
-    # Escape / Running / Chase
-    (re.compile(r'\b(run|running|flee|escape|chase|pursuit|sprint|dash)\b', re.I), "running"),
-    # Night street / Walking alone / Parking
-    (re.compile(r'\b(walking alone|empty street|alley|walk alone|sidewalk)\b', re.I), "walking-alone"),
-    (re.compile(r'\b(parking|garage|dark street|night|city at night|midnight)\b', re.I), "dark-street"),
-    # Office, Corporate, Boss, Money
-    (re.compile(r'\b(boss|coworker|corporate|workplace|office|email|desk|colleague|job)\b', re.I), "office"),
-    # Strategy, Chess, Shadows, Whispers
-    (re.compile(r'\b(chess|strategy|tactics|game|checkmate|opponent)\b', re.I), "chess"),
-    (re.compile(r'\b(rain|window|storm|weather|glass)\b', re.I), "rain-window"),
-    (re.compile(r'\b(shadow|shadows|silhouette|darkness|dark room|mystery)\b', re.I), "silhouette"),
-    (re.compile(r'\b(clock|seconds|timer|time|hourglass|four seconds)\b', re.I), "clock"),
+    (re.compile(r'\b(phone|texting|text message|notification|screen|smartphone|scroll(?:ing)?)\b', re.I), "person texting smartphone"),
+    (re.compile(r'\b(argu(?:e|ing|ment)|fight(?:ing)?|yell(?:ing)?|couple|partner|relationship|breakup)\b', re.I), "couple arguing"),
+    (re.compile(r'\b(boss|coworker|corporate|workplace|office|meeting|interview|colleague|boardroom)\b', re.I), "business meeting office"),
+    (re.compile(r'\b(handshake|deal|negotiation|contract|agreement)\b', re.I), "business handshake"),
+    (re.compile(r'\b(mirror|reflection|yourself|self)\b', re.I), "person looking mirror"),
+    (re.compile(r'\b(eye|eyes|stare|staring|blink|gaze|eye contact|pupil)\b', re.I), "close up eyes"),
+    (re.compile(r'\b(whisper|secret|gossip|rumor|ear)\b', re.I), "person whispering secret"),
+    (re.compile(r'\b(smile|smiling|laugh|laughing|fake smile|grin)\b', re.I), "person smiling portrait"),
+    (re.compile(r'\b(stress|stressed|anxious|anxiety|panic|overthink|headache|cry|crying)\b', re.I), "stressed person thinking"),
+    (re.compile(r'\b(money|cash|dollar|rich|wealth|wallet|bank|pay)\b', re.I), "counting money cash"),
+    (re.compile(r'\b(cctv|surveillance|security camera|recorded|spy)\b', re.I), "security camera"),
+    (re.compile(r'\b(police|interrogation|fbi|detective|arrest|handcuff|suspect|interrogate)\b', re.I), "police interrogation"),
+    (re.compile(r'\b(prison|jail|inmate|behind bars|courtroom|judge|verdict)\b', re.I), "prison cell bars"),
+    (re.compile(r'\b(hospital|nurse|doctor|patient|injection|medicine|clinical|ward)\b', re.I), "hospital corridor"),
+    (re.compile(r'\b(experiment|scientist|laboratory|researchers|brain|neural|mri)\b', re.I), "science laboratory"),
+    (re.compile(r'\b(crowd|strangers|bystanders|hundred people|packed room)\b', re.I), "crowd people walking"),
+    (re.compile(r'\b(subway|train|metro|platform)\b', re.I), "subway station"),
+    (re.compile(r'\b(tunnel|hallway|corridor|underground|elevator)\b', re.I), "dark hallway"),
+    (re.compile(r'\b(car|driving|driver|parking|garage|highway)\b', re.I), "driving car night"),
+    (re.compile(r'\b(run|running|flee|escape|chase|sprint)\b', re.I), "person running night"),
+    (re.compile(r'\b(walking alone|empty street|alley|sidewalk|midnight|night street)\b', re.I), "person walking night street"),
+    (re.compile(r'\b(chess|checkmate|chessboard)\b', re.I), "chess board"),
+    (re.compile(r'\b(fire|flame|blaze|burning|smoke)\b', re.I), "fire flames dark"),
+    (re.compile(r'\b(ocean|waves|drown|drowning|underwater)\b', re.I), "dark ocean waves"),
+    (re.compile(r'\b(rain|storm|thunder|raindrop)\b', re.I), "rain window night"),
+    (re.compile(r'\b(clock|countdown|hourglass|stopwatch|timer)\b', re.I), "clock ticking"),
+    (re.compile(r'\b(writing|notebook|journal|letter|document|file|dossier)\b', re.I), "person writing notebook"),
+    (re.compile(r'\b(door|knock|locked|room)\b', re.I), "opening dark door"),
+]
+
+_ABSTRACT_BANNED_KWS = {
+    "psychology", "dark psychology", "manipulation", "gaslighting", "betrayal",
+    "paradox", "cognitive bias", "narcissism", "mindset", "human behavior",
+    "dark", "mystery", "concept", "fact", "trick", "secret",
+}
+
+_MOOD_SAFE_FALLBACKS = [
+    "person thinking dark", "dark silhouette", "night city street",
+    "dramatic shadow face", "empty dark hallway", "person looking window",
+    "moody rain night", "close up eye",
 ]
 
 def map_text_to_verified_slug(text: str, fallback_slug: str = "shadow") -> str:
-    """Extracts the best physical visual slug matching the spoken sentence."""
-    t_clean = text.lower()
-    for pattern, slug in SCRIPT_VISUAL_TRIGGER_MAP:
-        if pattern.search(t_clean):
-            return slug
-    # If text is already a known slug or close to one
-    hyphenated = t_clean.strip().replace(" ", "-")
+    """Extracts a verified Mixkit slug matching text (used for Mixkit fallback only)."""
+    t_clean = text.lower().strip()
+    hyphenated = t_clean.replace(" ", "-")
     if hyphenated in VERIFIED_STOCK_SLUGS:
         return hyphenated
+    for slug in VERIFIED_STOCK_SLUGS:
+        if slug.replace("-", " ") in t_clean:
+            return slug
     return fallback_slug
 
 def extract_timeline_visual_queries(
@@ -219,120 +228,136 @@ def extract_timeline_visual_queries(
     niche: str = "dark_psychology"
 ) -> List[str]:
     """
-    Parses spoken script into target_cuts chronological segments,
-    matching each cut directly to what is spoken in that specific 2-4 second window.
-    Guarantees every query is a verified physical slug that returns 15-35+ HD clips.
+    Produces `target_cuts` chronological stock-video search queries tightly aligned to what is spoken.
+    Priority 1: Concrete chronological keywords from LLM/Studio (verbatim multi-word Pixabay queries).
+    Priority 2: Concrete physical trigger matches on each chronological script sentence.
+    Priority 3: Mood-neutral dark psychology fallbacks (never random unrelated objects).
     """
-    profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
-    niche_bank = profile.get("visual_bank", ["silhouette", "tunnel", "subway-station", "cctv-camera", "eye-contact"])
-    clean_niche_bank = [s.replace("-station", "").replace("-camera", "").replace("-contact", "") for s in niche_bank]
+    clean_kws = []
+    for kw in (keywords_from_prompt or []):
+        k = re.sub(r"[^a-zA-Z0-9\s-]", "", str(kw)).replace("-", " ").strip().lower()
+        k = re.sub(r"\s+", " ", k)
+        if len(k) >= 3 and k not in _ABSTRACT_BANNED_KWS:
+            clean_kws.append(k)
 
-    # Split script into natural sentence or punctuation chunks
-    raw_sentences = [s.strip() for s in re.split(r'[.!?]+', script_text) if len(s.strip()) > 8]
+    raw_sentences = [s.strip() for s in re.split(r'[.!?]+', script_text) if len(s.strip()) > 6]
     if not raw_sentences:
         raw_sentences = [script_text]
 
-    # Map chunks evenly across target_cuts
     cuts_queries: List[str] = []
     total_chunks = len(raw_sentences)
 
     for cut_idx in range(target_cuts):
-        # Pick the sentence chunk covering this time slice
         chunk_idx = min(int((cut_idx / float(target_cuts)) * total_chunks), total_chunks - 1)
         sentence_chunk = raw_sentences[chunk_idx]
 
-        # First priority: concrete visual matched from what is spoken right here
-        matched_slug = None
-        for pattern, slug in SCRIPT_VISUAL_TRIGGER_MAP:
-            if pattern.search(sentence_chunk):
-                matched_slug = slug
-                break
+        # Priority 1: If we have rich chronological scene keywords (>= half of target_cuts), trust their exact scene order
+        chosen = None
+        if len(clean_kws) >= max(4, target_cuts // 2):
+            kw_idx = min(int((cut_idx / float(target_cuts)) * len(clean_kws)), len(clean_kws) - 1)
+            chosen = clean_kws[kw_idx]
 
-        # Second priority: if cut 0/1 and prompt keywords provided, map keyword
-        if not matched_slug and keywords_from_prompt and cut_idx < len(keywords_from_prompt):
-            kw = keywords_from_prompt[cut_idx]
-            matched_slug = map_text_to_verified_slug(kw, fallback_slug="")
+        # Priority 2: Direct literal physical trigger in the spoken sentence
+        if not chosen:
+            for pattern, query_str in SCRIPT_VISUAL_TRIGGER_MAP:
+                if pattern.search(sentence_chunk):
+                    chosen = query_str
+                    break
 
-        # Third priority: pick from verified niche bank cycling cleanly
-        if not matched_slug:
-            fallback_idx = cut_idx % len(VERIFIED_STOCK_SLUGS)
-            matched_slug = list(VERIFIED_STOCK_SLUGS)[fallback_idx]
+        # Priority 3: Any leftover user/prompt keyword
+        if not chosen and clean_kws:
+            chosen = clean_kws[cut_idx % len(clean_kws)]
 
-        # Prevent 3 identical clips in a row
-        if len(cuts_queries) >= 2 and cuts_queries[-1] == matched_slug and cuts_queries[-2] == matched_slug:
-            # Shift to another verified slug
-            matched_slug = random.choice([s for s in VERIFIED_STOCK_SLUGS if s != matched_slug])
+        # Priority 4: Mood-safe cinematic fallback (never unrelated fire/ocean/prison)
+        if not chosen:
+            chosen = _MOOD_SAFE_FALLBACKS[cut_idx % len(_MOOD_SAFE_FALLBACKS)]
 
-        cuts_queries.append(matched_slug)
+        # Avoid 3 identical consecutive queries
+        if len(cuts_queries) >= 2 and cuts_queries[-1] == chosen and cuts_queries[-2] == chosen:
+            alt = next((m for m in _MOOD_SAFE_FALLBACKS if m != chosen and m not in cuts_queries[-2:]), _MOOD_SAFE_FALLBACKS[0])
+            chosen = alt
+
+        cuts_queries.append(chosen)
 
     return cuts_queries
 
 def harvest_candidates_for_query(query: str) -> List[str]:
-    """Scrapes Mixkit (pages 1-5), Coverr, Pixabay (if key or public), and Pexels for HD MP4 links."""
-    q_clean = query.strip().lower().replace(" ", "-")
-    if not q_clean:
+    """Fetches topic-matched HD clips: Pixabay Video API (#1 exact + 2-word relax), Mixkit (#2), Unsplash (#3)."""
+    q_phrase = re.sub(r"\s+", " ", query.strip().replace("-", " ")).lower()
+    if not q_phrase:
         return []
 
     now = time.time()
-    if q_clean in _QUERY_CACHE:
-        ts, cached_urls = _QUERY_CACHE[q_clean]
+    if q_phrase in _QUERY_CACHE:
+        ts, cached_urls = _QUERY_CACHE[q_phrase]
         if now - ts < CACHE_TTL and cached_urls:
             return list(cached_urls)
 
     results: List[str] = []
 
-    # 1. Pixabay Video API (Primary HD Stock Videos)
+    # 1. Pixabay Video API (Primary HD Stock Videos — exact phrase, then relaxed 2-word query if <6 hits)
     pixabay_key = os.environ.get("PIXABAY_API_KEY")
     if pixabay_key:
-        try:
-            q_pix = urllib.parse.quote_plus(query.strip().replace("-", " "))
-            pix_url = f"https://pixabay.com/api/videos/?key={pixabay_key}&q={q_pix}&video_type=film&min_height=720&safesearch=true&per_page=15"
-            pr = requests.get(pix_url, timeout=8)
-            if pr.status_code == 200:
-                pdata = pr.json()
-                for hit in pdata.get("hits", []):
-                    vids = hit.get("videos", {})
-                    cand = vids.get("medium", {}).get("url") or vids.get("large", {}).get("url") or vids.get("small", {}).get("url")
-                    if cand and cand not in results:
-                        results.append(cand)
-        except Exception as e:
-            print(f"Pixabay fetch note: {e}")
+        pix_queries = [q_phrase]
+        words = q_phrase.split()
+        if len(words) >= 3:
+            pix_queries.append(" ".join(words[:2]))
+            pix_queries.append(words[-1])
+        elif len(words) == 2:
+            pix_queries.append(words[-1])
 
-    # 2. Mixkit Pages 1 to 2 (Fast & rate-limit safe)
-    for page in (1, 2):
-        try:
-            page_url = f"https://mixkit.co/free-stock-video/{q_clean}/" if page == 1 else f"https://mixkit.co/free-stock-video/{q_clean}/?page=2"
-            r = requests.get(page_url, headers=HEADERS, timeout=6)
-            if r.status_code == 200:
-                found = re.findall(r'https://assets\.mixkit\.co/videos/\d+/\d+-(?:1080|720|360)\.mp4', r.text)
-                for f in found:
-                    hd = re.sub(r'-\d+\.mp4$', '-720.mp4', f) if 'mixkit.co' in f else f
-                    if hd not in results:
-                        results.append(hd)
-            elif r.status_code == 429:
+        for pq in pix_queries:
+            if len(results) >= 6:
                 break
-        except Exception:
-            pass
+            try:
+                q_pix = urllib.parse.quote_plus(pq)
+                pix_url = f"https://pixabay.com/api/videos/?key={pixabay_key}&q={q_pix}&video_type=film&order=popular&min_height=720&safesearch=true&per_page=12"
+                pr = requests.get(pix_url, timeout=8)
+                if pr.status_code == 200:
+                    pdata = pr.json()
+                    for hit in pdata.get("hits", []):
+                        vids = hit.get("videos", {})
+                        cand = vids.get("medium", {}).get("url") or vids.get("large", {}).get("url") or vids.get("small", {}).get("url")
+                        if cand and cand not in results:
+                            results.append(cand)
+            except Exception as e:
+                print(f"Pixabay fetch note: {e}")
 
-    # 3. Unsplash API (High-Resolution Portrait Stills for Ken Burns Motion Cuts)
+    # 2. Mixkit (Only if Pixabay returned < 4 clips, so unrelated Mixkit slugs never dilute exact Pixabay hits)
+    if len(results) < 4:
+        mix_slug = map_text_to_verified_slug(q_phrase, fallback_slug=q_phrase.replace(" ", "-"))
+        for page in (1, 2):
+            try:
+                page_url = f"https://mixkit.co/free-stock-video/{mix_slug}/" if page == 1 else f"https://mixkit.co/free-stock-video/{mix_slug}/?page=2"
+                r = requests.get(page_url, headers=HEADERS, timeout=6)
+                if r.status_code == 200:
+                    found = re.findall(r'https://assets\.mixkit\.co/videos/\d+/\d+-(?:1080|720|360)\.mp4', r.text)
+                    for f in found:
+                        hd = re.sub(r'-\d+\.mp4$', '-720.mp4', f) if 'mixkit.co' in f else f
+                        if hd not in results:
+                            results.append(hd)
+                elif r.status_code == 429:
+                    break
+            except Exception:
+                pass
+
+    # 3. Unsplash API (Only if video sources returned < 3 clips)
     unsplash_key = os.environ.get("UNSPLASH_ACCESS_KEY")
-    if unsplash_key:
+    if len(results) < 3 and unsplash_key:
         try:
-            u_clean = query.strip().replace("-", " ")
-            u_url = f"https://api.unsplash.com/search/photos?query={urllib.parse.quote_plus(u_clean)}&orientation=portrait&per_page=12"
+            u_url = f"https://api.unsplash.com/search/photos?query={urllib.parse.quote_plus(q_phrase)}&orientation=portrait&per_page=8"
             ur = requests.get(u_url, headers={"Authorization": f"Client-ID {unsplash_key}"}, timeout=6)
             if ur.status_code == 200:
                 udata = ur.json()
                 for p in udata.get("results", []):
                     urls = p.get("urls", {})
-                    # Prefer raw or regular high-res image
                     cand = urls.get("regular") or urls.get("full") or urls.get("small")
                     if cand and cand not in results:
                         results.append(cand)
         except Exception as e:
             print(f"Unsplash fetch note: {e}")
 
-    _QUERY_CACHE[q_clean] = (now, results)
+    _QUERY_CACHE[q_phrase] = (now, results)
     return results
 
 def pick_best_clip_candidate(
@@ -340,31 +365,30 @@ def pick_best_clip_candidate(
     used_in_video: Set[str],
     clip_history: Dict[str, dict]
 ) -> Optional[str]:
-    """Selects the freshest, least-frequently-used clip from candidates avoiding repeats."""
+    """Selects the most relevant, non-repeating clip (strongly preferring top-ranked Pixabay matches)."""
     if not candidates:
         return None
 
-    # Filter out clips already chosen in this video
     available = [c for c in candidates if extract_clip_id(c) not in used_in_video]
     if not available:
-        # If all candidates already in this video, fallback to any candidate
         available = candidates
 
     scored = []
     now = time.time()
-    for c in available:
+    for idx, c in enumerate(available):
         cid = extract_clip_id(c)
         hist = clip_history.get(cid, {"count": 0, "last_used_ts": 0})
         count = hist.get("count", 0)
         last_used = hist.get("last_used_ts", 0)
 
-        # Penalty score: lower is better
         hours_since = (now - last_used) / 3600.0 if last_used > 0 else 999.0
-        recency_penalty = 50.0 / (hours_since + 1.0)  # steep penalty if used in last few hours
+        recency_penalty = 50.0 / (hours_since + 1.0)
         count_penalty = count * 15.0
-        jitter = random.uniform(0.0, 3.0)  # non-deterministic tie-breaker
+        source_penalty = 0.0 if "pixabay.com" in c else (6.0 if "mixkit.co" in c else 14.0)
+        rank_penalty = idx * 0.8
+        jitter = random.uniform(0.0, 1.5)
 
-        penalty = count_penalty + recency_penalty + jitter
+        penalty = count_penalty + recency_penalty + source_penalty + rank_penalty + jitter
         scored.append((penalty, c))
 
     scored.sort(key=lambda x: x[0])
@@ -379,14 +403,12 @@ def download_clip_with_smart_fallback(
     used_in_video: Set[str],
     clip_history: Dict[str, dict]
 ) -> tuple:
-    """Harvests candidates, selects the best non-repeating clip, and downloads it."""
-    # Ensure query is translated to a verified physical slug
-    verified_query = map_text_to_verified_slug(query, fallback_slug=query.lower().replace(" ", "-"))
-    candidates = harvest_candidates_for_query(verified_query)
+    """Harvests candidates for the literal query, selects top-relevance non-repeating clip, and downloads it."""
+    candidates = harvest_candidates_for_query(query)
 
-    # If primary query returned nothing, harvest from verified fallback slugs
+    # Mood-coherent fallback only if exact query returned zero results
     if not candidates:
-        for fq in ["silhouette", "tunnel", "subway", "security-camera", "crowd", "eye", "dark-street"]:
+        for fq in _MOOD_SAFE_FALLBACKS:
             candidates = harvest_candidates_for_query(fq)
             if candidates:
                 break

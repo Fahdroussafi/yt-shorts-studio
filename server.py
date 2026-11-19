@@ -1997,10 +1997,20 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             else:  # ShadowMind cinematic_cuts -> pure full-screen stock clips (Pixabay -> Mixkit -> Unsplash)
                 niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
                 target_cuts = max(8, min(14, round(dur / 3.0)))
+                scene_kws = list(req.clip_keywords or [])
+                if len(scene_kws) < max(4, target_cuts // 2):
+                    try:
+                        from gemini_generator import generate_scene_visual_queries
+                        key_file = os.path.join(u_dir, "groq_api_key.txt")
+                        llm_scenes = await asyncio.to_thread(generate_scene_visual_queries, clean_script, target_cuts, key_file, True)
+                        if llm_scenes:
+                            scene_kws = llm_scenes
+                    except Exception:
+                        pass
                 timeline_queries = extract_timeline_visual_queries(
                     script_text=clean_script,
                     target_cuts=target_cuts,
-                    keywords_from_prompt=req.clip_keywords,
+                    keywords_from_prompt=scene_kws,
                     niche=niche
                 )
 

@@ -307,6 +307,12 @@ MANDATORY 4-ACT ARCHITECTURE (STRICT RULES):
 6. TITLE RULE (CRITICAL FOR SHORTS FEED CTR):
    - Use plain, visceral everyday English (e.g. "Why Crowds Ignore Dying People (The Fix)").
    - NEVER put academic jargon, experiment names, years, or clinical terms in the title (no "Compliance Loop", "Forced Teaming", "Rosenhan", "1974", "Presupposition").
+7. LITERAL VISUAL KEYWORDS (CRITICAL — NO MISMATCHED B-ROLL):
+   - Return 8 to 10 concrete, filmable 2-3 word stock-video search phrases in EXACT CHRONOLOGICAL ORDER matching Act 1 -> Act 2 -> Act 3 -> Act 4.
+   - Each phrase MUST describe a literal physical scene/object/action visible on camera for that exact line (e.g. if the line mentions texting -> "person texting smartphone"; office boss -> "business meeting serious"; lying -> "close up eyes serious"; arguing -> "couple arguing dark"; mirror -> "man looking mirror"; walking away -> "person walking night").
+   - STRICTLY BAN abstract nouns that stock engines fail on (NEVER output "manipulation", "gaslighting", "psychology", "betrayal", "paradox", "cognitive bias").
+8. TOPIC-SPECIFIC SEO TAGS:
+   - Return 6 to 8 real multi-word YouTube search phrases specifically tied to THIS script's exact topic and niche.
 
 NEGATIVE FILTER:
 - Never mention: [{forbidden}].
@@ -321,10 +327,10 @@ Respond ONLY with valid JSON using this exact schema:
     "act3_directive": "21-37s physical counter-move + exact spoken script in quotation marks",
     "act4_seal": "37-41s dynamic branded outro: Follow {brand_name} for [dynamic topic-specific promise]"
   }},
-  "keywords": ["dark-crowd", "interrogation", "cctv-footage", "eye-contact", "shadows", "emergency-light", "tunnel", "subway"],
-  "search_tags": ["real search phrase 1", "multi word search tag 2", "dark psychology tricks", "survival facts", "human behavior psychology"],
-  "description": "2-sentence high-stakes description with Subscribe to {brand_handle}, #shorts and 5 hashtags",
-  "pinned_comment": "Polarizing debate question to trigger intense comment arguments",
+  "keywords": ["literal 2-3 word scene for act1 start", "literal scene 2", "literal scene 3", "literal scene 4", "literal scene 5", "literal scene 6", "literal scene 7", "literal scene 8"],
+  "search_tags": ["exact topic search phrase 1", "exact topic search phrase 2", "exact topic search phrase 3", "niche phrase 4", "niche phrase 5", "niche phrase 6"],
+  "description": "2-sentence high-stakes description matching this exact topic with Subscribe to {brand_handle}, #shorts and 5 relevant hashtags",
+  "pinned_comment": "Polarizing debate question directly about this script to trigger comments",
   "voice": "{profile.get('voice_recommended', 'en-US-ChristopherNeural')}"
 }}
 """
@@ -531,3 +537,39 @@ def generate_ai_script(
 
 # Backward compatibility alias
 generate_with_gemini_flash = generate_ai_script
+
+
+def generate_scene_visual_queries(script_text: str, target_cuts: int, user_key_file: Optional[str] = None, allow_fallback: bool = True) -> list:
+    """Uses fast Groq LPU to turn a spoken script into exact chronological 2-3 word Pixabay video queries."""
+    api_key = get_groq_key(user_key_file, allow_fallback=allow_fallback)
+    if not api_key or not script_text:
+        return []
+    prompt = (
+        f"Split this short video voiceover into {target_cuts} chronological visual cuts. "
+        f"For each cut, write ONE literal, filmable 2-3 word stock-video search query that matches EXACTLY what is being said at that moment "
+        f"(objects, actions, settings: e.g. 'person texting phone', 'office meeting serious', 'close up eyes', 'couple arguing', 'man walking night'). "
+        f"Never use abstract words like psychology, manipulation, betrayal, paradox. "
+        f'Respond ONLY with JSON: {{"scenes": ["query 1", "query 2", ...]}} with exactly {target_cuts} items.\n\n'
+        f"SCRIPT:\n{script_text[:1200]}"
+    )
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": "llama-3.1-8b-instant",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+                "max_tokens": 250,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=6,
+        )
+        if r.status_code == 200:
+            content = r.json()["choices"][0]["message"]["content"]
+            scenes = json.loads(content).get("scenes", [])
+            cleaned = [re.sub(r"[^a-zA-Z0-9\s-]", "", str(s)).strip().lower() for s in scenes if str(s).strip()]
+            return [c for c in cleaned if len(c) >= 3][:target_cuts]
+    except Exception as e:
+        print(f"Scene visual planner note: {e}")
+    return []
