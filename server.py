@@ -2026,7 +2026,7 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                 )
 
                 # 4. Render (Non-blocking async execution)
-                await asyncio.to_thread(render_motion_video, clip_paths, audio_file, ass_file, output_mp4, dur, None, None, img_paths)
+                await asyncio.to_thread(render_motion_video, clip_paths, audio_file, ass_file, output_mp4, dur, None, None, img_paths, words)
                 clip_paths.extend(img_paths)
 
             PRODUCTION_TASKS[task_id]["progress"] = 90

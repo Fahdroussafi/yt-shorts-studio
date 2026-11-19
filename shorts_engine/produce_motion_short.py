@@ -483,6 +483,27 @@ def download_clip_with_smart_fallback(
 
     raise RuntimeError(f"Failed to download a valid clip for '{query}' across available candidates.")
 
+def _ensure_music_bed() -> Optional[str]:
+    """Returns a local dark-ambient audio bed path, generating a royalty-free C-minor pad once if missing."""
+    music_dir = os.path.join(BASE_DIR, "music")
+    os.makedirs(music_dir, exist_ok=True)
+    tracks = [os.path.join(music_dir, f) for f in os.listdir(music_dir) if f.lower().endswith((".mp3", ".m4a", ".wav"))]
+    if tracks:
+        return random.choice(tracks)
+    dest = os.path.join(music_dir, "dark_ambient.m4a")
+    expr = (
+        "aevalsrc="
+        "0.28*sin(2*PI*65.41*t)"
+        "+0.18*sin(2*PI*98.00*t)"
+        "+0.14*sin(2*PI*155.56*t)*(0.6+0.4*sin(2*PI*0.18*t))"
+        "+0.10*sin(2*PI*233.08*t)*(0.5+0.5*cos(2*PI*0.11*t))"
+        ":d=60:s=44100,"
+        "lowpass=f=420,aecho=0.8:0.85:60:0.4,afade=t=in:st=0:d=1.5,volume=0.55"
+    )
+    res = _run_ffmpeg([FFMPEG, "-y", "-f", "lavfi", "-t", "60", "-i", expr, "-c:a", "aac", "-b:a", "160k", dest])
+    return dest if res.returncode == 0 and os.path.exists(dest) else None
+
+
 def render_motion_video(
     clip_paths: list,
     audio_path: str,
@@ -492,6 +513,7 @@ def render_motion_video(
     color_look: Optional[str] = None,
     audio_bed: Optional[str] = None,
     image_paths: Optional[List[str]] = None,
+    words: Optional[list] = None,
 ):
     import random
     # Select or randomly pick color look & audio bed for complete visual/auditory distinctiveness
@@ -507,80 +529,93 @@ def render_motion_video(
 
     color_cfg = COLOR_LOOKS[c_key]
     audio_cfg = AUDIO_BEDS[a_key]
+    cards = list(image_paths or [])[:3]
 
-    # Interleave scraped archival/topic images into odd cuts (keeping cut 0 as fast motion video)
-    scene_items = [("video", c) for c in clip_paths]
-    if image_paths:
-        img_iter = iter(image_paths)
-        for idx in range(1, len(scene_items), 2):
-            nxt = next(img_iter, None)
-            if not nxt:
-                break
-            scene_items[idx] = ("image", nxt)
+    print(f"[4/5] Multi-cut render ({len(clip_paths)} motion clips + {len(cards)} timed pop-up cards, {duration:.2f}s) [Color: {color_cfg['name']}]...")
 
-    print(f"[4/5] Multi-cut render ({len(scene_items)} cuts, {duration:.2f}s, {sum(1 for k,_ in scene_items if k=='image')} scraped imgs) [Color: {color_cfg['name']} | Soundscape: {audio_cfg['name']}]...")
-
-    per_clip = duration / len(scene_items)
-    frames_per_cut = max(1, int(round(per_clip * 30)))
+    per_clip = duration / len(clip_paths)
     inputs = []
     filter_parts = []
 
-    for i, (kind, media_path) in enumerate(scene_items):
-        if kind == "image":
-            inputs.extend(["-i", media_path])
-            z_expr = "min(zoom+0.0014,1.14)" if i % 2 == 1 else "max(1.14-0.0014*on,1.0)"
-            filter_parts.append(
-                f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,"
-                f"zoompan=z='{z_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames_per_cut}:s=1080x1920:fps=30,"
-                f"setpts=PTS-STARTPTS[v{i}]"
-            )
+    for i, clip in enumerate(clip_paths):
+        clip_dur = get_video_duration(clip)
+        max_offset = max(0.0, clip_dur - per_clip - 0.5)
+        offset = round(random.uniform(0.0, min(max_offset, 6.0)), 2) if max_offset > 1.0 else 0.0
+
+        inputs.extend(["-stream_loop", "-1", "-ss", f"{offset:.2f}", "-t", f"{per_clip:.3f}", "-i", clip])
+
+        flip_filter = ",hflip" if random.random() < 0.30 else ""
+        if i % 2 == 0:
+            scale_crop = "scale=1200:2133:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
         else:
-            clip_dur = get_video_duration(media_path)
-            max_offset = max(0.0, clip_dur - per_clip - 0.5)
-            offset = round(random.uniform(0.0, min(max_offset, 6.0)), 2) if max_offset > 1.0 else 0.0
+            scale_crop = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
 
-            inputs.extend(["-stream_loop", "-1", "-ss", f"{offset:.2f}", "-t", f"{per_clip:.3f}", "-i", media_path])
+        filter_parts.append(
+            f"[{i}:v]trim=duration={per_clip:.3f},setpts=PTS-STARTPTS,fps=30,"
+            f"{scale_crop},setsar=1{flip_filter}[v{i}]"
+        )
 
-            flip_filter = ",hflip" if random.random() < 0.30 else ""
-            if i % 2 == 0:
-                scale_crop = "scale=1200:2133:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
-            else:
-                scale_crop = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
-
-            filter_parts.append(
-                f"[{i}:v]trim=duration={per_clip:.3f},setpts=PTS-STARTPTS,fps=30,"
-                f"{scale_crop},setsar=1{flip_filter}[v{i}]"
-            )
-
-    concat_ins = "".join(f"[v{i}]" for i in range(len(scene_items)))
-    concat_filter = f"{concat_ins}concat=n={len(scene_items)}:v=1:a=0[vbase]"
-
-    # Apply Procedural Color Grade Look
+    concat_ins = "".join(f"[v{i}]" for i in range(len(clip_paths)))
+    concat_filter = f"{concat_ins}concat=n={len(clip_paths)}:v=1:a=0[vbase]"
     grade_filter = f"[vbase]{color_cfg['filter']}[vgraded]"
+
+    # Timed Pop-Up Topic Image Cards (ShortGPT-style proof cards synced to narrator timestamps)
+    last_v = "vgraded"
+    card_filters = []
+    if cards and duration >= 6.0:
+        card_dur = min(2.8, max(1.8, duration * 0.13))
+        anchors = [0.22, 0.50, 0.76][:len(cards)]
+        word_starts = [float(w["start"]) for w in (words or []) if isinstance(w, dict) and "start" in w]
+        for j, img_p in enumerate(cards):
+            target_t = anchors[j] * duration
+            if word_starts:
+                target_t = min(word_starts, key=lambda s: abs(s - target_t))
+            st = max(2.0, min(target_t, duration - card_dur - 1.2))
+            et = st + card_dur
+            in_idx = len(clip_paths) + j
+            inputs.extend(["-loop", "1", "-t", f"{card_dur:.2f}", "-i", img_p])
+            card_filters.append(
+                f"[{in_idx}:v]scale=760:428:force_original_aspect_ratio=increase,crop=760:428,"
+                f"pad=768:436:4:4:color=0x38bdf8,format=yuva420p,"
+                f"fade=t=in:st=0:d=0.18:alpha=1,fade=t=out:st={card_dur-0.20:.2f}:d=0.20:alpha=1,"
+                f"setpts=PTS-STARTPTS+{st:.2f}/TB[card{j}];"
+                f"[{last_v}][card{j}]overlay=(W-w)/2:420:enable='between(t,{st:.2f},{et:.2f})':eof_action=pass[vc{j}]"
+            )
+            last_v = f"vc{j}"
 
     clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
     clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
     fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
-    subtitle_filter = f"[vgraded]ass='{clean_ass}'{fonts_arg}[vfinal]"
+    subtitle_filter = f"[{last_v}]ass='{clean_ass}'{fonts_arg}[vfinal]"
 
-    # Audio mix with procedural tension bed + 0.0s hook impact thump
-    audio_input_idx = len(clip_paths)
-    synth_input_idx = len(clip_paths) + 1
-    impact_input_idx = len(clip_paths) + 2
-    bed_weight = audio_cfg.get("weight", 0.14)
+    # Audio mix with ducked dark-ambient MP3 bed (fallback to procedural synth) + 0.0s hook impact thump
+    base_idx = len(clip_paths) + len(cards)
+    audio_input_idx = base_idx
+    bed_input_idx = base_idx + 1
+    impact_input_idx = base_idx + 2
+
+    music_path = _ensure_music_bed()
+    if music_path:
+        bed_inputs = ["-stream_loop", "-1", "-t", f"{duration:.2f}", "-i", music_path]
+        bed_weight = "0.24"
+    else:
+        bed_inputs = ["-f", "lavfi", "-t", f"{duration:.2f}", "-i", audio_cfg["filter"]]
+        bed_weight = str(audio_cfg.get("weight", 0.14))
+
     audio_filter = (
-        f"[{audio_input_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
-        f"[avoice][{synth_input_idx}:a][{impact_input_idx}:a]amix=inputs=3:duration=first:weights=1.0 {bed_weight} 0.35[afinal]"
+        f"[{audio_input_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11,asplit=2[av1][av2];"
+        f"[{bed_input_idx}:a][av1]sidechaincompress=threshold=0.025:ratio=5:attack=25:release=260:makeup=1[abed];"
+        f"[av2][abed][{impact_input_idx}:a]amix=inputs=3:duration=first:weights=1.0 {bed_weight} 0.35[afinal]"
     )
 
-    full_filter = ";".join(filter_parts) + ";" + concat_filter + ";" + grade_filter + ";" + subtitle_filter + ";" + audio_filter
+    parts = filter_parts + [concat_filter, grade_filter] + card_filters + [subtitle_filter, audio_filter]
+    full_filter = ";".join(parts)
 
     cmd = [
         FFMPEG, "-y",
         *inputs,
         "-i", audio_path,
-        "-f", "lavfi", "-t", f"{duration:.2f}",
-        "-i", audio_cfg["filter"],
+        *bed_inputs,
         "-f", "lavfi", "-t", "0.45",
         "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
         "-filter_complex", full_filter,
