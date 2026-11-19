@@ -1914,10 +1914,35 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             # 3. Visual Mode Handling (cinematic_cuts, parkour_brainrot, split_retention)
             clip_paths = []
 
+            async def _fetch_timeline_clips_parallel(queries_list, niche_name):
+                clip_history_file = os.path.join(u_dir, "clip_history.json")
+                clip_history = load_clip_history(clip_history_file)
+                used_in_video = set()
+                dl_sem = asyncio.Semaphore(4)
+
+                async def _one(idx, kw):
+                    cp = os.path.join(target_dir, f"clip_{idx}.mp4")
+                    async with dl_sem:
+                        _, chosen_url = await asyncio.to_thread(
+                            download_clip_with_smart_fallback,
+                            kw,
+                            cp,
+                            niche_name,
+                            used_in_video,
+                            clip_history,
+                        )
+                    return cp, chosen_url
+
+                pairs = await asyncio.gather(*[_one(i, k) for i, k in enumerate(queries_list)])
+                paths_out = [p for p, _ in pairs]
+                urls_out = [u for _, u in pairs]
+                record_clip_usage(clip_history_file, urls_out)
+                return paths_out
+
             if v_mode == "parkour_brainrot":
                 PRODUCTION_TASKS[task_id]["progress"] = 70
                 PRODUCTION_TASKS[task_id]["log"].append(
-                    "[3/5] Visual Mode: GTA 6 Cinema Frame (5-Cut 1080p)..." if use_cinema_frame
+                    "[3/5] Visual Mode: GTA 6 Cinema Frame (8-Cut 1080p)..." if use_cinema_frame
                     else "[3/5] Visual Mode: Hypnotic Gameplay Loop (Minecraft Parkour / Subway Surfers). Instant local slicing..."
                 )
                 await asyncio.to_thread(render_gameplay_short, audio_file, ass_file, output_mp4, dur, None, use_cinema_frame)
@@ -1932,26 +1957,8 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                     niche=niche
                 )
 
-                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Visual Mode: Split-Screen Retention. Fetching {len(timeline_queries)} timeline clips: {timeline_queries}...")
-                clip_history_file = os.path.join(u_dir, "clip_history.json")
-                clip_history = load_clip_history(clip_history_file)
-                used_in_video = set()
-                chosen_urls = []
-
-                for idx, kw in enumerate(timeline_queries):
-                    clip_path = os.path.join(target_dir, f"clip_{idx}.mp4")
-                    _, chosen_url = await asyncio.to_thread(
-                        download_clip_with_smart_fallback,
-                        kw,
-                        clip_path,
-                        niche,
-                        used_in_video,
-                        clip_history
-                    )
-                    chosen_urls.append(chosen_url)
-                    clip_paths.append(clip_path)
-
-                record_clip_usage(clip_history_file, chosen_urls)
+                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Visual Mode: Split-Screen Retention. Fetching {len(timeline_queries)} timeline clips in parallel: {timeline_queries}...")
+                clip_paths = await _fetch_timeline_clips_parallel(timeline_queries, niche)
                 PRODUCTION_TASKS[task_id]["progress"] = 70
                 PRODUCTION_TASKS[task_id]["log"].append("[4/5] Rendering 50/50 Split-Screen (Narrative Story on Top, Hypnotic Parkour on Bottom)...")
                 await asyncio.to_thread(render_split_retention_short, clip_paths, audio_file, ass_file, output_mp4, dur)
@@ -1966,27 +1973,8 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                     niche=niche
                 )
 
-                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Scraping & downloading {len(timeline_queries)} script-synchronized stock clips: {timeline_queries}...")
-
-                clip_history_file = os.path.join(u_dir, "clip_history.json")
-                clip_history = load_clip_history(clip_history_file)
-                used_in_video = set()
-                chosen_urls = []
-
-                for idx, kw in enumerate(timeline_queries):
-                    clip_path = os.path.join(target_dir, f"clip_{idx}.mp4")
-                    _, chosen_url = await asyncio.to_thread(
-                        download_clip_with_smart_fallback,
-                        kw,
-                        clip_path,
-                        niche,
-                        used_in_video,
-                        clip_history
-                    )
-                    chosen_urls.append(chosen_url)
-                    clip_paths.append(clip_path)
-
-                record_clip_usage(clip_history_file, chosen_urls)
+                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Fetching {len(timeline_queries)} script-synchronized stock clips in parallel: {timeline_queries}...")
+                clip_paths = await _fetch_timeline_clips_parallel(timeline_queries, niche)
 
                 PRODUCTION_TASKS[task_id]["progress"] = 70
                 PRODUCTION_TASKS[task_id]["log"].append(f"[4/5] Rendering 1080x1920 vertical video ({len(clip_paths)} dynamic cuts with random offsets & flips)...")
@@ -1995,10 +1983,7 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                 await asyncio.to_thread(render_motion_video, clip_paths, audio_file, ass_file, output_mp4, dur)
 
             PRODUCTION_TASKS[task_id]["progress"] = 90
-            PRODUCTION_TASKS[task_id]["log"].append("[5/5] Sanitizing metadata and stripping watermarks...")
-
-            # 5. Clean
-            await asyncio.to_thread(strip_watermarks, output_mp4)
+            PRODUCTION_TASKS[task_id]["log"].append("[5/5] Metadata sanitized (-map_metadata -1) & packaging SEO...")
 
             # 6. Save SEO with High-Intent Multi-Word Search Tags
             title_to_save = req.title
@@ -2099,7 +2084,7 @@ async def run_twitch_production(task_id: str, req: TwitchProduceRequest, target_
                 render_twitch_vertical_short,
             )
             from produce_motion_short import get_video_duration
-            from engine import build_ass_subtitles, strip_watermarks
+            from engine import build_ass_subtitles
 
             target_dir = os.path.join(target_videos_dir, req.video_id)
             os.makedirs(target_dir, exist_ok=True)
@@ -2137,7 +2122,6 @@ async def run_twitch_production(task_id: str, req: TwitchProduceRequest, target_
             PRODUCTION_TASKS[task_id]["log"].append(f"[4/4] Rendering 1080x1920 ({layout_label}, -14 LUFS)...")
 
             await asyncio.to_thread(render_twitch_vertical_short, raw_mp4, ass_file, output_mp4, dur, facecam_box)
-            await asyncio.to_thread(strip_watermarks, output_mp4)
 
             if os.path.exists(raw_mp4):
                 try:

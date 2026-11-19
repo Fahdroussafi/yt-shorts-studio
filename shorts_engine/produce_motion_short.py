@@ -514,12 +514,12 @@ def render_motion_video(
     filter_parts = []
 
     for i, clip in enumerate(clip_paths):
-        inputs.extend(["-stream_loop", "-1", "-i", clip])
-
         # Calculate random start offset so different segments of the clip are shown
         clip_dur = get_video_duration(clip)
         max_offset = max(0.0, clip_dur - per_clip - 0.5)
         offset = round(random.uniform(0.0, min(max_offset, 6.0)), 2) if max_offset > 1.0 else 0.0
+
+        inputs.extend(["-stream_loop", "-1", "-ss", f"{offset:.2f}", "-t", f"{per_clip:.3f}", "-i", clip])
 
         # 30% chance of subtle horizontal mirror flip for visual novelty
         flip_filter = ",hflip" if random.random() < 0.30 else ""
@@ -531,7 +531,7 @@ def render_motion_video(
             scale_crop = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
 
         filter_parts.append(
-            f"[{i}:v]trim=start={offset}:duration={per_clip:.3f},setpts=PTS-STARTPTS,fps=30,"
+            f"[{i}:v]trim=duration={per_clip:.3f},setpts=PTS-STARTPTS,fps=30,"
             f"{scale_crop},setsar=1{flip_filter}[v{i}]"
         )
 
@@ -546,13 +546,14 @@ def render_motion_video(
     fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
     subtitle_filter = f"[vgraded]ass='{clean_ass}'{fonts_arg}[vfinal]"
 
-    # Audio mix with procedural tension bed
+    # Audio mix with procedural tension bed + 0.0s hook impact thump
     audio_input_idx = len(clip_paths)
     synth_input_idx = len(clip_paths) + 1
+    impact_input_idx = len(clip_paths) + 2
     bed_weight = audio_cfg.get("weight", 0.14)
     audio_filter = (
         f"[{audio_input_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
-        f"[avoice][{synth_input_idx}:a]amix=inputs=2:duration=first:weights=1.0 {bed_weight}[afinal]"
+        f"[avoice][{synth_input_idx}:a][{impact_input_idx}:a]amix=inputs=3:duration=first:weights=1.0 {bed_weight} 0.35[afinal]"
     )
 
     full_filter = ";".join(filter_parts) + ";" + concat_filter + ";" + grade_filter + ";" + subtitle_filter + ";" + audio_filter
@@ -563,9 +564,12 @@ def render_motion_video(
         "-i", audio_path,
         "-f", "lavfi", "-t", f"{duration:.2f}",
         "-i", audio_cfg["filter"],
+        "-f", "lavfi", "-t", "0.45",
+        "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
         "-filter_complex", full_filter,
         "-map", "[vfinal]",
         "-map", "[afinal]",
+        "-map_metadata", "-1",
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-crf", "19",
@@ -674,14 +678,15 @@ def render_gameplay_short(
     audio_idx = num_cuts
     if cinema_frame:
         synth_idx = num_cuts + 1
+        impact_idx = num_cuts + 2
         filter_complex = (
             ";".join(filter_parts) + ";"
             f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.06:saturation=1.10,split=2[bg_src][fg_src];"
-            f"[bg_src]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:4,setsar=1[vbg];"
+            f"[bg_src]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=6:2,scale=1080:1920:flags=bilinear,setsar=1[vbg];"
             f"[fg_src]scale=1080:-2,setsar=1[vfg];"
             f"[vbg][vfg]overlay=(W-w)/2:(H-h)/2,ass='{clean_ass}'{fonts_arg}[vfinal];"
             f"[{audio_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
-            f"[avoice][{synth_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.06[afinal]"
+            f"[avoice][{synth_idx}:a][{impact_idx}:a]amix=inputs=3:duration=first:weights=1.0 0.06 0.35[afinal]"
         )
         cmd = [
             FFMPEG, "-y",
@@ -689,9 +694,12 @@ def render_gameplay_short(
             "-i", audio_path,
             "-f", "lavfi", "-t", f"{duration:.2f}",
             "-i", "sine=frequency=58:sample_rate=44100,lowpass=f=110,volume=0.05",
+            "-f", "lavfi", "-t", "0.45",
+            "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
             "-filter_complex", filter_complex,
             "-map", "[vfinal]",
             "-map", "[afinal]",
+            "-map_metadata", "-1",
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-crf", "19",
@@ -704,12 +712,13 @@ def render_gameplay_short(
         ]
     else:
         synth_idx = num_cuts + 1
+        impact_idx = num_cuts + 2
         filter_complex = (
             ";".join(filter_parts) + ";"
             f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.08:saturation=1.12,"
             f"ass='{clean_ass}'{fonts_arg}[vfinal];"
             f"[{audio_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
-            f"[avoice][{synth_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.08[afinal]"
+            f"[avoice][{synth_idx}:a][{impact_idx}:a]amix=inputs=3:duration=first:weights=1.0 0.08 0.35[afinal]"
         )
         cmd = [
             FFMPEG, "-y",
@@ -717,9 +726,12 @@ def render_gameplay_short(
             "-i", audio_path,
             "-f", "lavfi", "-t", f"{duration:.2f}",
             "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.03,lowpass=f=140",
+            "-f", "lavfi", "-t", "0.45",
+            "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
             "-filter_complex", filter_complex,
             "-map", "[vfinal]",
             "-map", "[afinal]",
+            "-map_metadata", "-1",
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-crf", "19",
@@ -810,6 +822,7 @@ def render_split_retention_short(
         "-filter_complex", full_filter,
         "-map", "[vfinal]",
         "-map", "[afinal]",
+        "-map_metadata", "-1",
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-crf", "19",

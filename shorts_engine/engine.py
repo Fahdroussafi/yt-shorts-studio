@@ -212,9 +212,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         total_end = format_ass_time(phrases[-1]["end"] + 1.0)
         events.append(f"Dialogue: 1,0:00:00.00,{total_end},Badge,,0,0,0,,{top_badge}")
     if hook_banner and phrases:
-        total_end = format_ass_time(phrases[-1]["end"] + 1.0)
+        banner_end = format_ass_time(min(3.5, phrases[-1]["end"] + 1.0))
         clean_banner = hook_banner.replace("{", "").replace("}", "").strip().upper()
-        events.append(f"Dialogue: 2,0:00:00.00,{total_end},HookBanner,,0,0,0,,{clean_banner}")
+        events.append(f"Dialogue: 2,0:00:00.00,{banner_end},HookBanner,,0,0,0,,{{\\fad(150,300)}}{clean_banner}")
     pop_anim = cfg.get("anim", "")
     active_color = cfg["active"]
     primary_color = cfg["primary"]

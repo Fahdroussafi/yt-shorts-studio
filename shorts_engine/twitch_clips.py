@@ -252,7 +252,7 @@ def render_twitch_vertical_short(
     else:
         v_filter = (
             f"[0:v]split=2[bg_src][fg_src];"
-            f"[bg_src]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:4,setsar=1[vbg];"
+            f"[bg_src]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=6:2,scale=1080:1920:flags=bilinear,setsar=1[vbg];"
             f"[fg_src]scale=1080:-2,setsar=1[vfg];"
             f"[vbg][vfg]overlay=(W-w)/2:(H-h)/2,fps=30,ass='{clean_ass}'{fonts_arg}[vfinal]"
         )
@@ -266,6 +266,7 @@ def render_twitch_vertical_short(
         "-filter_complex", full_filter,
         "-map", "[vfinal]",
         "-map", "[afinal]",
+        "-map_metadata", "-1",
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-crf", "20",
