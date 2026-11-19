@@ -11,6 +11,7 @@ export default function StreamVodsPage() {
   const [loadingVods, setLoadingVods] = useState(false);
   const [scanningHighlights, setScanningHighlights] = useState(false);
   const [vods, setVods] = useState([]);
+  const [clips, setClips] = useState([]);
   const [highlights, setHighlights] = useState([]);
   const [selectedVod, setSelectedVod] = useState(null);
   const [activeTask, setActiveTask] = useState(null);
@@ -49,6 +50,7 @@ export default function StreamVodsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
       setVods(data.vods || []);
+      setClips(data.clips || []);
       setHighlights([]);
       if (data.vods?.length > 0) setSelectedVod(data.vods[0]);
       else showToast('No past broadcasts found. Enable "Store past broadcasts" in Twitch settings.', 'info');
@@ -84,7 +86,7 @@ export default function StreamVodsPage() {
   };
 
   const handleCutHighlight = async (h) => {
-    const vodUrl = selectedVod?.url || (channelInput.includes('twitch.tv/videos/') ? channelInput.trim() : '');
+    const vodUrl = h.url || selectedVod?.url || (channelInput.includes('twitch.tv/videos/') ? channelInput.trim() : '');
     if (!vodUrl) return showToast('Select a VOD first.', 'error');
     setActiveTask({ task_id: null, status: 'queued', progress: 5, log: [`Queueing ${h.start}–${h.end}...`] });
     try {
@@ -93,7 +95,8 @@ export default function StreamVodsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           vod_url: vodUrl,
-          vod_title: selectedVod?.title || undefined,
+          vod_title: h.title || selectedVod?.title || undefined,
+          game_name: h.game_name || undefined,
           start_time: h.start,
           end_time: h.end,
         }),
@@ -173,6 +176,32 @@ export default function StreamVodsPage() {
               <span>{scanningHighlights ? 'Scanning Visual + Audio Peaks...' : `Auto-Find Best Moments in VOD #${selectedVod.id}`}</span>
             </button>
           )}
+        </div>
+      )}
+
+      {clips.length > 0 && (
+        <div className="p-4 rounded-2xl bg-[#12121a] border border-slate-800/80 space-y-3">
+          <div className="text-xs font-mono uppercase text-purple-400">Your Channel Clips</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {clips.map((c) => (
+              <div key={c.id} className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-white truncate">{c.title}</div>
+                  <div className="text-[11px] font-mono text-slate-400">
+                    {c.game_name || 'Stream Clip'} · {c.duration_str} · {c.view_count} views
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => handleCutHighlight({ start: '00:00', end: c.duration_str, url: c.url, title: c.title, game_name: c.game_name })}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white inline-flex items-center space-x-1 shrink-0 disabled:opacity-50"
+                >
+                  <Scissors className="w-3.5 h-3.5" /><span>Cut & Render</span>
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

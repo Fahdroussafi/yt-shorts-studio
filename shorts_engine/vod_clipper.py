@@ -19,6 +19,43 @@ YTDLP = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
 if not os.path.exists(YTDLP):
     YTDLP = "yt-dlp"
 
+_HELIX_TOKEN = {"token": None, "expires_at": 0.0}
+
+
+def _get_twitch_helix_headers() -> Optional[Dict[str, str]]:
+    """Fetches and caches Twitch Helix App Access Token via TWITCH_CLIENT_ID & TWITCH_CLIENT_SECRET."""
+    import time as _time
+    cid = os.environ.get("TWITCH_CLIENT_ID", "").strip()
+    sec = os.environ.get("TWITCH_CLIENT_SECRET", "").strip()
+    if not cid or not sec:
+        return None
+    now = _time.time()
+    if not _HELIX_TOKEN["token"] or now >= _HELIX_TOKEN["expires_at"] - 120:
+        try:
+            r = requests.post(
+                "https://id.twitch.tv/oauth2/token",
+                data={"client_id": cid, "client_secret": sec, "grant_type": "client_credentials"},
+                timeout=8,
+            )
+            if r.status_code != 200:
+                return None
+            data = r.json()
+            _HELIX_TOKEN["token"] = data.get("access_token")
+            _HELIX_TOKEN["expires_at"] = now + int(data.get("expires_in", 3600))
+        except Exception:
+            return None
+    if not _HELIX_TOKEN["token"]:
+        return None
+    return {"Client-ID": cid, "Authorization": f"Bearer {_HELIX_TOKEN['token']}"}
+
+
+def _parse_helix_duration(s: str) -> int:
+    total = 0
+    for val, unit in re.findall(r"(\d+)([hms])", str(s or "").lower()):
+        n = int(val)
+        total += n * (3600 if unit == "h" else 60 if unit == "m" else 1)
+    return total
+
 
 def parse_timestamp_sec(val: str) -> float:
     """Parses 'SS', 'MM:SS', or 'HH:MM:SS' into float seconds."""
@@ -43,12 +80,47 @@ def fmt_timestamp(sec: float) -> str:
 
 
 def list_twitch_vods(channel_or_url: str, limit: int = 8) -> List[Dict]:
-    """Lists recent Twitch VODs/highlights for a username (via fast GQL) or a single VOD URL."""
+    """Lists recent Twitch VODs/highlights via Official Helix API (primary) -> GQL -> yt-dlp fallback."""
     target = (channel_or_url or "").strip()
     if not target:
         raise ValueError("Enter your Twitch username or a VOD URL.")
 
-    is_single_vod = bool(re.search(r"twitch\.tv/videos/\d+", target, re.I))
+    vod_m = re.search(r"twitch\.tv/videos/(\d+)", target, re.I)
+    hdrs = _get_twitch_helix_headers()
+    if hdrs:
+        try:
+            if vod_m:
+                v_resp = requests.get("https://api.twitch.tv/helix/videos", params={"id": vod_m.group(1)}, headers=hdrs, timeout=8)
+                raw_vids = v_resp.json().get("data", []) if v_resp.status_code == 200 else []
+            else:
+                handle = re.sub(r"^https?://(?:www\.|m\.)?twitch\.tv/", "", target, flags=re.I).strip("/").split("/")[0].lower()
+                u_resp = requests.get("https://api.twitch.tv/helix/users", params={"login": handle}, headers=hdrs, timeout=8)
+                users = u_resp.json().get("data", []) if u_resp.status_code == 200 else []
+                raw_vids = []
+                if users:
+                    v_resp = requests.get("https://api.twitch.tv/helix/videos", params={"user_id": users[0]["id"], "first": limit}, headers=hdrs, timeout=8)
+                    raw_vids = v_resp.json().get("data", []) if v_resp.status_code == 200 else []
+            vods = []
+            for v in raw_vids[:limit]:
+                dur = _parse_helix_duration(v.get("duration", ""))
+                if dur < 15:
+                    continue
+                thumb = (v.get("thumbnail_url") or "").replace("%{width}", "640").replace("%{height}", "360")
+                vods.append({
+                    "id": str(v.get("id") or ""),
+                    "title": v.get("title") or f"Twitch VOD {v.get('id')}",
+                    "url": v.get("url") or f"https://www.twitch.tv/videos/{v.get('id')}",
+                    "duration": dur,
+                    "duration_str": fmt_timestamp(dur),
+                    "thumbnail": thumb,
+                    "upload_date": (v.get("created_at") or "")[:10],
+                })
+            if vods:
+                return vods
+        except Exception:
+            pass
+
+    is_single_vod = bool(vod_m)
     if not is_single_vod:
         handle = re.sub(r"^https?://(?:www\.|m\.)?twitch\.tv/", "", target, flags=re.I).strip("/").split("/")[0].lower()
         try:
@@ -107,6 +179,41 @@ def list_twitch_vods(channel_or_url: str, limit: int = 8) -> List[Dict]:
             "upload_date": e.get("upload_date") or "",
         })
     return vods
+
+
+def list_twitch_channel_clips(channel_or_url: str, limit: int = 8) -> List[Dict]:
+    """Fetches your own channel's Twitch clips via Official Helix API."""
+    target = (channel_or_url or "").strip()
+    if not target or re.search(r"twitch\.tv/videos/\d+", target, re.I):
+        return []
+    hdrs = _get_twitch_helix_headers()
+    if not hdrs:
+        return []
+    handle = re.sub(r"^https?://(?:www\.|m\.)?twitch\.tv/", "", target, flags=re.I).strip("/").split("/")[0].lower()
+    try:
+        u_resp = requests.get("https://api.twitch.tv/helix/users", params={"login": handle}, headers=hdrs, timeout=8)
+        users = u_resp.json().get("data", []) if u_resp.status_code == 200 else []
+        if not users:
+            return []
+        c_resp = requests.get("https://api.twitch.tv/helix/clips", params={"broadcaster_id": users[0]["id"], "first": limit}, headers=hdrs, timeout=8)
+        clips = c_resp.json().get("data", []) if c_resp.status_code == 200 else []
+        game_ids = list({c.get("game_id") for c in clips if c.get("game_id")})
+        game_map = {}
+        if game_ids:
+            g_resp = requests.get("https://api.twitch.tv/helix/games", params=[("id", gid) for gid in game_ids], headers=hdrs, timeout=6)
+            for g in (g_resp.json().get("data", []) if g_resp.status_code == 200 else []):
+                game_map[g["id"]] = g.get("name", "")
+        return [{
+            "id": c.get("id", ""),
+            "title": c.get("title") or "Twitch Clip",
+            "url": c.get("url", ""),
+            "duration": int(round(float(c.get("duration") or 30))),
+            "duration_str": fmt_timestamp(float(c.get("duration") or 30)),
+            "game_name": game_map.get(c.get("game_id"), ""),
+            "view_count": int(c.get("view_count") or 0),
+        } for c in clips if c.get("url")]
+    except Exception:
+        return []
 
 
 def _parse_hls_playlist(m3u8_url: str) -> Tuple[bytes, List[Tuple[float, float, str]]]:
@@ -312,7 +419,14 @@ def find_vod_highlights(vod_url: str, top_n: int = 8) -> List[Dict]:
 
 
 def download_vod_slice(vod_url: str, start_sec: float, end_sec: float, dest_mp4: str) -> float:
-    """Downloads only [start_sec, end_sec] from a Twitch VOD via Python HLS (avoids static ffmpeg DNS bugs)."""
+    """Downloads a Twitch Clip directly or slices [start_sec, end_sec] from a VOD via Python HLS."""
+    if "/clip/" in vod_url or "clips.twitch.tv" in vod_url:
+        res = subprocess.run([YTDLP, "-f", "best[ext=mp4]/best", "-o", dest_mp4, "--no-warnings", vod_url], capture_output=True, text=True, timeout=60)
+        if res.returncode != 0 or not os.path.exists(dest_mp4):
+            raise RuntimeError(f"Clip download failed: {(res.stderr or '')[-300:]}")
+        actual = get_video_duration(dest_mp4)
+        return min(max(actual if actual > 1.0 else 30.0, 5.0), 58.0)
+
     if end_sec <= start_sec:
         raise ValueError("End time must be after start time.")
     dur = min(max(end_sec - start_sec, 5.0), 58.0)
