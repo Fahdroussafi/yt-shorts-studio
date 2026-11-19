@@ -2233,7 +2233,7 @@ async def run_vod_production(task_id: str, req: VodProduceRequest, target_videos
             PRODUCTION_TASKS[task_id]["progress"] = 15
             PRODUCTION_TASKS[task_id]["log"].append(f"[1/4] Downloading VOD slice {req.start_time} -> {req.end_time}...")
 
-            from vod_clipper import parse_timestamp_sec, download_vod_slice, render_vod_cinema_short
+            from vod_clipper import parse_timestamp_sec, download_vod_slice, render_vod_cinema_short, analyze_clip_with_vision
             from engine import generate_voice, build_ass_subtitles
             from produce_motion_short import FFMPEG
 
@@ -2255,29 +2255,43 @@ async def run_vod_production(task_id: str, req: VodProduceRequest, target_videos
             u_dir = os.path.dirname(target_videos_dir)
             brand_name, brand_handle = get_user_brand({"channel_file": os.path.join(u_dir, "channel_info.json"), "user_id": os.path.basename(u_dir)})
 
-            ai_hook, ai_title, ai_tags, ai_comment = None, None, None, None
+            ai_hook, ai_title, ai_tags, ai_comment, ai_tts = None, None, None, None, None
             if not req.hook_banner:
                 try:
-                    from gemini_generator import get_groq_key, generate_with_groq_lpu
-                    g_key = get_groq_key(os.path.join(u_dir, "groq_api_key.txt"), allow_fallback=True)
-                    if g_key:
-                        v_ctx = (req.vod_title or "GTA 6 Xbox Series X Gameplay").strip()
-                        g_prompt = (
-                            f'Write viral YouTube Shorts metadata for a 30s action highlight from this stream: "{v_ctx}" '
-                            f'(slice {req.start_time} to {req.end_time}). '
-                            'Respond ONLY with JSON: {"hook_banner":"ALL CAPS 3-6 WORD HOOK UNDER 36 CHARS",'
-                            '"title":"Punchy title under 50 chars + #shorts #gta6",'
-                            '"tags":"5 comma-separated search tags",'
-                            '"pinned_comment":"Short question for viewers"}'
-                        )
-                        g_res = await asyncio.to_thread(generate_with_groq_lpu, g_prompt, g_key)
-                        if isinstance(g_res, dict):
-                            ai_hook = (g_res.get("hook_banner") or "").strip()[:42]
-                            ai_title = (g_res.get("title") or "").strip()[:68]
-                            ai_tags = (g_res.get("tags") or "").strip()
-                            ai_comment = (g_res.get("pinned_comment") or "").strip()
+                    vis_res = await asyncio.to_thread(
+                        analyze_clip_with_vision, raw_mp4, dur, req.vod_title or "", req.game_name or ""
+                    )
+                    if isinstance(vis_res, dict):
+                        ai_hook = (vis_res.get("hook_banner") or "").strip()[:42]
+                        ai_title = (vis_res.get("title") or "").strip()[:68]
+                        ai_tags = (vis_res.get("tags") or "").strip()
+                        ai_comment = (vis_res.get("pinned_comment") or "").strip()
+                        ai_tts = (vis_res.get("tts_opener") or "").strip()
+                        PRODUCTION_TASKS[task_id]["log"].append(f"[VISION] {vis_res.get('model_used')} -> {ai_hook}")
                 except Exception:
                     pass
+                if not ai_hook:
+                    try:
+                        from gemini_generator import get_groq_key, generate_with_groq_lpu
+                        g_key = get_groq_key(os.path.join(u_dir, "groq_api_key.txt"), allow_fallback=True)
+                        if g_key:
+                            v_ctx = (req.vod_title or "GTA 6 Xbox Series X Gameplay").strip()
+                            g_prompt = (
+                                f'Write viral YouTube Shorts metadata for a 30s action highlight from this stream: "{v_ctx}" '
+                                f'(slice {req.start_time} to {req.end_time}). '
+                                'Respond ONLY with JSON: {"hook_banner":"ALL CAPS 3-6 WORD HOOK UNDER 36 CHARS",'
+                                '"title":"Punchy title under 50 chars + #shorts #gta6",'
+                                '"tags":"5 comma-separated search tags",'
+                                '"pinned_comment":"Short question for viewers"}'
+                            )
+                            g_res = await asyncio.to_thread(generate_with_groq_lpu, g_prompt, g_key)
+                            if isinstance(g_res, dict):
+                                ai_hook = (g_res.get("hook_banner") or "").strip()[:42]
+                                ai_title = (g_res.get("title") or "").strip()[:68]
+                                ai_tags = (g_res.get("tags") or "").strip()
+                                ai_comment = (g_res.get("pinned_comment") or "").strip()
+                    except Exception:
+                        pass
 
             default_hooks = [
                 "WAIT FOR THE ENDING",
@@ -2287,7 +2301,7 @@ async def run_vod_production(task_id: str, req: VodProduceRequest, target_videos
             ]
             import random as _rnd
             hook_text = (req.hook_banner or ai_hook or _rnd.choice(default_hooks)).strip()[:42]
-            tts_text = (req.tts_hook or "").strip()
+            tts_text = (req.tts_hook or ai_tts or "").strip()
             words = []
             tts_used = None
             if tts_text:

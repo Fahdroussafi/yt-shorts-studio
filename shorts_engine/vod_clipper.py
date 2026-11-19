@@ -493,6 +493,84 @@ def download_vod_slice(vod_url: str, start_sec: float, end_sec: float, dest_mp4:
     return min(max(actual_dur if actual_dur > 1.0 else dur, 5.0), 58.0)
 
 
+_OPENROUTER_VISION_MODELS = [
+    "google/gemma-4-26b-a4b-it:free",
+    "google/gemma-4-31b-it:free",
+    "nvidia/nemotron-3.5-super-vl:free",
+    "particle-ai/particle-1:free",
+]
+
+
+def analyze_clip_with_vision(clip_mp4: str, duration: float, vod_title: str = "", game_name: str = "") -> Optional[Dict]:
+    """Extracts 3 frames (start, peak, end) and uses OpenRouter free Vision to generate clip-accurate hook/title/TTS."""
+    import base64
+    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not key or not os.path.exists(clip_mp4):
+        return None
+
+    times = [min(2.0, duration * 0.15), duration * 0.48, max(2.5, duration - 2.0)]
+    b64_frames = []
+    fd_list = []
+    try:
+        for t_sec in times:
+            fd, jpg = tempfile.mkstemp(suffix=".jpg")
+            os.close(fd)
+            fd_list.append(jpg)
+            r = _run_ffmpeg([FFMPEG, "-y", "-ss", f"{t_sec:.2f}", "-i", clip_mp4, "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "5", jpg])
+            if r.returncode == 0 and os.path.exists(jpg) and os.path.getsize(jpg) > 1000:
+                b64_frames.append(base64.b64encode(open(jpg, "rb").read()).decode("ascii"))
+    finally:
+        for jpg in fd_list:
+            if os.path.exists(jpg):
+                try:
+                    os.remove(jpg)
+                except Exception:
+                    pass
+
+    if not b64_frames:
+        return None
+
+    ctx = f"Stream: '{vod_title}'." if vod_title else ""
+    if game_name:
+        ctx += f" Game: {game_name}."
+    prompt_txt = (
+        f"These 3 frames are the start, middle, and end of a 30s gameplay highlight clip. {ctx} "
+        "Look closely at what is happening on screen and write accurate, non-generic YouTube Shorts metadata. "
+        "Respond ONLY with valid JSON: "
+        '{"hook_banner":"ALL CAPS 3-6 WORD HOOK UNDER 36 CHARS ABOUT THIS EXACT SCENE",'
+        '"tts_opener":"One punchy 6-10 word spoken opener reacting to what happens on screen",'
+        '"title":"Punchy title under 50 chars + #shorts + game hashtag",'
+        '"tags":"5 comma-separated relevant search tags",'
+        '"pinned_comment":"Short question about this exact moment"}'
+    )
+    content_blocks = [{"type": "text", "text": prompt_txt}]
+    for bf in b64_frames:
+        content_blocks.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{bf}"}})
+
+    for mid in _OPENROUTER_VISION_MODELS:
+        try:
+            resp = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"model": mid, "messages": [{"role": "user", "content": content_blocks}], "max_tokens": 350, "temperature": 0.4},
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                continue
+            raw = resp.json()["choices"][0]["message"].get("content") or ""
+            raw = re.sub(r"<think>[\s\S]*?</think>", "", raw).strip()
+            m = re.search(r"(\{[\s\S]*\})", raw)
+            if not m:
+                continue
+            parsed = json.loads(m.group(1))
+            if parsed.get("hook_banner") or parsed.get("title"):
+                parsed["model_used"] = mid
+                return parsed
+        except Exception:
+            continue
+    return None
+
+
 def render_vod_cinema_short(
     clip_mp4: str,
     output_mp4: str,
