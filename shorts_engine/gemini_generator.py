@@ -540,36 +540,23 @@ generate_with_gemini_flash = generate_ai_script
 
 
 def generate_scene_visual_queries(script_text: str, target_cuts: int, user_key_file: Optional[str] = None, allow_fallback: bool = True) -> list:
-    """Uses fast Groq LPU to turn a spoken script into exact chronological 2-3 word Pixabay video queries."""
+    """Uses existing Groq LPU helper to turn a spoken script into exact chronological 2-3 word Pixabay queries."""
     api_key = get_groq_key(user_key_file, allow_fallback=allow_fallback)
     if not api_key or not script_text:
         return []
     prompt = (
         f"Split this short video voiceover into {target_cuts} chronological visual cuts. "
-        f"For each cut, write ONE literal, filmable 2-3 word stock-video search query that matches EXACTLY what is being said at that moment "
+        f"For each cut, write ONE literal, filmable 2-3 word stock-video search query matching EXACTLY what is being said at that moment "
         f"(objects, actions, settings: e.g. 'person texting phone', 'office meeting serious', 'close up eyes', 'couple arguing', 'man walking night'). "
         f"Never use abstract words like psychology, manipulation, betrayal, paradox. "
         f'Respond ONLY with JSON: {{"scenes": ["query 1", "query 2", ...]}} with exactly {target_cuts} items.\n\n'
         f"SCRIPT:\n{script_text[:1200]}"
     )
     try:
-        r = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={
-                "model": "llama-3.1-8b-instant",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "max_tokens": 250,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=6,
-        )
-        if r.status_code == 200:
-            content = r.json()["choices"][0]["message"]["content"]
-            scenes = json.loads(content).get("scenes", [])
-            cleaned = [re.sub(r"[^a-zA-Z0-9\s-]", "", str(s)).strip().lower() for s in scenes if str(s).strip()]
-            return [c for c in cleaned if len(c) >= 3][:target_cuts]
+        parsed = generate_with_groq_lpu(prompt, api_key)
+        scenes = (parsed or {}).get("scenes", [])
+        cleaned = [re.sub(r"[^a-zA-Z0-9\s-]", "", str(s)).strip().lower() for s in scenes if str(s).strip()]
+        return [c for c in cleaned if len(c) >= 3][:target_cuts]
     except Exception as e:
         print(f"Scene visual planner note: {e}")
     return []
