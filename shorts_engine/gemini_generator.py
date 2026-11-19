@@ -287,30 +287,30 @@ CHANNEL BRAND NAME: "{brand_name}"
 CHANNEL HANDLE: "{brand_handle}"
 
 MANDATORY 4-ACT ARCHITECTURE (STRICT RULES):
-1. ACT 1 HOOK (0-4s | 18-24 words):
-   - MUST place the viewer ("YOU" / "YOUR") inside a physical emergency, danger, or counter-intuitive dilemma within the first 6 words.
-   - MUST contain a visceral numeric stat, contrast, or multiplier (e.g. "five times more likely", "seventy percent", "four seconds").
+1. ACT 1 HOOK (0-4s | 16-22 words):
+   - MUST place the viewer ("YOU" / "YOUR") directly inside the real everyday scenario matching THIS exact title/topic within the first 6 words.
+   - MUST be sharp, grounded, and believable — NO made-up percentages ("ninety percent of lovers"), NO melodramatic clichés ("losing your soul", "four seconds from doom") unless explicitly in the verified reference.
    - STRICT BANS:
      * NEVER start with a year ("In 1961...", "In 1974...").
      * NEVER start with "There is a...", "Did you know...", or "A psychologist proved...".
      * NEVER use the words "human behavioral glitch" or "psychological glitch".
      * NEVER name clinical effects in Act 1.
 2. ACT 2 MECHANISM (4-17s | 35-44 words):
-   - Explain the evolutionary brain trap, predator tactic, or cognitive betrayal causing this danger. Keep it visceral and cinematic.
+   - Explain the exact psychological mechanism behind THIS title clearly and viscerally. Every sentence must stay 100% on-topic with the title.
 3. ACT 3 DIRECTIVE (17-31s | 28-36 words):
-   - Give the viewer an exact physical counter-move AND a verbatim spoken script in quotation marks ("...") they can use to break the trap.
-4. ACT 4 DYNAMIC BRANDED OUTRO (31-35s | 10-14 words - MANDATORY):
-   - MUST call out your channel name using this formula:
-     "Follow {brand_name} for [dynamic, context-specific reason tailored directly to this topic]."
+   - Give the viewer one concrete behavioral counter-move AND a realistic spoken line in quotation marks ("...") they can actually use in that situation.
+4. ACT 4 DYNAMIC BRANDED OUTRO (31-35s | 8-12 words - MANDATORY):
+   - MUST call out your channel name cleanly:
+     "Follow {brand_name} for [short topic-specific promise]."
 5. TOTAL SPOKEN WORDS:
    - Strictly between 85 and 110 words total across all acts (~33-42s fast pacing).
 6. TITLE RULE (CRITICAL FOR SHORTS FEED CTR):
-   - Use plain, visceral everyday English (e.g. "Why Crowds Ignore Dying People (The Fix)").
-   - NEVER put academic jargon, experiment names, years, or clinical terms in the title (no "Compliance Loop", "Forced Teaming", "Rosenhan", "1974", "Presupposition").
-7. LITERAL VISUAL KEYWORDS (CRITICAL — NO MISMATCHED B-ROLL):
-   - Return 8 to 10 concrete, filmable 2-3 word stock-video search phrases in EXACT CHRONOLOGICAL ORDER matching Act 1 -> Act 2 -> Act 3 -> Act 4.
-   - Each phrase MUST describe a literal physical scene/object/action visible on camera for that exact line (e.g. if the line mentions texting -> "person texting smartphone"; office boss -> "business meeting serious"; lying -> "close up eyes serious"; arguing -> "couple arguing dark"; mirror -> "man looking mirror"; walking away -> "person walking night").
-   - STRICTLY BAN abstract nouns that stock engines fail on (NEVER output "manipulation", "gaslighting", "psychology", "betrayal", "paradox", "cognitive bias").
+   - Use plain, visceral everyday English under 48 chars before hashtags (so it never cuts off in the banner), e.g. "Why Toxic People Feel Safe #shorts #psychology".
+   - NEVER put parentheticals like "(The Fix)" or academic jargon/years in the title.
+7. LITERAL 2-WORD PIXABAY VISUAL KEYWORDS (CRITICAL — ZERO MISMATCHED B-ROLL):
+   - Return 8 to 10 concrete, filmable 2-word stock-video search queries in EXACT CHRONOLOGICAL ORDER matching Act 1 -> Act 2 -> Act 3 -> Act 4.
+   - Use clean human/scene nouns + mood that stock libraries index accurately: e.g. "couple arguing", "sad woman", "stressed man", "man smartphone", "office meeting", "close up eye", "walking night", "dark hallway", "business handshake", "person thinking".
+   - STRICTLY BAN vague filler ("looking", "illustration", "pulse", "soul", "glow", "stepping") and abstract nouns ("manipulation", "gaslighting", "psychology", "betrayal", "paradox").
 8. TOPIC-SPECIFIC SEO TAGS:
    - Return 6 to 8 real multi-word YouTube search phrases specifically tied to THIS script's exact topic and niche.
 

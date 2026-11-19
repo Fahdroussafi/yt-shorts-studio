@@ -1930,12 +1930,16 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             PRODUCTION_TASKS[task_id]["progress"] = 30
             PRODUCTION_TASKS[task_id]["log"].append(f"[2/5] Voice synthesized ({dur:.2f}s, {voice_choice}). Building viral ASS subtitles...")
 
-            raw_t = re.sub(r"#\S+", "", req.title or "").strip()
+            raw_t = re.sub(r"#\S+", "", req.title or "")
+            raw_t = re.sub(r"\([^)]*\)", "", raw_t).strip(" -|:")
             b_words = []
             for w in raw_t.split():
                 if len(" ".join(b_words + [w])) > 40:
                     break
                 b_words.append(w)
+            dangling_b = {"a", "an", "the", "of", "to", "in", "on", "for", "with", "and", "or", "by", "at"}
+            while len(b_words) > 2 and b_words[-1].lower().strip(",.-:()") in dangling_b:
+                b_words.pop()
             hook_banner = " ".join(b_words) if b_words else ("GTA 6 BREAKING NEWS" if use_cinema_frame else None)
             top_badge = f"@{brand_name}" if use_cinema_frame else None
 

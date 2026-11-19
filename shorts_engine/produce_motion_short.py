@@ -281,8 +281,30 @@ def extract_timeline_visual_queries(
 
     return cuts_queries
 
+_OFFTOPIC_PIXABAY_TAGS = {
+    "dog", "puppy", "cat", "kitten", "pet", "animal", "animals", "wildlife",
+    "bird", "birds", "seagull", "seagulls", "wolf", "turtle", "horse", "fish",
+    "insect", "butterfly", "flower", "flowers", "cartoon", "anime", "baby",
+    "toddler", "cooking", "cake", "pizza", "fruit", "apple", "banana", "cow",
+    "sheep", "duck", "chicken", "deer", "bear", "lion", "tiger", "monkey", "cute", "adorable",
+}
+_CHEERFUL_PIXABAY_TAGS = {
+    "cheerful", "happiness", "happy", "fun", "celebration", "party", "holiday",
+    "vacation", "beach", "wedding", "comedy", "festive", "joyful", "sunny",
+}
+_HUMAN_QUERY_CUES = {
+    "person", "man", "woman", "couple", "boss", "people", "crowd", "eye",
+    "eyes", "face", "hand", "hands", "lover", "lovers", "partner", "girl", "boy",
+}
+_HUMAN_PIXABAY_TAGS = _HUMAN_QUERY_CUES | {
+    "human", "portrait", "silhouette", "business", "office", "meeting",
+    "depression", "sad", "stress", "stressed", "angry", "fear", "lonely", "thinking",
+}
+_QUERY_FILLER = {"the", "a", "an", "in", "on", "at", "of", "to", "dark", "looking", "close", "up", "glow", "pulse", "illustration"}
+
+
 def harvest_candidates_for_query(query: str) -> List[str]:
-    """Fetches topic-matched HD clips: Pixabay Video API (#1 exact + 2-word relax), Mixkit (#2), Unsplash (#3)."""
+    """Fetches topic-matched HD clips using Pixabay tag-validation + category=people (#1), Mixkit (#2), Unsplash (#3)."""
     q_phrase = re.sub(r"\s+", " ", query.strip().replace("-", " ")).lower()
     if not q_phrase:
         return []
@@ -295,33 +317,66 @@ def harvest_candidates_for_query(query: str) -> List[str]:
 
     results: List[str] = []
 
-    # 1. Pixabay Video API (Primary HD Stock Videos — exact phrase, then relaxed 2-word query if <6 hits)
+    # 1. Pixabay Video API with tag-level semantic validation & off-topic rejection
     pixabay_key = os.environ.get("PIXABAY_API_KEY")
     if pixabay_key:
-        pix_queries = [q_phrase]
-        words = q_phrase.split()
-        if len(words) >= 3:
-            pix_queries.append(" ".join(words[:2]))
-            pix_queries.append(words[-1])
-        elif len(words) == 2:
-            pix_queries.append(words[-1])
+        q_words = set(q_phrase.split())
+        content_words = [w for w in q_phrase.split() if w not in _QUERY_FILLER and len(w) >= 3]
+        wants_human = bool(q_words & _HUMAN_QUERY_CUES)
 
+        pix_queries = [q_phrase]
+        if len(content_words) >= 2:
+            compact = " ".join(content_words[:2])
+            if compact != q_phrase:
+                pix_queries.append(compact)
+
+        scored_pix = []
+        seen_pix = set()
         for pq in pix_queries:
-            if len(results) >= 6:
+            if len(scored_pix) >= 8:
                 break
             try:
-                q_pix = urllib.parse.quote_plus(pq)
-                pix_url = f"https://pixabay.com/api/videos/?key={pixabay_key}&q={q_pix}&video_type=film&order=popular&min_height=720&safesearch=true&per_page=12"
-                pr = requests.get(pix_url, timeout=8)
-                if pr.status_code == 200:
-                    pdata = pr.json()
-                    for hit in pdata.get("hits", []):
-                        vids = hit.get("videos", {})
-                        cand = vids.get("medium", {}).get("url") or vids.get("large", {}).get("url") or vids.get("small", {}).get("url")
-                        if cand and cand not in results:
-                            results.append(cand)
+                params = {
+                    "key": pixabay_key,
+                    "q": pq,
+                    "video_type": "film",
+                    "order": "popular",
+                    "min_height": 720,
+                    "safesearch": "true",
+                    "per_page": 20,
+                }
+                if wants_human:
+                    params["category"] = "people"
+                pr = requests.get("https://pixabay.com/api/videos/", params=params, timeout=8)
+                if pr.status_code != 200:
+                    continue
+                for hit in pr.json().get("hits", []):
+                    tags = {t.strip().lower() for t in (hit.get("tags") or "").split(",") if t.strip()}
+                    # Reject animals, pets, birds, cartoons, food unless explicitly requested
+                    if (tags & _OFFTOPIC_PIXABAY_TAGS) - q_words:
+                        continue
+                    # Reject cheerful/beach/holiday clips unless explicitly requested
+                    if (tags & _CHEERFUL_PIXABAY_TAGS) - q_words:
+                        continue
+                    # If query asks for a person/couple/face/eye, require a human tag
+                    if wants_human and not (tags & _HUMAN_PIXABAY_TAGS):
+                        continue
+                    vids = hit.get("videos", {})
+                    cand = vids.get("medium", {}).get("url") or vids.get("large", {}).get("url") or vids.get("small", {}).get("url")
+                    if not cand or cand in seen_pix:
+                        continue
+                    # Require at least 1 real content word match in tags when content words exist
+                    ov = len(tags & set(content_words)) if content_words else len(tags & q_words)
+                    if content_words and ov == 0:
+                        continue
+                    seen_pix.add(cand)
+                    scored_pix.append((ov, cand))
             except Exception as e:
                 print(f"Pixabay fetch note: {e}")
+
+        scored_pix.sort(key=lambda x: x[0], reverse=True)
+        for _ov, cand in scored_pix[:12]:
+            results.append(cand)
 
     # 2. Mixkit (Only if Pixabay returned < 4 clips, so unrelated Mixkit slugs never dilute exact Pixabay hits)
     if len(results) < 4:
