@@ -196,6 +196,13 @@ def extract_extractive_script(
     return re.sub(r"\s+", " ", script).strip()
 
 
+_STRIKE_RISK_TERMS = (
+    "leak", "leaked build", "play early", "early access download",
+    "free download", "crack", "piracy", "mod menu", "money glitch",
+    "afk bot", "duplication glitch",
+)
+
+
 def fetch_gta_articles(topic_filter: Optional[str] = None, used_titles: Optional[set] = None) -> List[Dict]:
     """Fetches live GTA 6 / GTA articles from 5 verified gaming RSS outlets."""
     used_titles = used_titles or set()
@@ -212,6 +219,8 @@ def fetch_gta_articles(topic_filter: Optional[str] = None, used_titles: Optional
                 title = html_lib.unescape((it.findtext("title") or "").strip())
                 low_t = title.lower()
                 if not any(k in low_t for k in ("gta 6", "gta vi", "grand theft auto 6", "grand theft auto vi")):
+                    continue
+                if any(term in low_t for term in _STRIKE_RISK_TERMS):
                     continue
                 if not topic_filter and any(skip in low_t for skip in ("time zone", "countdown", "pre-order", "preorder", "explained")):
                     continue
