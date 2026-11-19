@@ -322,6 +322,21 @@ def save_user_video_mapping(mappings_file: str, video_id: str, yt_id: str, statu
     except Exception:
         pass
 
+def clear_user_video_mapping(paths: dict, video_id: str):
+    """Clears stale YouTube mapping/stats when a slot is newly produced."""
+    for key, path in (("mappings", paths.get("mappings_file")), ("stats", paths.get("stats_file"))):
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and video_id in data:
+                del data[video_id]
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+        except Exception:
+            pass
+
 def get_user_channel_info(channel_file: str) -> dict:
     if os.path.exists(channel_file):
         try:
@@ -2023,6 +2038,7 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                 except Exception:
                     pass
 
+            clear_user_video_mapping(paths, req.video_id)
             mb = round(os.path.getsize(output_mp4) / (1024 * 1024), 2)
             PRODUCTION_TASKS[task_id]["status"] = "completed"
             PRODUCTION_TASKS[task_id]["progress"] = 100
@@ -2151,6 +2167,7 @@ async def run_twitch_production(task_id: str, req: TwitchProduceRequest, target_
                 except Exception:
                     pass
 
+            clear_user_video_mapping(paths, req.video_id)
             mb = round(os.path.getsize(output_mp4) / (1024 * 1024), 2)
             PRODUCTION_TASKS[task_id]["status"] = "completed"
             PRODUCTION_TASKS[task_id]["progress"] = 100
