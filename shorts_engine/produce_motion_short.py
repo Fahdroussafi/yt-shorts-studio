@@ -281,40 +281,24 @@ def harvest_candidates_for_query(query: str) -> List[str]:
 
     results: List[str] = []
 
-    # 1. Pexels Video API (Free BYOK or env)
-    pexels_key = os.environ.get("PEXELS_API_KEY")
-    if pexels_key:
-        try:
-            pex_url = f"https://api.pexels.com/videos/search?query={q_clean}&orientation=portrait&per_page=15"
-            pr = requests.get(pex_url, headers={"Authorization": pexels_key}, timeout=8)
-            if pr.status_code == 200:
-                pdata = pr.json()
-                for v in pdata.get("videos", []):
-                    files = v.get("video_files", [])
-                    best = next((f["link"] for f in files if f.get("height", 0) >= 720 and f.get("link")), None)
-                    if best and best not in results:
-                        results.append(best)
-        except Exception as e:
-            print(f"Pexels fetch note: {e}")
-
-    # 2. Pixabay Video API (Free BYOK or env)
+    # 1. Pixabay Video API (Primary HD Stock Videos)
     pixabay_key = os.environ.get("PIXABAY_API_KEY")
     if pixabay_key:
         try:
-            pix_url = f"https://pixabay.com/api/videos/?key={pixabay_key}&q={urllib.parse.quote_plus(query)}&video_type=film&per_page=15"
+            q_pix = urllib.parse.quote_plus(query.strip().replace("-", " "))
+            pix_url = f"https://pixabay.com/api/videos/?key={pixabay_key}&q={q_pix}&video_type=film&min_height=720&safesearch=true&per_page=15"
             pr = requests.get(pix_url, timeout=8)
             if pr.status_code == 200:
                 pdata = pr.json()
                 for hit in pdata.get("hits", []):
                     vids = hit.get("videos", {})
-                    # Prefer medium or large vertical/HD
                     cand = vids.get("medium", {}).get("url") or vids.get("large", {}).get("url") or vids.get("small", {}).get("url")
                     if cand and cand not in results:
                         results.append(cand)
         except Exception as e:
             print(f"Pixabay fetch note: {e}")
 
-    # 3. Mixkit Pages 1 to 2 (Fast & rate-limit safe)
+    # 2. Mixkit Pages 1 to 2 (Fast & rate-limit safe)
     for page in (1, 2):
         try:
             page_url = f"https://mixkit.co/free-stock-video/{q_clean}/" if page == 1 else f"https://mixkit.co/free-stock-video/{q_clean}/?page=2"
@@ -330,7 +314,7 @@ def harvest_candidates_for_query(query: str) -> List[str]:
         except Exception:
             pass
 
-    # 4. Unsplash API (High-Resolution Portrait Stills for Ken Burns Motion Cuts)
+    # 3. Unsplash API (High-Resolution Portrait Stills for Ken Burns Motion Cuts)
     unsplash_key = os.environ.get("UNSPLASH_ACCESS_KEY")
     if unsplash_key:
         try:
