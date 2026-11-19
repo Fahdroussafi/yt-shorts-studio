@@ -2174,6 +2174,150 @@ def get_produce_status(task_id: str, user: dict = Depends(require_auth)):
     return task
 
 
+class VodInspectRequest(BaseModel):
+    channel_or_url: str
+
+
+class VodProduceRequest(BaseModel):
+    vod_url: str
+    start_time: str
+    end_time: str
+    hook_banner: Optional[str] = "WAIT FOR THE ENDING"
+    title: Optional[str] = None
+    tts_hook: Optional[str] = None
+    video_id: Optional[str] = None
+
+
+@app.post("/api/vod/inspect")
+async def inspect_twitch_vods(req: VodInspectRequest, user: dict = Depends(require_auth)):
+    """Lists recent Twitch VODs and scans top chat-replay spikes for the first VOD (GTA mode only)."""
+    if not ADMIN_ONLY_MODE:
+        raise HTTPException(status_code=403, detail="VOD clipper is only enabled on the GTA studio.")
+    from vod_clipper import list_twitch_vods, scan_vod_chat_spikes
+    try:
+        vods = await asyncio.to_thread(list_twitch_vods, req.channel_or_url, 8)
+        spikes = []
+        if vods:
+            spikes = await asyncio.to_thread(scan_vod_chat_spikes, vods[0]["id"], vods[0]["duration"], 6)
+        return {"vods": vods, "spikes": spikes}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+async def run_vod_production(task_id: str, req: VodProduceRequest, target_videos_dir: str):
+    if task_id not in RENDER_QUEUE_LIST:
+        RENDER_QUEUE_LIST.append(task_id)
+    sem = get_render_semaphore()
+    try:
+        async with sem:
+            PRODUCTION_TASKS[task_id]["status"] = "processing"
+            PRODUCTION_TASKS[task_id]["progress"] = 15
+            PRODUCTION_TASKS[task_id]["log"].append(f"[1/4] Downloading VOD slice {req.start_time} -> {req.end_time}...")
+
+            from vod_clipper import parse_timestamp_sec, download_vod_slice, render_vod_cinema_short
+            from engine import generate_voice, build_ass_subtitles
+            from produce_motion_short import FFMPEG
+
+            start_sec = parse_timestamp_sec(req.start_time)
+            end_sec = parse_timestamp_sec(req.end_time)
+
+            target_dir = os.path.join(target_videos_dir, req.video_id)
+            os.makedirs(target_dir, exist_ok=True)
+            raw_mp4 = os.path.join(target_dir, "vod_slice.mp4")
+            ass_file = os.path.join(target_dir, "captions.ass")
+            tts_file = os.path.join(target_dir, "hook_voice.mp3")
+            output_mp4 = os.path.join(target_dir, f"{req.video_id}.mp4")
+            meta_file = os.path.join(target_dir, "seo_metadata.txt")
+            thumb_file = os.path.join(target_dir, "thumbnail.jpg")
+
+            dur = await asyncio.to_thread(download_vod_slice, req.vod_url, start_sec, end_sec, raw_mp4)
+            PRODUCTION_TASKS[task_id]["progress"] = 45
+
+            u_dir = os.path.dirname(target_videos_dir)
+            brand_name, brand_handle = get_user_brand({"channel_file": os.path.join(u_dir, "channel_info.json"), "user_id": os.path.basename(u_dir)})
+
+            hook_text = (req.hook_banner or "WAIT FOR THE ENDING").strip()[:42]
+            tts_text = (req.tts_hook or "").strip()
+            words = []
+            tts_used = None
+            if tts_text:
+                PRODUCTION_TASKS[task_id]["log"].append("[2/4] Synthesizing optional TTS hook...")
+                words = await generate_voice(tts_text, tts_file, voice="en-US-AndrewMultilingualNeural", rate="+4%", brand_name=brand_name)
+                tts_used = tts_file
+            else:
+                PRODUCTION_TASKS[task_id]["log"].append("[2/4] Using pure Xbox game audio + Top Hook Banner...")
+
+            build_ass_subtitles(words, ass_file, margin_v=520, top_badge=f"@{brand_name}", hook_banner=hook_text)
+            PRODUCTION_TASKS[task_id]["progress"] = 70
+            PRODUCTION_TASKS[task_id]["log"].append(f"[3/4] Rendering 1080x1920 Cinema Frame ({dur:.1f}s, -14 LUFS)...")
+
+            await asyncio.to_thread(render_vod_cinema_short, raw_mp4, output_mp4, dur, ass_file, tts_used)
+
+            # Extract crisp frame as thumbnail.jpg
+            await asyncio.to_thread(
+                subprocess.run,
+                [FFMPEG, "-y", "-ss", f"{min(2.0, dur / 2):.1f}", "-i", raw_mp4, "-frames:v", "1", thumb_file],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            for tmp in (raw_mp4, tts_file):
+                if os.path.exists(tmp):
+                    try:
+                        os.remove(tmp)
+                    except Exception:
+                        pass
+
+            clean_title = (req.title or hook_text or "Insane GTA 6 Moment").strip()[:55]
+            yt_title = clean_title if "#shorts" in clean_title.lower() else f"{clean_title} #shorts #gta6"
+            with open(meta_file, "w", encoding="utf-8") as f:
+                f.write(f"TITLE:\n{yt_title}\n\n")
+                f.write(f"DESCRIPTION:\n{hook_text} — Live from Series X. Subscribe to {brand_handle} #shorts #gta6 #gtavi #xbox\n\n")
+                f.write("TAGS:\ngta 6 gameplay, gta 6 xbox series x, gta vi shorts, gta 6 clips, pixelbreach\n\n")
+                f.write("PINNED COMMENT:\nRate this moment 1-10! Playing GTA 6 live on Series X.\n")
+
+            clear_user_video_mapping({
+                "mappings_file": os.path.join(u_dir, "video_mappings.json"),
+                "stats_file": os.path.join(u_dir, "stats_cache.json"),
+            }, req.video_id)
+            mb = round(os.path.getsize(output_mp4) / (1024 * 1024), 2)
+            PRODUCTION_TASKS[task_id]["status"] = "completed"
+            PRODUCTION_TASKS[task_id]["progress"] = 100
+            PRODUCTION_TASKS[task_id]["output_file"] = os.path.basename(output_mp4)
+            PRODUCTION_TASKS[task_id]["log"].append(f"[SUCCESS] Stream Short rendered ({mb} MB): {os.path.basename(output_mp4)}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        PRODUCTION_TASKS[task_id]["status"] = "failed"
+        PRODUCTION_TASKS[task_id]["error"] = str(e)
+        PRODUCTION_TASKS[task_id]["log"].append(f"[ERROR] VOD render failed: {str(e)}")
+    finally:
+        if task_id in RENDER_QUEUE_LIST:
+            RENDER_QUEUE_LIST.remove(task_id)
+
+
+@app.post("/api/vod/produce")
+async def start_vod_produce(req: VodProduceRequest, background_tasks: BackgroundTasks, user: dict = Depends(require_auth)):
+    """Slices a Twitch VOD timestamp range and renders a 1080x1920 Cinema Frame Short (GTA mode only)."""
+    if not ADMIN_ONLY_MODE:
+        raise HTTPException(status_code=403, detail="VOD clipper is only enabled on the GTA studio.")
+    paths = get_user_paths(user)
+    from idea_bank import get_next_short_id
+    vid = sanitize_short_id(req.video_id) if req.video_id else get_next_short_id(paths["videos_dir"])
+    req.video_id = vid
+    task_id = f"task_{vid}_{int(time.time())}"
+    PRODUCTION_TASKS[task_id] = {
+        "task_id": task_id,
+        "user_id": paths["user_id"],
+        "video_id": vid,
+        "status": "queued",
+        "progress": 0,
+        "log": [],
+        "output_file": None,
+        "error": None,
+    }
+    background_tasks.add_task(run_vod_production, task_id, req, paths["videos_dir"])
+    return {"task_id": task_id, "video_id": vid, "status": "queued"}
+
+
 @app.post("/api/upload")
 def upload_to_youtube(req: UploadRequest, user: dict = Depends(require_auth)):
     """Uploads a generated short to YouTube (Public or Scheduled) using user's token.json."""

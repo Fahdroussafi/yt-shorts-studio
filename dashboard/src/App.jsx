@@ -9,6 +9,7 @@ import VaultPage from './pages/VaultPage';
 import IdeasPage from './pages/IdeasPage';
 import StudioPage from './pages/StudioPage';
 import DispatcherPage from './pages/DispatcherPage';
+import StreamVodsPage from './pages/StreamVodsPage';
 
 function ProtectedRoute({ children }) {
   const { authToken, authChecking } = useApp();
@@ -43,6 +44,7 @@ export default function App() {
             <Route path="/vault" element={<VaultPage />} />
             <Route path="/ideas" element={<IdeasPage />} />
             <Route path="/studio" element={<StudioPage />} />
+            <Route path="/stream-vods" element={<StreamVodsPage />} />
             <Route path="/dispatcher" element={<DispatcherPage />} />
             <Route path="*" element={<Navigate to="/overview" replace />} />
           </Route>
