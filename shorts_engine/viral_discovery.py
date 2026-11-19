@@ -154,24 +154,22 @@ def discover_viral_angle(
     token_file: Optional[str] = None,
 ) -> Optional[Tuple[str, str]]:
     """Finds an unused viral Short topic (YouTube 24h cache) or real study/phenomenon (Wiki/RSS)."""
-    used = _used_set(history)
+    from idea_bank import find_duplicate_concept
+
+    existing_items = [
+        {"id": f"h_{i}", "title": str(e.get("title") or ""), "angle": str(e.get("angle") or e.get("concept") or "")}
+        for i, e in enumerate(history or [])
+        if isinstance(e, dict)
+    ]
 
     yt_items = _fetch_youtube_viral_shorts(niche, token_file) if token_file else []
-    fresh_yt = [
-        it for it in yt_items
-        if it["title"].lower() not in used
-        and not any(it["title"].lower()[:28] in u for u in used)
-    ]
+    fresh_yt = [it for it in yt_items if not find_duplicate_concept(it["title"], it.get("context", ""), existing_items)]
     if fresh_yt:
         pick = random.choice(fresh_yt[:12])
         return pick["title"], f"Trending viral YouTube Short topic: {pick['title']} ({pick['context']})"
 
     fallback_items = _fetch_wiki_and_rss_topics(niche)
-    fresh_fb = [
-        it for it in fallback_items
-        if it["title"].lower() not in used
-        and not any(it["title"].lower()[:28] in u for u in used)
-    ]
+    fresh_fb = [it for it in fallback_items if not find_duplicate_concept(it["title"], it.get("context", ""), existing_items)]
     if fresh_fb:
         pick = random.choice(fresh_fb[:15])
         return pick["title"], f"Real verified psychological/historical topic ({pick['source']}): {pick['title']} — {pick['context']}"

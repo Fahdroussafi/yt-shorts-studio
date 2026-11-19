@@ -1765,6 +1765,28 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
     except Exception as e:
         print(f"AI script generation error: {e}")
     if ai_result:
+        from idea_bank import collect_channel_titles, find_duplicate_concept
+        if not (req.concept and req.concept.strip()):
+            existing_items = collect_channel_titles(paths["user_dir"])
+            if find_duplicate_concept(ai_result.get("title", ""), ai_result.get("chosen_angle", "") + " " + ai_result.get("script", "")[:160], existing_items):
+                try:
+                    retry_res = generate_with_gemini_flash(
+                        niche=niche,
+                        concept=None,
+                        user_key_file=paths["key_file"],
+                        brand_name=brand_name,
+                        brand_handle=brand_handle,
+                        allow_fallback=is_owner,
+                        user_tracker_file=paths["usage_file"],
+                        surprise=True,
+                        topic_history_file=paths.get("topic_history_file"),
+                        token_file=paths.get("token_file"),
+                    )
+                    if retry_res:
+                        ai_result = retry_res
+                except Exception:
+                    pass
+
         final_script = ai_result.get("script", "").strip()
         profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
         outro_mandate = profile.get("outro_phrase", f"Follow {brand_name} for psychological rules that put you five steps ahead.").format(brand_name=brand_name)
@@ -2107,6 +2129,18 @@ async def start_produce(req: ProduceRequest, background_tasks: BackgroundTasks, 
     paths = get_user_paths(user)
     cleaned_video_id = sanitize_short_id(req.video_id)
     req.video_id = cleaned_video_id
+
+    from idea_bank import collect_channel_titles, find_duplicate_concept
+    existing_items = collect_channel_titles(paths["user_dir"], exclude_video_id=cleaned_video_id)
+    # Exclude history_ entries at render gate so re-generating/tweaking in Studio only blocks against actual channel/vault shorts
+    channel_shorts = [it for it in existing_items if not str(it.get("id", "")).startswith("history_")]
+    dup = find_duplicate_concept(req.title, req.script_text[:220], channel_shorts)
+    if dup:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Duplicate concept blocked: too close to {dup['id'].upper()} \"{dup['title']}\" ({dup['score']}% match: {', '.join(dup['matched'])}). Change the title/hook or generate a fresh idea.",
+        )
+
     task_id = f"task_{cleaned_video_id}_{int(time.time())}"
     PRODUCTION_TASKS[task_id] = {
         "task_id": task_id,

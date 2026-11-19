@@ -486,6 +486,152 @@ def record_topic_history(history_file: Optional[str], title: str, niche: str, an
     except Exception as e:
         print(f"Failed to save topic history: {e}")
 
+
+_DUP_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with",
+    "by", "from", "is", "are", "was", "were", "be", "been", "have", "has", "had", "do",
+    "does", "did", "will", "would", "could", "should", "can", "it", "its", "this", "that",
+    "they", "them", "their", "you", "your", "we", "our", "into", "about", "more", "just",
+    "why", "how", "what", "when", "where", "who", "which", "if", "not", "never", "always",
+    "make", "makes", "made", "people", "person", "someone", "anyone", "every", "thing",
+    "trick", "tricks", "rule", "rules", "secret", "secrets", "fact", "facts", "fix",
+    "real", "true", "stop", "here", "one", "two", "three", "four", "five", "seconds",
+    "psychology", "dark", "shorts", "short", "gta", "gtavi", "gta6", "rockstar", "gaming",
+}
+
+
+def _clean_title_str(text: str) -> str:
+    t = re.sub(r"#\S+", "", str(text or ""))
+    t = re.sub(r"[^a-zA-Z0-9\s]", " ", t.lower())
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _stem_tokens(text: str) -> set:
+    tokens = set()
+    for w in _clean_title_str(text).split():
+        if len(w) < 3 or w in _DUP_STOPWORDS:
+            continue
+        for suf in ("ing", "ed", "es", "s"):
+            if len(w) >= 5 + len(suf) and w.endswith(suf):
+                w = w[: -len(suf)]
+                break
+        if w not in _DUP_STOPWORDS and len(w) >= 3:
+            tokens.add(w)
+    return tokens
+
+
+def collect_channel_titles(user_dir: str, exclude_video_id: Optional[str] = None) -> List[dict]:
+    """Collects active live/scheduled YouTube titles, vault metadata, and topic history for duplicate checks."""
+    items: List[dict] = []
+    seen_keys = set()
+    deleted_ids = set()
+
+    vm_path = os.path.join(user_dir, "video_mappings.json")
+    if os.path.exists(vm_path):
+        try:
+            with open(vm_path, "r", encoding="utf-8") as f:
+                vm = json.load(f)
+            for k, v in vm.items():
+                if isinstance(v, dict) and v.get("default_status") == "DELETED_ON_YOUTUBE":
+                    deleted_ids.add(k)
+        except Exception:
+            pass
+
+    def _add(item_id: str, title: str, angle: str = ""):
+        if exclude_video_id and item_id == exclude_video_id:
+            return
+        norm = _clean_title_str(title)
+        if not norm:
+            return
+        dedup_k = (item_id, norm)
+        if dedup_k not in seen_keys:
+            seen_keys.add(dedup_k)
+            items.append({"id": item_id, "title": title.strip(), "angle": angle.strip()})
+
+    sc_path = os.path.join(user_dir, "stats_cache.json")
+    if os.path.exists(sc_path):
+        try:
+            with open(sc_path, "r", encoding="utf-8") as f:
+                sc = json.load(f)
+            for sid, info in sc.items():
+                if not isinstance(info, dict) or info.get("deleted") or sid in deleted_ids:
+                    continue
+                if info.get("title"):
+                    _add(sid, info["title"])
+        except Exception:
+            pass
+
+    v_dir = os.path.join(user_dir, "videos")
+    if os.path.exists(v_dir):
+        for folder in sorted(os.listdir(v_dir)):
+            if folder in deleted_ids or (exclude_video_id and folder == exclude_video_id):
+                continue
+            mp = os.path.join(v_dir, folder, "seo_metadata.txt")
+            if os.path.exists(mp):
+                try:
+                    raw = open(mp, "r", encoding="utf-8").read()
+                    m = re.search(r"TITLE:\s*(.*?)(?=\n\n|\nDESCRIPTION:|$)", raw, re.DOTALL)
+                    if m and m.group(1).strip():
+                        _add(folder, m.group(1).strip())
+                except Exception:
+                    pass
+
+    th_path = os.path.join(user_dir, "topic_history.json")
+    for idx, entry in enumerate(load_topic_history(th_path)[:60]):
+        t = entry.get("title", "")
+        a = entry.get("angle", "")
+        if t:
+            _add(f"history_{idx+1}", t, a)
+
+    return items
+
+
+def find_duplicate_concept(title: str, script_or_angle: str, existing_items: List[dict]) -> Optional[dict]:
+    """Detects near-duplicate titles or reworded concepts across the channel."""
+    from difflib import SequenceMatcher
+
+    cand_clean = _clean_title_str(title)
+    cand_t_toks = _stem_tokens(title)
+    cand_all_toks = cand_t_toks | _stem_tokens(script_or_angle)
+
+    best_match = None
+    best_score = 0.0
+
+    for item in existing_items or []:
+        ex_title = item.get("title", "")
+        ex_clean = _clean_title_str(ex_title)
+        if not ex_clean:
+            continue
+
+        seq_ratio = SequenceMatcher(None, cand_clean, ex_clean).ratio() if cand_clean and ex_clean else 0.0
+        ex_t_toks = _stem_tokens(ex_title)
+        shared_t = cand_t_toks & ex_t_toks
+        t_overlap = (len(shared_t) / min(len(cand_t_toks), len(ex_t_toks))) if cand_t_toks and ex_t_toks else 0.0
+
+        ex_all_toks = ex_t_toks | _stem_tokens(item.get("angle", ""))
+        shared_all = cand_all_toks & ex_all_toks
+        all_overlap = (len(shared_all) / min(len(cand_all_toks), len(ex_all_toks))) if cand_all_toks and ex_all_toks else 0.0
+
+        is_dup = (
+            seq_ratio >= 0.76
+            or (len(shared_t) >= 2 and t_overlap >= 0.65)
+            or (len(shared_all) >= 3 and all_overlap >= 0.65)
+            or len(shared_t) >= 3
+        )
+        if is_dup:
+            score = max(seq_ratio, t_overlap, all_overlap)
+            if score > best_score:
+                best_score = score
+                matched = sorted(shared_t or shared_all)[:5]
+                best_match = {
+                    "id": item.get("id", "channel"),
+                    "title": ex_title,
+                    "score": int(round(score * 100)),
+                    "matched": matched or [ex_clean[:24]],
+                }
+
+    return best_match
+
 def get_random_niche_angle(niche: str, history_file: Optional[str] = None) -> str:
     profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
     angles = profile.get("angles", [])
