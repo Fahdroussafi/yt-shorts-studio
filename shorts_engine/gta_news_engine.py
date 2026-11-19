@@ -55,6 +55,65 @@ def _fetch_article_paragraphs(url: str) -> str:
         return ""
 
 
+_BAD_IMG_TOKENS = (
+    "avatar", "logo", "icon", "gravatar", "300x169", "150x150", "400x400",
+    "svg", "pixel", "doubleclick", "author", "profile", "adchoices",
+    "newsletter", "badge", "emoji", "favicon", "spinner", "placeholder",
+)
+
+
+def _norm_img_key(url: str) -> str:
+    base = url.split("?")[0].lower()
+    base = re.sub(r"-\d+x\d+(?=\.\w+$)", "", base)
+    base = re.sub(r"-\d+-\d+(?=\.\w+$)", "", base)
+    return re.sub(r"-scaled(?=\.\w+$)", "", base)
+
+
+def scrape_article_media(url: str, max_items: int = 8) -> List[str]:
+    """Extracts unique high-res article images and direct mp4/webm videos from a news page."""
+    if not url:
+        return []
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=7)
+        if r.status_code != 200:
+            return []
+        page = r.text
+    except Exception:
+        return []
+
+    art_m = re.search(r"<article\b[^>]*>(.*?)</article>", page, re.I | re.S)
+    scope = art_m.group(1) if art_m else page
+
+    videos = []
+    for v in re.findall(r'https?://[^"\'\s<>]+\.(?:mp4|webm)(?:\?[^"\'\s<>]*)?', scope, re.I):
+        if v not in videos:
+            videos.append(v)
+
+    og_imgs = re.findall(
+        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+        page, re.I,
+    )
+    raw_imgs = re.findall(
+        r'<img[^>]+(?:src|data-src|data-lazy-src)=["\'](https?://[^"\']+)["\']',
+        scope, re.I,
+    )
+
+    seen_keys = set()
+    images = []
+    for raw in og_imgs + raw_imgs:
+        u = html_lib.unescape(raw).strip()
+        low = u.lower()
+        if not low.startswith("http") or any(b in low for b in _BAD_IMG_TOKENS):
+            continue
+        key = _norm_img_key(u)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        images.append(u)
+
+    return (videos + images)[:max_items]
+
+
 def _split_clean_sentences(text: str) -> List[str]:
     # Protect common abbreviations / decimals before splitting
     safe = re.sub(r"(\d)\.(\d)", r"\1<DOT>\2", text)
@@ -249,6 +308,7 @@ def generate_zero_ai_gta_script(
             "pinned_comment": "What do you think about this? Drop your take below.",
             "voice": "en-US-AndrewMultilingualNeural",
             "visual_mode": "parkour_brainrot",
+            "media_urls": [],
             "source": "extractive_zero_ai",
         }
 
@@ -310,6 +370,8 @@ def generate_zero_ai_gta_script(
     if topic_history_file:
         record_topic_history(topic_history_file, yt_title, "gta6_launch", art["title"])
 
+    media_urls = scrape_article_media(art.get("link", ""))
+
     return {
         "title": yt_title,
         "script": script,
@@ -319,5 +381,6 @@ def generate_zero_ai_gta_script(
         "pinned_comment": "Are you ready for launch day? Drop your console below.",
         "voice": "en-US-AndrewMultilingualNeural",
         "visual_mode": "parkour_brainrot",
+        "media_urls": media_urls,
         "source": f"rss_{art['outlet'].lower().replace(' ', '_')}_zero_ai",
     }

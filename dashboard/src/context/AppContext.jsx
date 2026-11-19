@@ -77,6 +77,7 @@ export function AppProvider({ children }) {
   const [usage, setUsage] = useState(null);
   const [loadingUsage, setLoadingUsage] = useState(false);
   const [syncingChannel, setSyncingChannel] = useState(false);
+  const [studioMediaUrls, setStudioMediaUrls] = useState([]);
 
   // Modals & Popups
   const [previewVideo, setPreviewVideo] = useState(null);
@@ -674,6 +675,7 @@ export function AppProvider({ children }) {
     if (idea.voice) {
       setStudioVoice(idea.voice);
     }
+    setStudioMediaUrls(Array.isArray(idea.media_urls) ? idea.media_urls : []);
     if (navigate) {
       navigate('/studio');
     }
@@ -704,7 +706,8 @@ export function AppProvider({ children }) {
       description: idea.description,
       pinned_comment: idea.pinned_comment,
       voice: idea.voice || studioVoice,
-      niche: idea.niche || selectedNiche
+      niche: idea.niche || selectedNiche,
+      media_urls: Array.isArray(idea.media_urls) ? idea.media_urls : []
     };
   };
 
@@ -794,7 +797,8 @@ export function AppProvider({ children }) {
         description: studioDesc,
         pinned_comment: studioComment,
         voice: studioVoice,
-        niche: selectedNiche
+        niche: selectedNiche,
+        media_urls: studioMediaUrls
       });
       setActiveTaskId(taskId);
     } catch (e) {

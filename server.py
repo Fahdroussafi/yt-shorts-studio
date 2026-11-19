@@ -397,6 +397,7 @@ class ProduceRequest(BaseModel):
     niche: Optional[str] = "dark_psychology"
     visual_mode: Optional[str] = "cinematic_cuts"   # "cinematic_cuts" | "parkour_brainrot" | "split_retention"
     search_tags: Optional[List[str]] = None
+    media_urls: Optional[List[str]] = None
 
 
 class UploadRequest(BaseModel):
@@ -1956,11 +1957,18 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
 
             if v_mode == "parkour_brainrot":
                 PRODUCTION_TASKS[task_id]["progress"] = 70
-                PRODUCTION_TASKS[task_id]["log"].append(
-                    "[3/5] Visual Mode: GTA 6 Cinema Frame (8-Cut 1080p)..." if use_cinema_frame
-                    else "[3/5] Visual Mode: Hypnotic Gameplay Loop (Minecraft Parkour / Subway Surfers). Instant local slicing..."
-                )
-                await asyncio.to_thread(render_gameplay_short, audio_file, ass_file, output_mp4, dur, None, use_cinema_frame)
+                if use_cinema_frame and req.media_urls:
+                    from produce_motion_short import render_news_media_short
+                    PRODUCTION_TASKS[task_id]["log"].append(
+                        f"[3/5] Visual Mode: GTA 6 Article Media ({len(req.media_urls)} scraped visuals + Ken Burns)..."
+                    )
+                    await asyncio.to_thread(render_news_media_short, req.media_urls, audio_file, ass_file, output_mp4, dur, True)
+                else:
+                    PRODUCTION_TASKS[task_id]["log"].append(
+                        "[3/5] Visual Mode: GTA 6 Cinema Frame (8-Cut 1080p)..." if use_cinema_frame
+                        else "[3/5] Visual Mode: Hypnotic Gameplay Loop (Minecraft Parkour / Subway Surfers). Instant local slicing..."
+                    )
+                    await asyncio.to_thread(render_gameplay_short, audio_file, ass_file, output_mp4, dur, None, use_cinema_frame)
 
             elif v_mode == "split_retention":
                 niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
@@ -2014,13 +2022,27 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                     elif val_name == "desc": desc_to_save = target_str
                     elif val_name == "pinned": pinned_to_save = target_str
 
-            # 7. Unsplash High-CTR Thumbnail Generation
+            # 7. Thumbnail Generation (prefer article hero image on GTA news shorts, fallback to Unsplash)
             thumb_path = os.path.join(target_dir, "thumbnail.jpg")
-            thumb_query = (req.clip_keywords[0] if req.clip_keywords else "") or req.title or "cinematic mystery"
-            try:
-                await asyncio.to_thread(fetch_unsplash_thumbnail, thumb_query, thumb_path)
-            except Exception as te:
-                print(f"Thumbnail generation note: {te}")
+            thumb_saved = False
+            if use_cinema_frame and req.media_urls:
+                img_u = next((u for u in req.media_urls if not u.split("?")[0].lower().endswith((".mp4", ".webm"))), None)
+                if img_u:
+                    try:
+                        import requests as _req
+                        tr = await asyncio.to_thread(_req.get, img_u, headers={"User-Agent": "Mozilla/5.0"}, timeout=7)
+                        if tr.status_code == 200 and len(tr.content) > 5000:
+                            with open(thumb_path, "wb") as tf:
+                                tf.write(tr.content)
+                            thumb_saved = True
+                    except Exception:
+                        pass
+            if not thumb_saved:
+                thumb_query = (req.clip_keywords[0] if req.clip_keywords else "") or req.title or "cinematic mystery"
+                try:
+                    await asyncio.to_thread(fetch_unsplash_thumbnail, thumb_query, thumb_path)
+                except Exception as te:
+                    print(f"Thumbnail generation note: {te}")
 
             tags_str = ", ".join(req.search_tags) if req.search_tags else ""
             with open(meta_file, "w", encoding="utf-8") as f:

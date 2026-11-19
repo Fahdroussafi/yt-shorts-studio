@@ -754,6 +754,158 @@ def render_gameplay_short(
     print(f"Gameplay short rendered: {output_mp4}")
 
 
+def _probe_media_dims(path: str) -> tuple:
+    try:
+        r = subprocess.run([FFMPEG, "-i", path], capture_output=True, text=True, timeout=6)
+        m = re.search(r"Video:.*?,\s*(\d{3,5})x(\d{3,5})", r.stderr or "")
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    except Exception:
+        pass
+    return 0, 0
+
+
+def render_news_media_short(
+    media_urls: list,
+    audio_path: str,
+    ass_path: str,
+    output_mp4: str,
+    duration: float,
+    cinema_frame: bool = True,
+):
+    """Renders 30fps Cinema Frame Short from scraped article images (Ken Burns) & videos, padding with gameplay if <4."""
+    import tempfile
+    import shutil
+    from concurrent.futures import ThreadPoolExecutor
+
+    tmp_dir = tempfile.mkdtemp(prefix="news_media_")
+    try:
+        def _dl(item):
+            idx, url = item
+            low = url.split("?")[0].lower()
+            is_vid = low.endswith((".mp4", ".webm"))
+            ext = ".mp4" if low.endswith(".mp4") else (".webm" if low.endswith(".webm") else ".img")
+            dest = os.path.join(tmp_dir, f"m_{idx}{ext}")
+            try:
+                r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10 if is_vid else 7, stream=is_vid)
+                if r.status_code != 200:
+                    return None
+                with open(dest, "wb") as f:
+                    if is_vid:
+                        total = 0
+                        for chunk in r.iter_content(chunk_size=65536):
+                            total += len(chunk)
+                            if total > 30_000_000:
+                                return None
+                            f.write(chunk)
+                    else:
+                        f.write(r.content)
+                w, h = _probe_media_dims(dest)
+                if w < 500 or h < 280:
+                    return None
+                return ("video" if is_vid else "image", dest)
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            fetched = [x for x in ex.map(_dl, enumerate((media_urls or [])[:8])) if x]
+
+        if not fetched:
+            print("[NEWS MEDIA] No usable article media downloaded; falling back to gameplay cuts.")
+            return render_gameplay_short(audio_path, ass_path, output_mp4, duration, None, cinema_frame)
+
+        scenes = list(fetched)
+        if len(scenes) < 4:
+            try:
+                while len(scenes) < 6:
+                    scenes.append(("video", get_gameplay_clip()))
+            except Exception:
+                pass
+
+        num_cuts = len(scenes)
+        per_cut = duration / num_cuts
+        frames_per_cut = max(1, int(round(per_cut * 30)))
+        print(f"[4/5] Rendering News-Media Cinema Short ({duration:.2f}s, {len(fetched)} scraped + {num_cuts - len(fetched)} pad cuts)...")
+
+        clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+        clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
+        fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
+
+        dur_cache: Dict[str, float] = {}
+        inputs = []
+        filter_parts = []
+        for i, (kind, path) in enumerate(scenes):
+            if kind == "image":
+                inputs.extend(["-i", path])
+                z_expr = (
+                    "min(zoom+0.0014,1.14)"
+                    if i % 2 == 0
+                    else "max(1.14-0.0014*on,1.0)"
+                )
+                filter_parts.append(
+                    f"[{i}:v]scale=1080:608:force_original_aspect_ratio=increase,crop=1080:608,setsar=1,"
+                    f"zoompan=z='{z_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames_per_cut}:s=1080x608:fps=30,"
+                    f"setpts=PTS-STARTPTS[v{i}]"
+                )
+            else:
+                if path not in dur_cache:
+                    dur_cache[path] = get_video_duration(path)
+                cdur = dur_cache[path]
+                max_off = max(0.0, cdur - per_cut - 1.0)
+                off = round(random.uniform(0.0, max_off), 2) if max_off > 0.8 else 0.0
+                inputs.extend(["-stream_loop", "-1", "-ss", f"{off:.2f}", "-t", f"{per_cut:.3f}", "-i", path])
+                filter_parts.append(
+                    f"[{i}:v]trim=duration={per_cut:.3f},setpts=PTS-STARTPTS,fps=30,"
+                    f"scale=1080:608:force_original_aspect_ratio=increase,crop=1080:608,setsar=1[v{i}]"
+                )
+
+        concat_ins = "".join(f"[v{i}]" for i in range(num_cuts))
+        audio_idx = num_cuts
+        synth_idx = num_cuts + 1
+        impact_idx = num_cuts + 2
+        filter_complex = (
+            ";".join(filter_parts) + ";"
+            f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.06:saturation=1.10,split=2[bg_src][fg_src];"
+            f"[bg_src]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=6:2,scale=1080:1920:flags=bilinear,setsar=1[vbg];"
+            f"[fg_src]scale=1080:608,setsar=1[vfg];"
+            f"[vbg][vfg]overlay=(W-w)/2:(H-h)/2,ass='{clean_ass}'{fonts_arg}[vfinal];"
+            f"[{audio_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
+            f"[avoice][{synth_idx}:a][{impact_idx}:a]amix=inputs=3:duration=first:weights=1.0 0.06 0.35[afinal]"
+        )
+        cmd = [
+            FFMPEG, "-y",
+            *inputs,
+            "-i", audio_path,
+            "-f", "lavfi", "-t", f"{duration:.2f}",
+            "-i", "sine=frequency=58:sample_rate=44100,lowpass=f=110,volume=0.05",
+            "-f", "lavfi", "-t", "0.45",
+            "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
+            "-filter_complex", filter_complex,
+            "-map", "[vfinal]",
+            "-map", "[afinal]",
+            "-map_metadata", "-1",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "20",
+            "-threads", "2",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-t", f"{duration:.2f}",
+            output_mp4,
+        ]
+        res = _run_ffmpeg(cmd)
+        if res.returncode != 0:
+            print("FFmpeg news-media render error:", res.stderr[-800:])
+            raise RuntimeError("FFmpeg news-media render failed")
+
+        if not os.path.exists(output_mp4) or os.path.getsize(output_mp4) < 500_000:
+            raise RuntimeError("News-media render generated incomplete video.")
+        print(f"News-media short rendered: {output_mp4}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def render_split_retention_short(
     clip_paths: list,
     audio_path: str,
