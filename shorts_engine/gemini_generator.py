@@ -152,7 +152,8 @@ def build_prompt_and_schema(
     brand_name: str,
     brand_handle: str,
     surprise: bool,
-    topic_history_file: Optional[str]
+    topic_history_file: Optional[str],
+    token_file: Optional[str] = None
 ) -> Tuple[str, str, dict]:
     from idea_bank import NICHE_PROFILES, CONCEPTS_DATABASE, load_topic_history
 
@@ -162,17 +163,26 @@ def build_prompt_and_schema(
 
     chosen_angle = concept.strip() if concept and concept.strip() else ""
     auto_source_excerpt = None
+    viral_context = None
     if not chosen_angle and niche == "gta6_launch":
         rss_item = _fetch_gta6_news_source(history)
         if rss_item:
             chosen_angle, rss_body = rss_item
             auto_source_excerpt = f"HEADLINE: {chosen_angle}\n\n{rss_body}"[:6000]
+    elif not chosen_angle:
+        try:
+            from viral_discovery import discover_viral_angle
+            discovered = discover_viral_angle(niche, history, token_file=token_file)
+            if discovered:
+                chosen_angle, viral_context = discovered
+        except Exception as e:
+            print(f"Viral discovery fallback note: {e}")
 
     if not chosen_angle:
         angles_pool = profile.get("angles", [])
         if not angles_pool:
             angles_pool = [c.get("title") for c in CONCEPTS_DATABASE.get(niche, []) if isinstance(c, dict) and c.get("title")]
-        used_angles = {str(entry.get("concept", "")).lower() for entry in history}
+        used_angles = {str(entry.get("angle") or entry.get("concept") or "").lower() for entry in history}
         avail = [a for a in angles_pool if isinstance(a, str) and a.lower() not in used_angles] or angles_pool
         chosen_angle = random.choice(avail) if avail else "The Psychological Paradox"
 
@@ -272,6 +282,7 @@ Respond ONLY with valid JSON using this exact schema:
 Write a masterclass viral short script designed for 100%+ retention, emotional adrenaline, and zero scroll-away.
 
 TARGET ANGLE: "{chosen_angle}"
+{f'TRENDING / VERIFIED REFERENCE: {viral_context}' if viral_context else ''}
 CHANNEL BRAND NAME: "{brand_name}"
 CHANNEL HANDLE: "{brand_handle}"
 
@@ -450,7 +461,8 @@ def generate_ai_script(
     allow_fallback: bool = True,
     user_tracker_file: Optional[str] = None,
     surprise: bool = False,
-    topic_history_file: Optional[str] = None
+    topic_history_file: Optional[str] = None,
+    token_file: Optional[str] = None
 ) -> Optional[dict]:
     """Unified AI script engine: Groq LPU (Primary) -> OpenAI/DeepSeek Zero-Key (Fallback)."""
     from idea_bank import record_topic_history
@@ -470,7 +482,8 @@ def generate_ai_script(
         brand_name=brand_name,
         brand_handle=brand_handle,
         surprise=surprise,
-        topic_history_file=topic_history_file
+        topic_history_file=topic_history_file,
+        token_file=token_file
     )
 
     api_key = get_groq_key(user_key_file, allow_fallback=allow_fallback)

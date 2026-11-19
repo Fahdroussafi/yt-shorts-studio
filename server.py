@@ -1743,7 +1743,8 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
             allow_fallback=is_owner,
             user_tracker_file=paths["usage_file"],
             surprise=bool(req.surprise),
-            topic_history_file=paths.get("topic_history_file")
+            topic_history_file=paths.get("topic_history_file"),
+            token_file=paths.get("token_file")
         )
     except Exception as e:
         print(f"AI script generation error: {e}")
