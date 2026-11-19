@@ -43,18 +43,46 @@ def fmt_timestamp(sec: float) -> str:
 
 
 def list_twitch_vods(channel_or_url: str, limit: int = 8) -> List[Dict]:
-    """Lists recent Twitch past broadcasts (VODs) for a username or returns metadata for a single VOD URL."""
+    """Lists recent Twitch VODs/highlights for a username (via fast GQL) or a single VOD URL."""
     target = (channel_or_url or "").strip()
     if not target:
         raise ValueError("Enter your Twitch username or a VOD URL.")
 
     is_single_vod = bool(re.search(r"twitch\.tv/videos/\d+", target, re.I))
-    if is_single_vod:
-        cmd = [YTDLP, "--dump-single-json", "--skip-download", "--no-warnings", target]
-    else:
-        handle = re.sub(r"^https?://(?:www\.)?twitch\.tv/", "", target, flags=re.I).strip("/").split("/")[0]
+    if not is_single_vod:
+        handle = re.sub(r"^https?://(?:www\.|m\.)?twitch\.tv/", "", target, flags=re.I).strip("/").split("/")[0].lower()
+        try:
+            q = json.dumps({"query": f'{{ user(login: "{handle}") {{ videos(first: {limit}) {{ edges {{ node {{ id title lengthSeconds broadcastType createdAt }} }} }} }} }}'})
+            r = requests.post(
+                "https://gql.twitch.tv/gql",
+                headers={"Client-ID": "kimne78kx3ncx6brgo4mv6wki5h1ko", "Content-Type": "application/json"},
+                data=q, timeout=10,
+            )
+            if r.status_code == 200:
+                edges = ((r.json().get("data") or {}).get("user") or {}).get("videos", {}).get("edges") or []
+                vods = []
+                for edge in edges:
+                    n = edge.get("node") or {}
+                    vid = str(n.get("id") or "")
+                    dur = float(n.get("lengthSeconds") or 0)
+                    if vid and dur >= 15:
+                        vods.append({
+                            "id": vid,
+                            "title": n.get("title") or f"Twitch VOD {vid}",
+                            "url": f"https://www.twitch.tv/videos/{vid}",
+                            "duration": int(dur),
+                            "duration_str": fmt_timestamp(dur),
+                            "thumbnail": "",
+                            "upload_date": (n.get("createdAt") or "")[:10],
+                        })
+                if vods:
+                    return vods
+        except Exception:
+            pass
         archives_url = f"https://www.twitch.tv/{handle}/videos?filter=archives&sort=time"
         cmd = [YTDLP, "--flat-playlist", "--dump-single-json", "--playlist-end", str(limit), "--no-warnings", archives_url]
+    else:
+        cmd = [YTDLP, "--dump-single-json", "--skip-download", "--no-warnings", target]
 
     res = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
     if res.returncode != 0 or not res.stdout.strip():
