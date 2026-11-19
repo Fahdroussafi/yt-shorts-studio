@@ -544,27 +544,6 @@ def download_clip_with_smart_fallback(
 
     raise RuntimeError(f"Failed to download a valid clip for '{query}' across available candidates.")
 
-def _ensure_music_bed() -> Optional[str]:
-    """Returns a local dark-ambient audio bed path, generating a royalty-free C-minor pad once if missing."""
-    music_dir = os.path.join(BASE_DIR, "music")
-    os.makedirs(music_dir, exist_ok=True)
-    tracks = [os.path.join(music_dir, f) for f in os.listdir(music_dir) if f.lower().endswith((".mp3", ".m4a", ".wav"))]
-    if tracks:
-        return random.choice(tracks)
-    dest = os.path.join(music_dir, "dark_ambient.m4a")
-    expr = (
-        "aevalsrc="
-        "0.28*sin(2*PI*65.41*t)"
-        "+0.18*sin(2*PI*98.00*t)"
-        "+0.14*sin(2*PI*155.56*t)*(0.6+0.4*sin(2*PI*0.18*t))"
-        "+0.10*sin(2*PI*233.08*t)*(0.5+0.5*cos(2*PI*0.11*t))"
-        ":d=60:s=44100,"
-        "lowpass=f=420,aecho=0.8:0.85:60:0.4,afade=t=in:st=0:d=1.5,volume=0.55"
-    )
-    res = _run_ffmpeg([FFMPEG, "-y", "-f", "lavfi", "-t", "60", "-i", expr, "-c:a", "aac", "-b:a", "160k", dest])
-    return dest if res.returncode == 0 and os.path.exists(dest) else None
-
-
 def render_motion_video(
     clip_paths: list,
     audio_path: str,
@@ -622,24 +601,14 @@ def render_motion_video(
     fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
     subtitle_filter = f"[vgraded]ass='{clean_ass}'{fonts_arg}[vfinal]"
 
-    # Audio mix with ducked dark-ambient MP3 bed (fallback to procedural synth) + 0.0s hook impact thump
-    base_idx = len(clip_paths)
-    audio_input_idx = base_idx
-    bed_input_idx = base_idx + 1
-    impact_input_idx = base_idx + 2
-
-    music_path = _ensure_music_bed()
-    if music_path:
-        bed_inputs = ["-stream_loop", "-1", "-t", f"{duration:.2f}", "-i", music_path]
-        bed_weight = "0.24"
-    else:
-        bed_inputs = ["-f", "lavfi", "-t", f"{duration:.2f}", "-i", audio_cfg["filter"]]
-        bed_weight = str(audio_cfg.get("weight", 0.14))
-
+    # Audio mix with procedural tension bed + 0.0s hook impact thump
+    audio_input_idx = len(clip_paths)
+    synth_input_idx = len(clip_paths) + 1
+    impact_input_idx = len(clip_paths) + 2
+    bed_weight = audio_cfg.get("weight", 0.14)
     audio_filter = (
-        f"[{audio_input_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11,asplit=2[av1][av2];"
-        f"[{bed_input_idx}:a][av1]sidechaincompress=threshold=0.025:ratio=5:attack=25:release=260:makeup=1[abed];"
-        f"[av2][abed][{impact_input_idx}:a]amix=inputs=3:duration=first:weights=1.0 {bed_weight} 0.35[afinal]"
+        f"[{audio_input_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
+        f"[avoice][{synth_input_idx}:a][{impact_input_idx}:a]amix=inputs=3:duration=first:weights=1.0 {bed_weight} 0.35[afinal]"
     )
 
     parts = filter_parts + [concat_filter, grade_filter, subtitle_filter, audio_filter]
@@ -649,7 +618,8 @@ def render_motion_video(
         FFMPEG, "-y",
         *inputs,
         "-i", audio_path,
-        *bed_inputs,
+        "-f", "lavfi", "-t", f"{duration:.2f}",
+        "-i", audio_cfg["filter"],
         "-f", "lavfi", "-t", "0.45",
         "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
         "-filter_complex", full_filter,
