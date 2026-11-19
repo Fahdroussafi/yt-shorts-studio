@@ -4,7 +4,7 @@ import { Radio, Scissors, RefreshCw, Play, Sparkles } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export default function StreamVodsPage() {
-  const { authFetch, showToast, fetchVideos } = useApp();
+  const { authFetch, authToken, showToast, fetchVideos, setPreviewVideo } = useApp();
   const navigate = useNavigate();
 
   const [channelInput, setChannelInput] = useState(() => localStorage.getItem('gta_twitch_channel') || '');
@@ -246,14 +246,31 @@ export default function StreamVodsPage() {
           {(activeTask.log || []).slice(-3).map((l, idx) => (
             <div key={idx} className="text-slate-400">{l}</div>
           ))}
-          {activeTask.status === 'completed' && (
-            <button
-              type="button"
-              onClick={() => navigate('/vault')}
-              className="mt-2 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-bold inline-flex items-center space-x-1"
-            >
-              <Play className="w-3.5 h-3.5" /><span>Open in Vault</span>
-            </button>
+          {activeTask.status === 'completed' && activeTask.video_id && (
+            <div className="pt-3 space-y-3">
+              <video
+                src={`/api/videos/${activeTask.video_id}/stream?token=${authToken}`}
+                controls
+                playsInline
+                className="w-full max-w-[260px] rounded-xl border border-slate-800 bg-black aspect-[9/16]"
+              />
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPreviewVideo({ id: activeTask.video_id, title: activeTask.output_file || activeTask.video_id })}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold inline-flex items-center space-x-1"
+                >
+                  <Play className="w-3.5 h-3.5" /><span>Full Preview</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/vault')}
+                  className="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-bold inline-flex items-center space-x-1"
+                >
+                  <span>Open in Vault</span>
+                </button>
+              </div>
+            </div>
           )}
         </div>
       )}
