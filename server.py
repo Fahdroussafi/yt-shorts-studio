@@ -1786,6 +1786,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
             "pinned_comment": ai_result.get("pinned_comment", "Drop your thoughts below. 👇"),
             "voice": ai_result.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
             "visual_mode": ai_result.get("visual_mode"),
+            "media_urls": ai_result.get("media_urls", []),
             "chosen_angle": ai_result.get("chosen_angle", req.concept or "Viral Psychology Hook"),
             "generation_type": "surprise_seed" if req.surprise else "custom_concept"
         }
