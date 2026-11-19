@@ -250,10 +250,10 @@ def _fetch_hls_window_bytes(init_bytes: bytes, segs: List[Tuple[float, float, st
     return init_bytes + b"".join(blobs), max(0.0, start_sec - chosen[0][0])
 
 
-def _score_audio_contrast(audio_bytes: bytes) -> float:
-    """Decodes an fMP4/TS audio window to 4kHz mono PCM and computes peak/median RMS contrast."""
+def _score_audio_contrast(audio_bytes: bytes, window_start_sec: float) -> Tuple[float, float, float]:
+    """Decodes an audio window and returns (sustained_spike, exact_peak_sec, median_rms)."""
     if not audio_bytes:
-        return 1.0
+        return 1.0, window_start_sec + 15.0, 0.0
     p = subprocess.Popen(
         [FFMPEG, "-loglevel", "error", "-i", "pipe:0", "-vn", "-ar", "4000", "-ac", "1", "-f", "s16le", "pipe:1"],
         stdin=subprocess.PIPE,
@@ -262,8 +262,8 @@ def _score_audio_contrast(audio_bytes: bytes) -> float:
     pcm, _ = p.communicate(audio_bytes, timeout=15)
     sec_bytes = 4000 * 2  # 4kHz * 2 bytes/sample
     n_secs = len(pcm) // sec_bytes
-    if n_secs < 3:
-        return 1.0
+    if n_secs < 4:
+        return 1.0, window_start_sec + 15.0, 0.0
 
     rms_vals = []
     for i in range(n_secs):
@@ -274,16 +274,34 @@ def _score_audio_contrast(audio_bytes: bytes) -> float:
 
     sorted_r = sorted(rms_vals)
     median_r = sorted_r[len(sorted_r) // 2]
-    peak_r = max(rms_vals)
-    return min(6.0, peak_r / max(80.0, median_r))
+    # Sustained burst: average of top 4 loudest seconds (ignores 1s UI beeps)
+    top4_avg = sum(sorted_r[-4:]) / min(4, len(sorted_r))
+    spike = min(6.0, top4_avg / max(120.0, median_r))
+    if median_r < 150.0:  # Penalize pause/loading-screen silence -> gameplay jumps
+        spike *= 0.35
+
+    # Center exact_peak_sec on the hottest 3-second rolling burst
+    best_i = max(range(n_secs - 2), key=lambda i: rms_vals[i] + rms_vals[i + 1] + rms_vals[i + 2])
+    exact_peak_sec = window_start_sec + best_i + 1.5
+    return spike, exact_peak_sec, median_r
 
 
-def _scan_storyboard_candidates(info: dict, top_k: int = 18) -> List[Tuple[float, float]]:
-    """Pass 1: Scans sb0/sb1 storyboard sprite sheets (~1-4 MB) for frame-to-frame visual action jumps."""
+def _tile_is_valid(gray_bytes: bytes) -> bool:
+    """Rejects near-black loading screens and flat solid-color pause menus."""
+    n = len(gray_bytes)
+    mean_b = sum(gray_bytes) / n
+    if mean_b < 18.0:
+        return False
+    std_b = math.sqrt(sum((x - mean_b) ** 2 for x in gray_bytes) / n)
+    return std_b >= 18.0
+
+
+def _scan_storyboard_candidates(info: dict, top_k: int = 18) -> List[Tuple[float, float, str]]:
+    """Pass 1: Scans sb0/sb1 storyboard sheets, skips black/flat loading screens, and returns (ts, z, preview_b64)."""
+    import base64
     sbs = [f for f in (info.get("formats") or []) if str(f.get("format_id", "")).startswith("sb") and f.get("fragments")]
     if not sbs:
         return []
-    # Prefer sb0 (higher res 220x124) over sb1
     sb = sorted(sbs, key=lambda f: int(f.get("width") or 0), reverse=True)[0]
     cols = int(sb.get("columns") or 5)
     rows = int(sb.get("rows") or 10)
@@ -305,13 +323,14 @@ def _scan_storyboard_candidates(info: dict, top_k: int = 18) -> List[Tuple[float
     with ThreadPoolExecutor(max_workers=4) as ex:
         sheets = list(ex.map(_dl_sheet, frags))
 
-    tiles: List[bytes] = []
+    tiles: List[Tuple[bytes, Image.Image]] = []
     for raw in sheets:
         if not raw:
             continue
         try:
-            im = Image.open(io.BytesIO(raw)).convert("L")
-            sw, sh = im.size
+            rgb_im = Image.open(io.BytesIO(raw)).convert("RGB")
+            gray_im = rgb_im.convert("L")
+            sw, sh = rgb_im.size
             for r_idx in range(rows):
                 y0 = r_idx * th
                 if y0 + th > sh:
@@ -320,8 +339,9 @@ def _scan_storyboard_candidates(info: dict, top_k: int = 18) -> List[Tuple[float
                     x0 = c_idx * tw
                     if x0 + tw > sw:
                         break
-                    tile = im.crop((x0, y0, x0 + tw, y0 + th)).resize((64, 36))
-                    tiles.append(tile.tobytes())
+                    box = (x0, y0, x0 + tw, y0 + th)
+                    g_bytes = gray_im.crop(box).resize((64, 36)).tobytes()
+                    tiles.append((g_bytes, rgb_im.crop(box)))
         except Exception:
             continue
 
@@ -331,30 +351,39 @@ def _scan_storyboard_candidates(info: dict, top_k: int = 18) -> List[Tuple[float
     sec_per_tile = duration / len(tiles)
     diffs = []
     for i in range(1, len(tiles)):
-        a, b = tiles[i - 1], tiles[i]
+        a, _ = tiles[i - 1]
+        b, rgb_b = tiles[i]
+        if not (_tile_is_valid(a) and _tile_is_valid(b)):
+            continue
         mad = sum(abs(x - y) for x, y in zip(a, b)) / len(a)
-        diffs.append((i * sec_per_tile, mad))
+        diffs.append((i, i * sec_per_tile, mad, rgb_b))
 
-    mean_d = sum(d for _, d in diffs) / len(diffs)
-    std_d = math.sqrt(sum((d - mean_d) ** 2 for _, d in diffs) / len(diffs)) or 1.0
+    if not diffs:
+        return []
 
-    scored = [(ts, max(0.0, (d - mean_d) / std_d)) for ts, d in diffs]
+    mean_d = sum(d for _, _, d, _ in diffs) / len(diffs)
+    std_d = math.sqrt(sum((d - mean_d) ** 2 for _, _, d, _ in diffs) / len(diffs)) or 1.0
+
+    scored = [(ts, max(0.0, (d - mean_d) / std_d), rgb_b) for _, ts, d, rgb_b in diffs]
     scored.sort(key=lambda x: x[1], reverse=True)
 
-    picked: List[Tuple[float, float]] = []
-    for ts, z in scored:
+    picked: List[Tuple[float, float, str]] = []
+    for ts, z, rgb_b in scored:
         if ts < 15 or ts > duration - 20:
             continue
-        if any(abs(ts - pts) < 90.0 for pts, _ in picked):
+        if any(abs(ts - pts) < 90.0 for pts, _, _ in picked):
             continue
-        picked.append((ts, z))
+        buf = io.BytesIO()
+        rgb_b.save(buf, format="JPEG", quality=75)
+        b64_img = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+        picked.append((ts, z, b64_img))
         if len(picked) >= top_k:
             break
     return picked
 
 
 def find_vod_highlights(vod_url: str, top_n: int = 8) -> List[Dict]:
-    """Two-pass highlight finder for 1-14h silent gameplay VODs: Storyboard visual jumps + Audio_Only contrast."""
+    """Two-pass highlight finder: Storyboard visual jumps + sustained Audio_Only burst snapped to exact peak second."""
     res = subprocess.run(
         [YTDLP, "--dump-single-json", "--skip-download", "--no-warnings", vod_url],
         capture_output=True, text=True, timeout=25,
@@ -368,42 +397,44 @@ def find_vod_highlights(vod_url: str, top_n: int = 8) -> List[Dict]:
 
     visual_cands = _scan_storyboard_candidates(info, top_k=18)
     if not visual_cands:
-        # Uniform fallback samples if storyboard isn't generated yet
         step = max(90.0, duration / 18.0)
-        visual_cands = [(t, 1.0) for t in [step * i for i in range(1, 18)] if t < duration - 25]
+        visual_cands = [(t, 1.0, "") for t in [step * i for i in range(1, 18)] if t < duration - 25]
 
     audio_fmt = next((f for f in (info.get("formats") or []) if f.get("format_id") == "Audio_Only" and f.get("url")), None)
-    audio_scored: List[Tuple[float, float, float, float]] = []
+    audio_scored: List[Tuple[float, float, float, float, str]] = []
 
     if audio_fmt:
         try:
             init_b, segs = _parse_hls_playlist(audio_fmt["url"])
 
             def _eval_cand(item):
-                ts, vz = item
-                ab, _ = _fetch_hls_window_bytes(init_b, segs, max(0.0, ts - 15.0), min(duration, ts + 25.0))
-                ac = _score_audio_contrast(ab)
+                ts, vz, prev_img = item
+                win_start = max(0.0, ts - 18.0)
+                win_end = min(duration, ts + 22.0)
+                ab, trim_off = _fetch_hls_window_bytes(init_b, segs, win_start, win_end)
+                actual_win_start = max(0.0, win_start - trim_off)
+                ac, exact_peak, _med = _score_audio_contrast(ab, actual_win_start)
                 combined = vz * 0.45 + ac * 0.55
-                return (ts, combined, vz, ac)
+                return (exact_peak, combined, vz, ac, prev_img)
 
             with ThreadPoolExecutor(max_workers=4) as ex:
                 audio_scored = list(ex.map(_eval_cand, visual_cands))
         except Exception:
-            audio_scored = [(ts, vz, vz, 1.0) for ts, vz in visual_cands]
+            audio_scored = [(ts, vz, vz, 1.0, prev_img) for ts, vz, prev_img in visual_cands]
     else:
-        audio_scored = [(ts, vz, vz, 1.0) for ts, vz in visual_cands]
+        audio_scored = [(ts, vz, vz, 1.0, prev_img) for ts, vz, prev_img in visual_cands]
 
     audio_scored.sort(key=lambda x: x[1], reverse=True)
     final: List[Dict] = []
-    for ts, score, vz, ac in audio_scored:
-        if any(abs(ts - f["peak_sec"]) < 180.0 for f in final):
+    for peak_ts, score, vz, ac, prev_img in audio_scored:
+        if any(abs(peak_ts - f["peak_sec"]) < 180.0 for f in final):
             continue
-        st = max(0, int(ts - 12))
-        et = min(int(duration), st + 32)
+        st = max(0, int(peak_ts - 12))
+        et = min(int(duration), st + 30)
         if et - st < 15:
             continue
         final.append({
-            "peak_sec": ts,
+            "peak_sec": peak_ts,
             "start": fmt_timestamp(st),
             "end": fmt_timestamp(et),
             "start_sec": st,
@@ -411,6 +442,7 @@ def find_vod_highlights(vod_url: str, top_n: int = 8) -> List[Dict]:
             "score": round(score, 2),
             "visual_z": round(vz, 2),
             "audio_spike": round(ac, 2),
+            "preview_img": prev_img,
         })
         if len(final) >= top_n:
             break

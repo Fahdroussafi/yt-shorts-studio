@@ -213,11 +213,16 @@ export default function StreamVodsPage() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {highlights.map((h, i) => (
-              <div key={i} className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-sm font-mono font-bold text-white">{h.start} – {h.end}</div>
-                  <div className="text-[11px] font-mono text-slate-400">
-                    Score {h.score} · Visual {h.visual_z} · Audio {h.audio_spike}x
+              <div key={i} className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-3">
+                <div className="flex items-center space-x-3 min-w-0">
+                  {h.preview_img && (
+                    <img src={h.preview_img} alt={`${h.start}`} className="w-20 h-11 object-cover rounded-lg border border-slate-800 shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-sm font-mono font-bold text-white">{h.start} – {h.end}</div>
+                    <div className="text-[11px] font-mono text-slate-400">
+                      Score {h.score} · Visual {h.visual_z} · Audio {h.audio_spike}x
+                    </div>
                   </div>
                 </div>
                 <button
