@@ -496,8 +496,6 @@ def render_motion_video(
     duration: float,
     color_look: Optional[str] = None,
     audio_bed: Optional[str] = None,
-    image_paths: Optional[List[str]] = None,
-    words: Optional[list] = None,
 ):
     import random
     # Select or randomly pick color look & audio bed for complete visual/auditory distinctiveness
@@ -513,9 +511,8 @@ def render_motion_video(
 
     color_cfg = COLOR_LOOKS[c_key]
     audio_cfg = AUDIO_BEDS[a_key]
-    cards = list(image_paths or [])[:3]
 
-    print(f"[4/5] Multi-cut render ({len(clip_paths)} motion clips + {len(cards)} timed pop-up cards, {duration:.2f}s) [Color: {color_cfg['name']}]...")
+    print(f"[4/5] Multi-cut render ({len(clip_paths)} motion clips, {duration:.2f}s) [Color: {color_cfg['name']}]...")
 
     per_clip = duration / len(clip_paths)
     inputs = []
@@ -543,37 +540,13 @@ def render_motion_video(
     concat_filter = f"{concat_ins}concat=n={len(clip_paths)}:v=1:a=0[vbase]"
     grade_filter = f"[vbase]{color_cfg['filter']}[vgraded]"
 
-    # Timed Pop-Up Topic Image Cards (ShortGPT-style proof cards synced to narrator timestamps)
-    last_v = "vgraded"
-    card_filters = []
-    if cards and duration >= 6.0:
-        card_dur = min(2.8, max(1.8, duration * 0.13))
-        anchors = [0.22, 0.50, 0.76][:len(cards)]
-        word_starts = [float(w["start"]) for w in (words or []) if isinstance(w, dict) and "start" in w]
-        for j, img_p in enumerate(cards):
-            target_t = anchors[j] * duration
-            if word_starts:
-                target_t = min(word_starts, key=lambda s: abs(s - target_t))
-            st = max(2.0, min(target_t, duration - card_dur - 1.2))
-            et = st + card_dur
-            in_idx = len(clip_paths) + j
-            inputs.extend(["-loop", "1", "-t", f"{card_dur:.2f}", "-i", img_p])
-            card_filters.append(
-                f"[{in_idx}:v]scale=760:428:force_original_aspect_ratio=increase,crop=760:428,"
-                f"pad=768:436:4:4:color=0x38bdf8,format=yuva420p,"
-                f"fade=t=in:st=0:d=0.18:alpha=1,fade=t=out:st={card_dur-0.20:.2f}:d=0.20:alpha=1,"
-                f"setpts=PTS-STARTPTS+{st:.2f}/TB[card{j}];"
-                f"[{last_v}][card{j}]overlay=(W-w)/2:420:enable='between(t,{st:.2f},{et:.2f})':eof_action=pass[vc{j}]"
-            )
-            last_v = f"vc{j}"
-
     clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
     clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
     fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
-    subtitle_filter = f"[{last_v}]ass='{clean_ass}'{fonts_arg}[vfinal]"
+    subtitle_filter = f"[vgraded]ass='{clean_ass}'{fonts_arg}[vfinal]"
 
     # Audio mix with ducked dark-ambient MP3 bed (fallback to procedural synth) + 0.0s hook impact thump
-    base_idx = len(clip_paths) + len(cards)
+    base_idx = len(clip_paths)
     audio_input_idx = base_idx
     bed_input_idx = base_idx + 1
     impact_input_idx = base_idx + 2
@@ -592,7 +565,7 @@ def render_motion_video(
         f"[av2][abed][{impact_input_idx}:a]amix=inputs=3:duration=first:weights=1.0 {bed_weight} 0.35[afinal]"
     )
 
-    parts = filter_parts + [concat_filter, grade_filter] + card_filters + [subtitle_filter, audio_filter]
+    parts = filter_parts + [concat_filter, grade_filter, subtitle_filter, audio_filter]
     full_filter = ";".join(parts)
 
     cmd = [
