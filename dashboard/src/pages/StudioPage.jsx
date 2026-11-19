@@ -16,8 +16,10 @@ export default function StudioPage() {
     studioSearchTags, setStudioSearchTags,
     isProducing, seriesTasks, handleStartProduction,
     taskStatus, generatingIdea, autoGenerateAndFillStudio,
-    videos, setPreviewVideo, handleDeleteVideo
+    videos, setPreviewVideo, handleDeleteVideo, usage
   } = useApp();
+
+  const isGta = usage?.studio_mode === 'gta';
 
   const navigate = useNavigate();
   const [previewingVoice, setPreviewingVoice] = useState(false);
@@ -162,9 +164,13 @@ export default function StudioPage() {
             >
               <div className="font-bold text-xs flex items-center space-x-1.5 text-white">
                 <span>🎬</span>
-                <span>Cinematic Cuts</span>
+                <span>{isGta ? 'News Media Cuts' : 'Cinematic Cuts'}</span>
               </div>
-              <p className="text-[11px] text-slate-400 mt-1">Dynamic stock cuts (8-10 scenes) with no-repeat tracking</p>
+              <p className="text-[11px] text-slate-400 mt-1">
+                {isGta
+                  ? 'Scraped article images & videos (Ken Burns Cinema Frame)'
+                  : 'Dynamic stock cuts (8-10 scenes) with no-repeat tracking'}
+              </p>
             </button>
 
             <button
@@ -178,9 +184,13 @@ export default function StudioPage() {
             >
               <div className="font-bold text-xs flex items-center space-x-1.5 text-emerald-400">
                 <span>🎮</span>
-                <span>Minecraft Parkour</span>
+                <span>{isGta ? 'Server Gameplay Cuts' : 'Minecraft Parkour'}</span>
               </div>
-              <p className="text-[11px] text-slate-400 mt-1">Hypnotic vertical parkour loop (100%+ retention, 3s render)</p>
+              <p className="text-[11px] text-slate-400 mt-1">
+                {isGta
+                  ? '8-cut local GTA gameplay & trailer loop (Cinema Frame)'
+                  : 'Hypnotic vertical parkour loop (100%+ retention, 3s render)'}
+              </p>
             </button>
 
             <button

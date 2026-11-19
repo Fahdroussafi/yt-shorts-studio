@@ -307,7 +307,7 @@ def generate_zero_ai_gta_script(
             "description": f"{first_line}. Subscribe to {brand_handle} #shorts #gta6 #gtavi #gaming",
             "pinned_comment": "What do you think about this? Drop your take below.",
             "voice": "en-US-AndrewMultilingualNeural",
-            "visual_mode": "parkour_brainrot",
+            "visual_mode": "cinematic_cuts",
             "media_urls": [],
             "source": "extractive_zero_ai",
         }
@@ -380,7 +380,7 @@ def generate_zero_ai_gta_script(
         "description": f"{art['title']} (Source: {art['outlet']} — {art['link']}). Subscribe to {brand_handle} #shorts #gta6 #gtavi #gaming",
         "pinned_comment": "Are you ready for launch day? Drop your console below.",
         "voice": "en-US-AndrewMultilingualNeural",
-        "visual_mode": "parkour_brainrot",
+        "visual_mode": "cinematic_cuts",
         "media_urls": media_urls,
         "source": f"rss_{art['outlet'].lower().replace(' ', '_')}_zero_ai",
     }

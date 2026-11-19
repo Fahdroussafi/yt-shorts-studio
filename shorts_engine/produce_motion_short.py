@@ -772,8 +772,9 @@ def render_news_media_short(
     output_mp4: str,
     duration: float,
     cinema_frame: bool = True,
+    pad_with_gameplay: bool = False,
 ):
-    """Renders 30fps Cinema Frame Short from scraped article images (Ken Burns) & videos, padding with gameplay if <4."""
+    """Renders 30fps Cinema Frame Short from scraped article images (Ken Burns) & videos."""
     import tempfile
     import shutil
     from concurrent.futures import ThreadPoolExecutor
@@ -816,16 +817,21 @@ def render_news_media_short(
 
         scenes = list(fetched)
         if len(scenes) < 4:
-            try:
-                while len(scenes) < 6:
-                    scenes.append(("video", get_gameplay_clip()))
-            except Exception:
-                pass
+            if pad_with_gameplay:
+                try:
+                    while len(scenes) < 6:
+                        scenes.append(("video", get_gameplay_clip()))
+                except Exception:
+                    pass
+            else:
+                # Cycle article's own visuals with distinct Ken Burns camera moves (no hardcoded server gameplay)
+                while len(scenes) < 4:
+                    scenes.append(fetched[len(scenes) % len(fetched)])
 
         num_cuts = len(scenes)
         per_cut = duration / num_cuts
         frames_per_cut = max(1, int(round(per_cut * 30)))
-        print(f"[4/5] Rendering News-Media Cinema Short ({duration:.2f}s, {len(fetched)} scraped + {num_cuts - len(fetched)} pad cuts)...")
+        print(f"[4/5] Rendering News-Media Cinema Short ({duration:.2f}s, {len(fetched)} unique scraped visuals across {num_cuts} cuts)...")
 
         clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
         clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
@@ -837,15 +843,18 @@ def render_news_media_short(
         for i, (kind, path) in enumerate(scenes):
             if kind == "image":
                 inputs.extend(["-i", path])
-                z_expr = (
-                    "min(zoom+0.0014,1.14)"
-                    if i % 2 == 0
-                    else "max(1.14-0.0014*on,1.0)"
-                )
+                move = i % 4
+                if move == 0:
+                    zp = f"zoompan=z='min(zoom+0.0014,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames_per_cut}:s=1080x608:fps=30"
+                elif move == 1:
+                    zp = f"zoompan=z='max(1.15-0.0014*on,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames_per_cut}:s=1080x608:fps=30"
+                elif move == 2:
+                    zp = f"zoompan=z='1.12':x='(iw-iw/zoom)*on/{frames_per_cut}':y='ih/2-(ih/zoom/2)':d={frames_per_cut}:s=1080x608:fps=30"
+                else:
+                    zp = f"zoompan=z='1.12':x='(iw-iw/zoom)*(1-on/{frames_per_cut})':y='ih/2-(ih/zoom/2)':d={frames_per_cut}:s=1080x608:fps=30"
                 filter_parts.append(
                     f"[{i}:v]scale=1080:608:force_original_aspect_ratio=increase,crop=1080:608,setsar=1,"
-                    f"zoompan=z='{z_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames_per_cut}:s=1080x608:fps=30,"
-                    f"setpts=PTS-STARTPTS[v{i}]"
+                    f"{zp},setpts=PTS-STARTPTS[v{i}]"
                 )
             else:
                 if path not in dur_cache:

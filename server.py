@@ -1898,7 +1898,7 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                 clean_script = clean_script.rstrip(" .,!?:;-") + f". Follow {brand_name} for more."
 
             v_mode = getattr(req, "visual_mode", "cinematic_cuts") or "cinematic_cuts"
-            use_cinema_frame = ADMIN_ONLY_MODE and v_mode == "parkour_brainrot"
+            use_cinema_frame = ADMIN_ONLY_MODE and v_mode in ("cinematic_cuts", "parkour_brainrot")
 
             # 1. Voice with Micro-variation
             voice_choice = req.voice or ("en-US-AndrewMultilingualNeural" if ADMIN_ONLY_MODE else "en-US-ChristopherNeural")
@@ -1955,20 +1955,14 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                 record_clip_usage(clip_history_file, urls_out)
                 return paths_out
 
+            resolved_media_urls = list(req.media_urls or [])
             if v_mode == "parkour_brainrot":
                 PRODUCTION_TASKS[task_id]["progress"] = 70
-                if use_cinema_frame and req.media_urls:
-                    from produce_motion_short import render_news_media_short
-                    PRODUCTION_TASKS[task_id]["log"].append(
-                        f"[3/5] Visual Mode: GTA 6 Article Media ({len(req.media_urls)} scraped visuals + Ken Burns)..."
-                    )
-                    await asyncio.to_thread(render_news_media_short, req.media_urls, audio_file, ass_file, output_mp4, dur, True)
-                else:
-                    PRODUCTION_TASKS[task_id]["log"].append(
-                        "[3/5] Visual Mode: GTA 6 Cinema Frame (8-Cut 1080p)..." if use_cinema_frame
-                        else "[3/5] Visual Mode: Hypnotic Gameplay Loop (Minecraft Parkour / Subway Surfers). Instant local slicing..."
-                    )
-                    await asyncio.to_thread(render_gameplay_short, audio_file, ass_file, output_mp4, dur, None, use_cinema_frame)
+                PRODUCTION_TASKS[task_id]["log"].append(
+                    "[3/5] Visual Mode: GTA 6 Server Gameplay (8-Cut Cinema Frame)..." if use_cinema_frame
+                    else "[3/5] Visual Mode: Hypnotic Gameplay Loop (Minecraft Parkour / Subway Surfers). Instant local slicing..."
+                )
+                await asyncio.to_thread(render_gameplay_short, audio_file, ass_file, output_mp4, dur, None, use_cinema_frame)
 
             elif v_mode == "split_retention":
                 niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
@@ -1986,7 +1980,20 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                 PRODUCTION_TASKS[task_id]["log"].append("[4/5] Rendering 50/50 Split-Screen (Narrative Story on Top, Hypnotic Parkour on Bottom)...")
                 await asyncio.to_thread(render_split_retention_short, clip_paths, audio_file, ass_file, output_mp4, dur)
 
-            else:  # cinematic_cuts
+            elif ADMIN_ONLY_MODE:  # GTA Cinematic Cuts -> Scraped News Article Images & Videos
+                if not resolved_media_urls and req.description:
+                    url_m = re.search(r"https?://[^\s)]+", req.description)
+                    if url_m:
+                        from gta_news_engine import scrape_article_media
+                        resolved_media_urls = await asyncio.to_thread(scrape_article_media, url_m.group(0).rstrip(".,;"))
+                from produce_motion_short import render_news_media_short
+                PRODUCTION_TASKS[task_id]["progress"] = 70
+                PRODUCTION_TASKS[task_id]["log"].append(
+                    f"[3/5] Visual Mode: News Media Cuts ({len(resolved_media_urls)} scraped article visuals + Ken Burns Cinema Frame)..."
+                )
+                await asyncio.to_thread(render_news_media_short, resolved_media_urls, audio_file, ass_file, output_mp4, dur, True, False)
+
+            else:  # ShadowMind cinematic_cuts -> stock clips
                 niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
                 target_cuts = max(8, min(14, round(dur / 3.0)))
                 timeline_queries = extract_timeline_visual_queries(
@@ -2025,8 +2032,8 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             # 7. Thumbnail Generation (prefer article hero image on GTA news shorts, fallback to Unsplash)
             thumb_path = os.path.join(target_dir, "thumbnail.jpg")
             thumb_saved = False
-            if use_cinema_frame and req.media_urls:
-                img_u = next((u for u in req.media_urls if not u.split("?")[0].lower().endswith((".mp4", ".webm"))), None)
+            if use_cinema_frame and resolved_media_urls:
+                img_u = next((u for u in resolved_media_urls if not u.split("?")[0].lower().endswith((".mp4", ".webm"))), None)
                 if img_u:
                     try:
                         import requests as _req
