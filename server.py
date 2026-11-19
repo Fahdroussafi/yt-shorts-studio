@@ -2186,7 +2186,7 @@ class VodProduceRequest(BaseModel):
     vod_url: str
     start_time: str
     end_time: str
-    hook_banner: Optional[str] = "WAIT FOR THE ENDING"
+    hook_banner: Optional[str] = None
     title: Optional[str] = None
     tts_hook: Optional[str] = None
     video_id: Optional[str] = None
@@ -2250,7 +2250,14 @@ async def run_vod_production(task_id: str, req: VodProduceRequest, target_videos
             u_dir = os.path.dirname(target_videos_dir)
             brand_name, brand_handle = get_user_brand({"channel_file": os.path.join(u_dir, "channel_info.json"), "user_id": os.path.basename(u_dir)})
 
-            hook_text = (req.hook_banner or "WAIT FOR THE ENDING").strip()[:42]
+            default_hooks = [
+                "WAIT FOR THE ENDING",
+                "NO WAY THIS JUST HAPPENED",
+                "GTA 6 CHAOS ON SERIES X",
+                "WATCH CLOSELY AT THE END",
+            ]
+            import random as _rnd
+            hook_text = (req.hook_banner or _rnd.choice(default_hooks)).strip()[:42]
             tts_text = (req.tts_hook or "").strip()
             words = []
             tts_used = None

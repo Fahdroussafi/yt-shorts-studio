@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Radio, Scissors, RefreshCw, Play, Sparkles, Clock } from 'lucide-react';
+import { Radio, Scissors, RefreshCw, Play, Sparkles } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export default function StreamVodsPage() {
@@ -13,12 +13,6 @@ export default function StreamVodsPage() {
   const [vods, setVods] = useState([]);
   const [highlights, setHighlights] = useState([]);
   const [selectedVod, setSelectedVod] = useState(null);
-
-  const [startTime, setStartTime] = useState('00:00');
-  const [endTime, setEndTime] = useState('00:30');
-  const [hookBanner, setHookBanner] = useState('WAIT FOR THE ENDING');
-  const [title, setTitle] = useState('');
-  const [ttsHook, setTtsHook] = useState('');
   const [activeTask, setActiveTask] = useState(null);
 
   useEffect(() => {
@@ -80,13 +74,8 @@ export default function StreamVodsPage() {
       if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
       const found = data.highlights || [];
       setHighlights(found);
-      if (found.length > 0) {
-        setStartTime(found[0].start);
-        setEndTime(found[0].end);
-        showToast(`Found ${found.length} best moments!`, 'success');
-      } else {
-        showToast('No strong spikes detected in this VOD.', 'info');
-      }
+      if (found.length > 0) showToast(`Found ${found.length} best moments!`, 'success');
+      else showToast('No strong spikes detected in this VOD.', 'info');
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
@@ -94,23 +83,18 @@ export default function StreamVodsPage() {
     }
   };
 
-  const handleProduceVod = async (customStart, customEnd) => {
+  const handleCutHighlight = async (h) => {
     const vodUrl = selectedVod?.url || (channelInput.includes('twitch.tv/videos/') ? channelInput.trim() : '');
-    if (!vodUrl) return showToast('Select a VOD or paste a Twitch VOD URL first.', 'error');
-    const st = typeof customStart === 'string' ? customStart : startTime;
-    const et = typeof customEnd === 'string' ? customEnd : endTime;
-    setActiveTask({ task_id: null, status: 'queued', progress: 5, log: ['Queueing VOD slice...'] });
+    if (!vodUrl) return showToast('Select a VOD first.', 'error');
+    setActiveTask({ task_id: null, status: 'queued', progress: 5, log: [`Queueing ${h.start}–${h.end}...`] });
     try {
       const res = await authFetch('/api/vod/produce', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           vod_url: vodUrl,
-          start_time: st,
-          end_time: et,
-          hook_banner: hookBanner,
-          title: title || undefined,
-          tts_hook: ttsHook || undefined,
+          start_time: h.start,
+          end_time: h.end,
         }),
       });
       const data = await res.json();
@@ -122,6 +106,8 @@ export default function StreamVodsPage() {
     }
   };
 
+  const busy = activeTask?.status === 'queued' || activeTask?.status === 'processing';
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div>
@@ -130,7 +116,7 @@ export default function StreamVodsPage() {
           <span>Xbox Stream VOD Clipper</span>
         </h1>
         <p className="text-sm text-slate-400 mt-1">
-          Slice moments from your casual Twitch Series X broadcasts into 1080×1920 Cinema Frame Shorts (zero Reused Content risk).
+          Auto-detects top moments from your Twitch Series X streams and renders 1080×1920 Cinema Frame Shorts.
         </p>
       </div>
 
@@ -139,7 +125,7 @@ export default function StreamVodsPage() {
           type="text"
           value={channelInput}
           onChange={(e) => setChannelInput(e.target.value)}
-          placeholder="Your Twitch username (e.g. pixelbreach) or https://www.twitch.tv/videos/..."
+          placeholder="Your Twitch username (e.g. Cryjin01) or VOD URL"
           className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-purple-500 outline-none text-sm text-white font-mono"
         />
         <button
@@ -204,121 +190,43 @@ export default function StreamVodsPage() {
                     Score {h.score} · Visual {h.visual_z} · Audio {h.audio_spike}x
                   </div>
                 </div>
-                <div className="flex items-center space-x-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => { setStartTime(h.start); setEndTime(h.end); }}
-                    className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200"
-                  >
-                    Fill
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setStartTime(h.start); setEndTime(h.end); handleProduceVod(h.start, h.end); }}
-                    className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white"
-                  >
-                    Cut
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => handleCutHighlight(h)}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white inline-flex items-center space-x-1 shrink-0 disabled:opacity-50"
+                >
+                  <Scissors className="w-3.5 h-3.5" /><span>Cut & Render</span>
+                </button>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      <div className="p-6 rounded-2xl bg-[#12121a] border border-slate-800/80 space-y-4">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="space-y-1">
-            <label className="text-[11px] font-mono uppercase text-slate-400 flex items-center space-x-1">
-              <Clock className="w-3 h-3" /><span>Start (MM:SS)</span>
-            </label>
-            <input
-              type="text"
-              value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 focus:border-purple-500 outline-none text-sm text-white font-mono"
-            />
+      {activeTask && (
+        <div className="p-4 rounded-xl bg-[#12121a] border border-slate-800 space-y-2 text-xs font-mono">
+          <div className="flex justify-between text-slate-300">
+            <span>{activeTask.video_id?.toUpperCase() || 'VOD'} — {activeTask.status?.toUpperCase()}</span>
+            <span>{activeTask.progress || 0}%</span>
           </div>
-          <div className="space-y-1">
-            <label className="text-[11px] font-mono uppercase text-slate-400 flex items-center space-x-1">
-              <Clock className="w-3 h-3" /><span>End (max +58s)</span>
-            </label>
-            <input
-              type="text"
-              value={endTime}
-              onChange={(e) => setEndTime(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 focus:border-purple-500 outline-none text-sm text-white font-mono"
-            />
+          <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+            <div className="h-full bg-emerald-500 transition-all" style={{ width: `${activeTask.progress || 0}%` }} />
           </div>
-          <div className="col-span-2 space-y-1">
-            <label className="text-[11px] font-mono uppercase text-slate-400">Top Hook Banner (0–3.5s)</label>
-            <input
-              type="text"
-              value={hookBanner}
-              onChange={(e) => setHookBanner(e.target.value)}
-              placeholder="e.g. GTA 6 POLICE AI IS INSANE"
-              className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 focus:border-purple-500 outline-none text-sm text-white font-mono"
-            />
-          </div>
+          {(activeTask.log || []).slice(-3).map((l, idx) => (
+            <div key={idx} className="text-slate-400">{l}</div>
+          ))}
+          {activeTask.status === 'completed' && (
+            <button
+              type="button"
+              onClick={() => navigate('/vault')}
+              className="mt-2 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-bold inline-flex items-center space-x-1"
+            >
+              <Play className="w-3.5 h-3.5" /><span>Open in Vault</span>
+            </button>
+          )}
         </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <label className="text-[11px] font-mono uppercase text-slate-400">YouTube Title (Optional)</label>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Auto-uses hook banner + #shorts #gta6"
-              className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 focus:border-purple-500 outline-none text-sm text-white font-mono"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-[11px] font-mono uppercase text-slate-400">Optional Voiceover Hook (Blank = Pure Game Audio)</label>
-            <input
-              type="text"
-              value={ttsHook}
-              onChange={(e) => setTtsHook(e.target.value)}
-              placeholder="e.g. Watch what this NPC just did in Vice City."
-              className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 focus:border-purple-500 outline-none text-sm text-white font-mono"
-            />
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={handleProduceVod}
-          disabled={activeTask?.status === 'queued' || activeTask?.status === 'processing'}
-          className="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm flex items-center justify-center space-x-2 transition disabled:opacity-50"
-        >
-          <Scissors className="w-4 h-4" />
-          <span>Cut Slice & Render Cinema Short</span>
-        </button>
-
-        {activeTask && (
-          <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2 text-xs font-mono">
-            <div className="flex justify-between text-slate-300">
-              <span>{activeTask.video_id?.toUpperCase() || 'VOD'} — {activeTask.status?.toUpperCase()}</span>
-              <span>{activeTask.progress || 0}%</span>
-            </div>
-            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-              <div className="h-full bg-emerald-500 transition-all" style={{ width: `${activeTask.progress || 0}%` }} />
-            </div>
-            {(activeTask.log || []).slice(-3).map((l, idx) => (
-              <div key={idx} className="text-slate-400">{l}</div>
-            ))}
-            {activeTask.status === 'completed' && (
-              <button
-                type="button"
-                onClick={() => navigate('/vault')}
-                className="mt-2 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-bold inline-flex items-center space-x-1"
-              >
-                <Play className="w-3.5 h-3.5" /><span>Open in Vault</span>
-              </button>
-            )}
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }
