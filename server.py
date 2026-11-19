@@ -2083,7 +2083,10 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                 except Exception:
                     pass
 
-            clear_user_video_mapping(paths, req.video_id)
+            clear_user_video_mapping({
+                "mappings_file": os.path.join(u_dir, "video_mappings.json"),
+                "stats_file": os.path.join(u_dir, "stats_cache.json"),
+            }, req.video_id)
             mb = round(os.path.getsize(output_mp4) / (1024 * 1024), 2)
             PRODUCTION_TASKS[task_id]["status"] = "completed"
             PRODUCTION_TASKS[task_id]["progress"] = 100
