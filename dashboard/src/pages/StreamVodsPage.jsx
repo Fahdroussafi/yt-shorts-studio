@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Radio, Scissors, RefreshCw, Play, Flame, Clock } from 'lucide-react';
+import { Radio, Scissors, RefreshCw, Play, Sparkles, Clock } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export default function StreamVodsPage() {
@@ -9,8 +9,9 @@ export default function StreamVodsPage() {
 
   const [channelInput, setChannelInput] = useState(() => localStorage.getItem('gta_twitch_channel') || '');
   const [loadingVods, setLoadingVods] = useState(false);
+  const [scanningHighlights, setScanningHighlights] = useState(false);
   const [vods, setVods] = useState([]);
-  const [spikes, setSpikes] = useState([]);
+  const [highlights, setHighlights] = useState([]);
   const [selectedVod, setSelectedVod] = useState(null);
 
   const [startTime, setStartTime] = useState('00:00');
@@ -54,7 +55,7 @@ export default function StreamVodsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
       setVods(data.vods || []);
-      setSpikes(data.spikes || []);
+      setHighlights([]);
       if (data.vods?.length > 0) setSelectedVod(data.vods[0]);
       else showToast('No past broadcasts found. Enable "Store past broadcasts" in Twitch settings.', 'info');
     } catch (err) {
@@ -64,9 +65,40 @@ export default function StreamVodsPage() {
     }
   };
 
-  const handleProduceVod = async () => {
+  const handleFindHighlights = async (vodObj) => {
+    const target = vodObj || selectedVod;
+    if (!target?.url) return showToast('Select a VOD first.', 'error');
+    setSelectedVod(target);
+    setScanningHighlights(true);
+    try {
+      const res = await authFetch('/api/vod/highlights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vod_url: target.url }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      const found = data.highlights || [];
+      setHighlights(found);
+      if (found.length > 0) {
+        setStartTime(found[0].start);
+        setEndTime(found[0].end);
+        showToast(`Found ${found.length} best moments!`, 'success');
+      } else {
+        showToast('No strong spikes detected in this VOD.', 'info');
+      }
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setScanningHighlights(false);
+    }
+  };
+
+  const handleProduceVod = async (customStart, customEnd) => {
     const vodUrl = selectedVod?.url || (channelInput.includes('twitch.tv/videos/') ? channelInput.trim() : '');
     if (!vodUrl) return showToast('Select a VOD or paste a Twitch VOD URL first.', 'error');
+    const st = typeof customStart === 'string' ? customStart : startTime;
+    const et = typeof customEnd === 'string' ? customEnd : endTime;
     setActiveTask({ task_id: null, status: 'queued', progress: 5, log: ['Queueing VOD slice...'] });
     try {
       const res = await authFetch('/api/vod/produce', {
@@ -74,8 +106,8 @@ export default function StreamVodsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           vod_url: vodUrl,
-          start_time: startTime,
-          end_time: endTime,
+          start_time: st,
+          end_time: et,
           hook_banner: hookBanner,
           title: title || undefined,
           tts_hook: ttsHook || undefined,
@@ -121,45 +153,74 @@ export default function StreamVodsPage() {
       </form>
 
       {vods.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {vods.map((v) => {
-            const active = selectedVod?.id === v.id;
-            return (
-              <button
-                key={v.id}
-                type="button"
-                onClick={() => setSelectedVod(v)}
-                className={`p-3.5 rounded-xl border text-left transition ${
-                  active ? 'bg-purple-950/40 border-purple-500 text-white' : 'bg-[#12121a] border-slate-800 text-slate-300 hover:border-slate-700'
-                }`}
-              >
-                <div className="font-bold text-sm truncate">{v.title}</div>
-                <div className="text-xs font-mono text-slate-400 mt-1 flex items-center justify-between">
-                  <span>VOD #{v.id}</span>
-                  <span>{v.duration_str}</span>
-                </div>
-              </button>
-            );
-          })}
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {vods.map((v) => {
+              const active = selectedVod?.id === v.id;
+              return (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => setSelectedVod(v)}
+                  className={`p-3.5 rounded-xl border text-left transition ${
+                    active ? 'bg-purple-950/40 border-purple-500 text-white' : 'bg-[#12121a] border-slate-800 text-slate-300 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="font-bold text-sm truncate">{v.title}</div>
+                  <div className="text-xs font-mono text-slate-400 mt-1 flex items-center justify-between">
+                    <span>VOD #{v.id}</span>
+                    <span>{v.duration_str}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {selectedVod && (
+            <button
+              type="button"
+              onClick={() => handleFindHighlights(selectedVod)}
+              disabled={scanningHighlights}
+              className="w-full py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-sm flex items-center justify-center space-x-2 transition disabled:opacity-50"
+            >
+              <Sparkles className={`w-4 h-4 ${scanningHighlights ? 'animate-spin' : ''}`} />
+              <span>{scanningHighlights ? 'Scanning Visual + Audio Peaks...' : `Auto-Find Best Moments in VOD #${selectedVod.id}`}</span>
+            </button>
+          )}
         </div>
       )}
 
-      {spikes.length > 0 && (
-        <div className="p-4 rounded-2xl bg-[#12121a] border border-slate-800/80 space-y-2.5">
+      {highlights.length > 0 && (
+        <div className="p-4 rounded-2xl bg-[#12121a] border border-slate-800/80 space-y-3">
           <div className="text-xs font-mono uppercase text-amber-400 flex items-center space-x-1.5">
-            <Flame className="w-3.5 h-3.5" />
-            <span>Detected Chat Spikes (Click to Fill Timestamps)</span>
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Auto-Detected Best Moments (Visual + Game Audio Peaks)</span>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {spikes.map((sp, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => { setStartTime(sp.start); setEndTime(sp.end); }}
-                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-purple-950/60 border border-slate-800 hover:border-purple-500 text-xs font-mono text-slate-200 transition"
-              >
-                {sp.start}–{sp.end} ({sp.messages} msgs)
-              </button>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {highlights.map((h, i) => (
+              <div key={i} className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-sm font-mono font-bold text-white">{h.start} – {h.end}</div>
+                  <div className="text-[11px] font-mono text-slate-400">
+                    Score {h.score} · Visual {h.visual_z} · Audio {h.audio_spike}x
+                  </div>
+                </div>
+                <div className="flex items-center space-x-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => { setStartTime(h.start); setEndTime(h.end); }}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200"
+                  >
+                    Fill
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setStartTime(h.start); setEndTime(h.end); handleProduceVod(h.start, h.end); }}
+                    className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white"
+                  >
+                    Cut
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
         </div>

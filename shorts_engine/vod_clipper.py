@@ -1,10 +1,16 @@
+from concurrent.futures import ThreadPoolExecutor
+import io
 import json
+import math
 import os
 import re
+import struct
 import subprocess
 import sys
-from typing import Dict, List, Optional
+import tempfile
+from typing import Dict, List, Optional, Tuple
 
+from PIL import Image
 import requests
 
 from produce_motion_short import FFMPEG, _run_ffmpeg, get_video_duration
@@ -12,8 +18,6 @@ from produce_motion_short import FFMPEG, _run_ffmpeg, get_video_duration
 YTDLP = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
 if not os.path.exists(YTDLP):
     YTDLP = "yt-dlp"
-
-TWITCH_GQL_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
 
 
 def parse_timestamp_sec(val: str) -> float:
@@ -77,91 +81,240 @@ def list_twitch_vods(channel_or_url: str, limit: int = 8) -> List[Dict]:
     return vods
 
 
-def scan_vod_chat_spikes(vod_id: str, duration: float, top_n: int = 6) -> List[Dict]:
-    """Scans Twitch GQL chat replay for hype/message spikes (returns [] silently if chat is empty)."""
-    clean_id = str(vod_id or "").lstrip("v")
-    if not clean_id.isdigit():
+def _parse_hls_playlist(m3u8_url: str) -> Tuple[bytes, List[Tuple[float, float, str]]]:
+    """Fetches an HLS playlist and returns (init_bytes, [(start_sec, end_sec, seg_url), ...])."""
+    base = m3u8_url.rsplit("/", 1)[0] + "/"
+    txt = requests.get(m3u8_url, timeout=10).text
+    init_bytes = b""
+    init_m = re.search(r'#EXT-X-MAP:URI="([^"]+)"', txt)
+    if init_m:
+        u = init_m.group(1)
+        init_url = u if u.startswith("http") else (base + u)
+        init_bytes = requests.get(init_url, timeout=10).content
+
+    segs = []
+    t_acc = 0.0
+    cur_dur = 10.0
+    for line in txt.splitlines():
+        line = line.strip()
+        if line.startswith("#EXTINF:"):
+            cur_dur = float(line.split(":", 1)[1].split(",")[0])
+        elif line and not line.startswith("#"):
+            seg_url = line if line.startswith("http") else (base + line)
+            segs.append((t_acc, t_acc + cur_dur, seg_url))
+            t_acc += cur_dur
+    return init_bytes, segs
+
+
+def _fetch_hls_window_bytes(init_bytes: bytes, segs: List[Tuple[float, float, str]], start_sec: float, end_sec: float) -> Tuple[bytes, float]:
+    chosen = [s for s in segs if s[1] > start_sec and s[0] < end_sec]
+    if not chosen:
+        return b"", 0.0
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        blobs = list(ex.map(lambda s: requests.get(s[2], timeout=12).content, chosen))
+    return init_bytes + b"".join(blobs), max(0.0, start_sec - chosen[0][0])
+
+
+def _score_audio_contrast(audio_bytes: bytes) -> float:
+    """Decodes an fMP4/TS audio window to 4kHz mono PCM and computes peak/median RMS contrast."""
+    if not audio_bytes:
+        return 1.0
+    p = subprocess.Popen(
+        [FFMPEG, "-loglevel", "error", "-i", "pipe:0", "-vn", "-ar", "4000", "-ac", "1", "-f", "s16le", "pipe:1"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+    )
+    pcm, _ = p.communicate(audio_bytes, timeout=15)
+    sec_bytes = 4000 * 2  # 4kHz * 2 bytes/sample
+    n_secs = len(pcm) // sec_bytes
+    if n_secs < 3:
+        return 1.0
+
+    rms_vals = []
+    for i in range(n_secs):
+        chunk = pcm[i * sec_bytes : (i + 1) * sec_bytes]
+        samples = struct.unpack(f"<{len(chunk)//2}h", chunk)
+        rms = math.sqrt(sum(s * s for s in samples) / max(1, len(samples)))
+        rms_vals.append(rms)
+
+    sorted_r = sorted(rms_vals)
+    median_r = sorted_r[len(sorted_r) // 2]
+    peak_r = max(rms_vals)
+    return min(6.0, peak_r / max(80.0, median_r))
+
+
+def _scan_storyboard_candidates(info: dict, top_k: int = 18) -> List[Tuple[float, float]]:
+    """Pass 1: Scans sb0/sb1 storyboard sprite sheets (~1-4 MB) for frame-to-frame visual action jumps."""
+    sbs = [f for f in (info.get("formats") or []) if str(f.get("format_id", "")).startswith("sb") and f.get("fragments")]
+    if not sbs:
+        return []
+    # Prefer sb0 (higher res 220x124) over sb1
+    sb = sorted(sbs, key=lambda f: int(f.get("width") or 0), reverse=True)[0]
+    cols = int(sb.get("columns") or 5)
+    rows = int(sb.get("rows") or 10)
+    tw = int(sb.get("width") or 220)
+    th = int(sb.get("height") or 124)
+    duration = float(info.get("duration") or 0)
+    frags = sb.get("fragments") or []
+
+    def _dl_sheet(frag):
+        u = frag.get("url")
+        if not u:
+            return None
+        try:
+            r = requests.get(u, timeout=10)
+            return r.content if r.status_code == 200 else None
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        sheets = list(ex.map(_dl_sheet, frags))
+
+    tiles: List[bytes] = []
+    for raw in sheets:
+        if not raw:
+            continue
+        try:
+            im = Image.open(io.BytesIO(raw)).convert("L")
+            sw, sh = im.size
+            for r_idx in range(rows):
+                y0 = r_idx * th
+                if y0 + th > sh:
+                    break
+                for c_idx in range(cols):
+                    x0 = c_idx * tw
+                    if x0 + tw > sw:
+                        break
+                    tile = im.crop((x0, y0, x0 + tw, y0 + th)).resize((64, 36))
+                    tiles.append(tile.tobytes())
+        except Exception:
+            continue
+
+    if len(tiles) < 4 or duration <= 0:
         return []
 
-    buckets: Dict[int, int] = {}
-    samples: Dict[int, str] = {}
-    cursor = None
-    try:
-        for _ in range(10):
-            variables = {"videoID": clean_id, "cursor": cursor} if cursor else {"videoID": clean_id, "contentOffsetSeconds": 0}
-            payload = {
-                "operationName": "VideoCommentsByOffsetOrCursor",
-                "variables": variables,
-                "extensions": {"persistedQuery": {"version": 1, "sha256Hash": "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a"}},
-            }
-            r = requests.post(
-                "https://gql.twitch.tv/gql",
-                headers={"Client-ID": TWITCH_GQL_CLIENT_ID, "Content-Type": "application/json"},
-                json=payload,
-                timeout=6,
-            )
-            if r.status_code != 200:
-                break
-            comments = r.json().get("data", {}).get("video", {}).get("comments") or {}
-            edges = comments.get("edges") or []
-            if not edges:
-                break
-            for edge in edges:
-                node = edge.get("node") or {}
-                off = int(node.get("contentOffsetSeconds") or 0)
-                b = (off // 30) * 30
-                buckets[b] = buckets.get(b, 0) + 1
-                if b not in samples:
-                    frags = (node.get("message") or {}).get("fragments") or []
-                    msg = "".join(fr.get("text", "") for fr in frags).strip()
-                    if msg:
-                        samples[b] = msg[:60]
-                cursor = edge.get("cursor")
-            if not (comments.get("pageInfo") or {}).get("hasNextPage"):
-                break
-    except Exception:
-        return []
+    sec_per_tile = duration / len(tiles)
+    diffs = []
+    for i in range(1, len(tiles)):
+        a, b = tiles[i - 1], tiles[i]
+        mad = sum(abs(x - y) for x, y in zip(a, b)) / len(a)
+        diffs.append((i * sec_per_tile, mad))
 
-    if not buckets:
-        return []
+    mean_d = sum(d for _, d in diffs) / len(diffs)
+    std_d = math.sqrt(sum((d - mean_d) ** 2 for _, d in diffs) / len(diffs)) or 1.0
 
-    ranked = sorted(buckets.items(), key=lambda x: x[1], reverse=True)[:top_n]
-    out = []
-    for b, cnt in ranked:
-        st = max(0, b - 10)
-        et = min(int(duration) if duration > 0 else b + 30, st + 35)
-        out.append({
+    scored = [(ts, max(0.0, (d - mean_d) / std_d)) for ts, d in diffs]
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    picked: List[Tuple[float, float]] = []
+    for ts, z in scored:
+        if ts < 15 or ts > duration - 20:
+            continue
+        if any(abs(ts - pts) < 90.0 for pts, _ in picked):
+            continue
+        picked.append((ts, z))
+        if len(picked) >= top_k:
+            break
+    return picked
+
+
+def find_vod_highlights(vod_url: str, top_n: int = 8) -> List[Dict]:
+    """Two-pass highlight finder for 1-14h silent gameplay VODs: Storyboard visual jumps + Audio_Only contrast."""
+    res = subprocess.run(
+        [YTDLP, "--dump-single-json", "--skip-download", "--no-warnings", vod_url],
+        capture_output=True, text=True, timeout=25,
+    )
+    if res.returncode != 0 or not res.stdout.strip():
+        raise RuntimeError(f"Could not inspect VOD: {(res.stderr or '')[-300:]}")
+    info = json.loads(res.stdout)
+    duration = float(info.get("duration") or 0)
+    if duration < 20:
+        raise RuntimeError("VOD is too short or still processing.")
+
+    visual_cands = _scan_storyboard_candidates(info, top_k=18)
+    if not visual_cands:
+        # Uniform fallback samples if storyboard isn't generated yet
+        step = max(90.0, duration / 18.0)
+        visual_cands = [(t, 1.0) for t in [step * i for i in range(1, 18)] if t < duration - 25]
+
+    audio_fmt = next((f for f in (info.get("formats") or []) if f.get("format_id") == "Audio_Only" and f.get("url")), None)
+    audio_scored: List[Tuple[float, float, float, float]] = []
+
+    if audio_fmt:
+        try:
+            init_b, segs = _parse_hls_playlist(audio_fmt["url"])
+
+            def _eval_cand(item):
+                ts, vz = item
+                ab, _ = _fetch_hls_window_bytes(init_b, segs, max(0.0, ts - 15.0), min(duration, ts + 25.0))
+                ac = _score_audio_contrast(ab)
+                combined = vz * 0.45 + ac * 0.55
+                return (ts, combined, vz, ac)
+
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                audio_scored = list(ex.map(_eval_cand, visual_cands))
+        except Exception:
+            audio_scored = [(ts, vz, vz, 1.0) for ts, vz in visual_cands]
+    else:
+        audio_scored = [(ts, vz, vz, 1.0) for ts, vz in visual_cands]
+
+    audio_scored.sort(key=lambda x: x[1], reverse=True)
+    final: List[Dict] = []
+    for ts, score, vz, ac in audio_scored:
+        if any(abs(ts - f["peak_sec"]) < 180.0 for f in final):
+            continue
+        st = max(0, int(ts - 12))
+        et = min(int(duration), st + 32)
+        if et - st < 15:
+            continue
+        final.append({
+            "peak_sec": ts,
             "start": fmt_timestamp(st),
             "end": fmt_timestamp(et),
             "start_sec": st,
             "end_sec": et,
-            "messages": cnt,
-            "sample": samples.get(b, ""),
+            "score": round(score, 2),
+            "visual_z": round(vz, 2),
+            "audio_spike": round(ac, 2),
         })
-    return out
+        if len(final) >= top_n:
+            break
+
+    return final
 
 
 def download_vod_slice(vod_url: str, start_sec: float, end_sec: float, dest_mp4: str) -> float:
-    """Downloads only the requested [start_sec, end_sec] slice from a Twitch VOD using yt-dlp."""
+    """Downloads only [start_sec, end_sec] from a Twitch VOD via Python HLS (avoids static ffmpeg DNS bugs)."""
     if end_sec <= start_sec:
         raise ValueError("End time must be after start time.")
     dur = min(max(end_sec - start_sec, 5.0), 58.0)
     end_clamped = start_sec + dur
 
-    section = f"*{fmt_timestamp(start_sec)}-{fmt_timestamp(end_clamped)}"
-    cmd = [
-        YTDLP,
-        "--download-sections", section,
-        "--force-keyframes-at-cuts",
-        "-f", "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]/b",
-        "--merge-output-format", "mp4",
-        "-o", dest_mp4,
-        "--no-warnings",
-        vod_url,
-    ]
-    res = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
-    if res.returncode != 0 or not os.path.exists(dest_mp4):
-        raise RuntimeError(f"VOD slice download failed: {(res.stderr or '')[-400:]}")
+    m3u8_url = subprocess.check_output(
+        [YTDLP, "-g", "-f", "720p60/1080p60/480p/b[height<=1080]", "--no-warnings", vod_url],
+        text=True, timeout=25,
+    ).strip().splitlines()[0]
+
+    init_b, segs = _parse_hls_playlist(m3u8_url)
+    raw_bytes, trim_off = _fetch_hls_window_bytes(init_b, segs, start_sec, end_clamped)
+    if not raw_bytes:
+        raise RuntimeError("No HLS video segments matched that timestamp window.")
+
+    fd, tmp_raw = tempfile.mkstemp(suffix=".mp4")
+    os.close(fd)
+    try:
+        with open(tmp_raw, "wb") as f:
+            f.write(raw_bytes)
+        res = _run_ffmpeg([FFMPEG, "-y", "-ss", f"{trim_off:.2f}", "-t", f"{dur:.2f}", "-i", tmp_raw, "-c", "copy", dest_mp4])
+        if res.returncode != 0 or not os.path.exists(dest_mp4) or os.path.getsize(dest_mp4) < 50_000:
+            raise RuntimeError(f"VOD slice trim failed: {(res.stderr or '')[-300:]}")
+    finally:
+        if os.path.exists(tmp_raw):
+            try:
+                os.remove(tmp_raw)
+            except Exception:
+                pass
+
     actual_dur = get_video_duration(dest_mp4)
     return min(max(actual_dur if actual_dur > 1.0 else dur, 5.0), 58.0)
 
@@ -189,7 +342,6 @@ def render_vod_cinema_short(
     inputs = ["-i", clip_mp4]
     if tts_audio_path and os.path.exists(tts_audio_path):
         inputs.extend(["-i", tts_audio_path])
-        # Duck game audio slightly while TTS hook plays, plus 0.45s 55Hz impact
         inputs.extend(["-f", "lavfi", "-t", "0.45", "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100"])
         af = (
             f"[0:a]loudnorm=I=-14:TP=-1.5:LRA=11[agame];"

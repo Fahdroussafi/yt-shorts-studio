@@ -2178,6 +2178,10 @@ class VodInspectRequest(BaseModel):
     channel_or_url: str
 
 
+class VodHighlightsRequest(BaseModel):
+    vod_url: str
+
+
 class VodProduceRequest(BaseModel):
     vod_url: str
     start_time: str
@@ -2190,16 +2194,26 @@ class VodProduceRequest(BaseModel):
 
 @app.post("/api/vod/inspect")
 async def inspect_twitch_vods(req: VodInspectRequest, user: dict = Depends(require_auth)):
-    """Lists recent Twitch VODs and scans top chat-replay spikes for the first VOD (GTA mode only)."""
+    """Lists recent Twitch VODs for a username or VOD URL (GTA mode only)."""
     if not ADMIN_ONLY_MODE:
         raise HTTPException(status_code=403, detail="VOD clipper is only enabled on the GTA studio.")
-    from vod_clipper import list_twitch_vods, scan_vod_chat_spikes
+    from vod_clipper import list_twitch_vods
     try:
         vods = await asyncio.to_thread(list_twitch_vods, req.channel_or_url, 8)
-        spikes = []
-        if vods:
-            spikes = await asyncio.to_thread(scan_vod_chat_spikes, vods[0]["id"], vods[0]["duration"], 6)
-        return {"vods": vods, "spikes": spikes}
+        return {"vods": vods}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/vod/highlights")
+async def scan_twitch_vod_highlights(req: VodHighlightsRequest, user: dict = Depends(require_auth)):
+    """Two-pass auto highlight scanner (Storyboard visual jumps + Audio_Only contrast) for 1-14h VODs."""
+    if not ADMIN_ONLY_MODE:
+        raise HTTPException(status_code=403, detail="VOD clipper is only enabled on the GTA studio.")
+    from vod_clipper import find_vod_highlights
+    try:
+        highlights = await asyncio.to_thread(find_vod_highlights, req.vod_url, 8)
+        return {"highlights": highlights}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
