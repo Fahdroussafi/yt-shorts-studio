@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { 
   Film, Eye, Cpu, RefreshCw, BarChart3, Video, Sparkles, Sliders, Send, 
-  Clock, ShieldCheck, ExternalLink, ChevronRight, Tv 
+  Clock, ShieldCheck, ExternalLink, ChevronRight 
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import AiModal from './AiModal';
@@ -198,13 +198,6 @@ export default function Layout() {
                 )}
               </div>
             </NavLink>
-
-            {usage?.studio_mode === 'gta' && (
-              <NavLink to="/twitch-clips" className={getNavClass}>
-                <Tv className="w-4 h-4 text-purple-400" />
-                <span>Twitch Clips</span>
-              </NavLink>
-            )}
 
             <NavLink to="/dispatcher" className={getNavClass}>
               <Send className="w-4 h-4 text-emerald-400" />
