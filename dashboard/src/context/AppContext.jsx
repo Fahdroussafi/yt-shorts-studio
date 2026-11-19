@@ -258,8 +258,9 @@ export function AppProvider({ children }) {
       if (res.ok) {
         const data = await res.json();
         setVideos(data);
-        if (data.length > 0 && !dispatchVideoId) {
-          setDispatchVideoId(data[data.length - 1].id);
+        const unscheduled = data.filter((v) => !v.yt_id && v.status !== 'SCHEDULED');
+        if (unscheduled.length > 0 && !dispatchVideoId) {
+          setDispatchVideoId(unscheduled[unscheduled.length - 1].id);
         }
       }
     } catch (e) {

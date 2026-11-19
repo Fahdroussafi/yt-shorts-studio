@@ -59,6 +59,17 @@ export default function DispatcherPage() {
     setStartDate((prev) => prev || getNextAvailableDateStr(stats?.videos));
   }, [stats]);
 
+  // Sync single-dispatch selection to a valid unscheduled/ready short
+  useEffect(() => {
+    if (readyVideos.length === 0) {
+      if (dispatchVideoId) setDispatchVideoId('');
+      return;
+    }
+    if (!readyVideos.some((v) => v.id === dispatchVideoId)) {
+      setDispatchVideoId(readyVideos[readyVideos.length - 1].id);
+    }
+  }, [readyVideos, dispatchVideoId, setDispatchVideoId]);
+
   // Auto-select up to remaining quota (max 6) ready shorts when entering batch or when readyVideos change
   useEffect(() => {
     const validReady = new Set(readyVideos.map((v) => v.id));
@@ -153,13 +164,18 @@ export default function DispatcherPage() {
             <select
               value={dispatchVideoId}
               onChange={(e) => setDispatchVideoId(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white font-mono"
+              disabled={readyVideos.length === 0}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white font-mono disabled:opacity-50"
             >
-              {videos.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.id.toUpperCase()} — {v.title} ({v.size_mb} MB)
-                </option>
-              ))}
+              {readyVideos.length === 0 ? (
+                <option value="">No unscheduled shorts in vault</option>
+              ) : (
+                readyVideos.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.id.toUpperCase()} — {v.title} ({v.size_mb} MB)
+                  </option>
+                ))
+              )}
             </select>
           </div>
 
@@ -234,8 +250,8 @@ export default function DispatcherPage() {
           <button
             type="button"
             onClick={channelData?.has_youtube_token ? handleUpload : () => setShowChannelModal(true)}
-            disabled={uploading}
-            className={`w-full py-3.5 rounded-xl text-white font-bold text-sm flex items-center justify-center space-x-2 transition shadow-xl ${
+            disabled={uploading || (channelData?.has_youtube_token && !dispatchVideoId)}
+            className={`w-full py-3.5 rounded-xl text-white font-bold text-sm flex items-center justify-center space-x-2 transition shadow-xl disabled:opacity-50 disabled:cursor-not-allowed ${
               channelData?.has_youtube_token
                 ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/20'
                 : 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/20'
