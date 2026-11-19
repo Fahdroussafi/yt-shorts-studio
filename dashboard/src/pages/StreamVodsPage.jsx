@@ -93,6 +93,7 @@ export default function StreamVodsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           vod_url: vodUrl,
+          vod_title: selectedVod?.title || undefined,
           start_time: h.start,
           end_time: h.end,
         }),

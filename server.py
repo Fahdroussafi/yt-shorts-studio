@@ -2186,6 +2186,7 @@ class VodProduceRequest(BaseModel):
     vod_url: str
     start_time: str
     end_time: str
+    vod_title: Optional[str] = None
     hook_banner: Optional[str] = None
     title: Optional[str] = None
     tts_hook: Optional[str] = None
@@ -2250,6 +2251,30 @@ async def run_vod_production(task_id: str, req: VodProduceRequest, target_videos
             u_dir = os.path.dirname(target_videos_dir)
             brand_name, brand_handle = get_user_brand({"channel_file": os.path.join(u_dir, "channel_info.json"), "user_id": os.path.basename(u_dir)})
 
+            ai_hook, ai_title, ai_tags, ai_comment = None, None, None, None
+            if not req.hook_banner:
+                try:
+                    from gemini_generator import get_groq_key, generate_with_groq_lpu
+                    g_key = get_groq_key(os.path.join(u_dir, "groq_api_key.txt"), allow_fallback=True)
+                    if g_key:
+                        v_ctx = (req.vod_title or "GTA 6 Xbox Series X Gameplay").strip()
+                        g_prompt = (
+                            f'Write viral YouTube Shorts metadata for a 30s action highlight from this stream: "{v_ctx}" '
+                            f'(slice {req.start_time} to {req.end_time}). '
+                            'Respond ONLY with JSON: {"hook_banner":"ALL CAPS 3-6 WORD HOOK UNDER 36 CHARS",'
+                            '"title":"Punchy title under 50 chars + #shorts #gta6",'
+                            '"tags":"5 comma-separated search tags",'
+                            '"pinned_comment":"Short question for viewers"}'
+                        )
+                        g_res = await asyncio.to_thread(generate_with_groq_lpu, g_prompt, g_key)
+                        if isinstance(g_res, dict):
+                            ai_hook = (g_res.get("hook_banner") or "").strip()[:42]
+                            ai_title = (g_res.get("title") or "").strip()[:68]
+                            ai_tags = (g_res.get("tags") or "").strip()
+                            ai_comment = (g_res.get("pinned_comment") or "").strip()
+                except Exception:
+                    pass
+
             default_hooks = [
                 "WAIT FOR THE ENDING",
                 "NO WAY THIS JUST HAPPENED",
@@ -2257,7 +2282,7 @@ async def run_vod_production(task_id: str, req: VodProduceRequest, target_videos
                 "WATCH CLOSELY AT THE END",
             ]
             import random as _rnd
-            hook_text = (req.hook_banner or _rnd.choice(default_hooks)).strip()[:42]
+            hook_text = (req.hook_banner or ai_hook or _rnd.choice(default_hooks)).strip()[:42]
             tts_text = (req.tts_hook or "").strip()
             words = []
             tts_used = None
@@ -2287,13 +2312,15 @@ async def run_vod_production(task_id: str, req: VodProduceRequest, target_videos
                     except Exception:
                         pass
 
-            clean_title = (req.title or hook_text or "Insane GTA 6 Moment").strip()[:55]
+            clean_title = (req.title or ai_title or hook_text or "Insane GTA 6 Moment").strip()[:68]
             yt_title = clean_title if "#shorts" in clean_title.lower() else f"{clean_title} #shorts #gta6"
+            tags_line = ai_tags or "gta 6 gameplay, gta 6 xbox series x, gta vi shorts, gta 6 clips, pixelbreach"
+            comment_line = ai_comment or "Rate this moment 1-10! Playing GTA 6 live on Series X."
             with open(meta_file, "w", encoding="utf-8") as f:
                 f.write(f"TITLE:\n{yt_title}\n\n")
                 f.write(f"DESCRIPTION:\n{hook_text} — Live from Series X. Subscribe to {brand_handle} #shorts #gta6 #gtavi #xbox\n\n")
-                f.write("TAGS:\ngta 6 gameplay, gta 6 xbox series x, gta vi shorts, gta 6 clips, pixelbreach\n\n")
-                f.write("PINNED COMMENT:\nRate this moment 1-10! Playing GTA 6 live on Series X.\n")
+                f.write(f"TAGS:\n{tags_line}\n\n")
+                f.write(f"PINNED COMMENT:\n{comment_line}\n")
 
             clear_user_video_mapping({
                 "mappings_file": os.path.join(u_dir, "video_mappings.json"),
