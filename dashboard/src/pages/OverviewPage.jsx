@@ -289,9 +289,11 @@ export default function OverviewPage() {
                 </tr>
               ) : (
                 paginatedTableVideos.map((item) => {
-                  const maxViews = 1100;
-                  const pct = Math.min(100, Math.max(5, (item.views / maxViews) * 100));
-                  const isMotion = item.motion_type === 'Real-Motion HD' || (!item.short_id?.startsWith('short_01') && !item.short_id?.startsWith('short_02') && !item.short_id?.startsWith('short_03'));
+                  const maxViews = Math.max(100, topBreakoutViews);
+                  const pct = item.views > 0 ? Math.min(100, Math.max(5, (item.views / maxViews) * 100)) : 0;
+                  const isMotion = item.motion_type === 'Real-Motion HD';
+                  const isBreakout = item.views >= 1000 || (topBreakout?.short_id === item.short_id && item.views >= 500);
+                  const isHighVelocity = !isBreakout && item.views >= 200;
                   const isScheduled = isScheduledVideo(item);
 
                   return (
@@ -339,16 +341,16 @@ export default function OverviewPage() {
                             <div className="flex items-center justify-between text-xs mb-1 font-mono">
                               <span className="font-bold text-white">{item.views.toLocaleString()} views</span>
                               <span className="text-[10px] text-slate-400">
-                                {item.short_id === 'short_04' ? '🚀 1.06k Breakout' : item.short_id === 'short_06' ? '🔥 339 Velocity' : isMotion ? 'Motion HD' : 'Static'}
+                                {isBreakout ? '🚀 Breakout' : isHighVelocity ? '🔥 Velocity' : isMotion ? 'Motion HD' : 'Static'}
                               </span>
                             </div>
                             <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
                               <div 
                                 style={{ width: `${pct}%` }} 
                                 className={`h-full rounded-full transition-all duration-500 ${
-                                  item.short_id === 'short_04'
+                                  isBreakout
                                     ? 'bg-gradient-to-r from-emerald-500 to-cyan-500 shadow-sm shadow-emerald-500/50'
-                                    : item.short_id === 'short_06' 
+                                    : isHighVelocity
                                       ? 'bg-gradient-to-r from-amber-500 to-orange-500 shadow-sm shadow-orange-500/50' 
                                       : isMotion 
                                         ? 'bg-gradient-to-r from-cyan-500 to-blue-500' 
