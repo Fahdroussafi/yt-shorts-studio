@@ -490,7 +490,8 @@ def render_motion_video(
     output_mp4: str,
     duration: float,
     color_look: Optional[str] = None,
-    audio_bed: Optional[str] = None
+    audio_bed: Optional[str] = None,
+    image_paths: Optional[List[str]] = None,
 ):
     import random
     # Select or randomly pick color look & audio bed for complete visual/auditory distinctiveness
@@ -507,36 +508,52 @@ def render_motion_video(
     color_cfg = COLOR_LOOKS[c_key]
     audio_cfg = AUDIO_BEDS[a_key]
 
-    print(f"[4/5] Multi-cut render ({len(clip_paths)} cuts, {duration:.2f}s) [Color: {color_cfg['name']} | Soundscape: {audio_cfg['name']}]...")
+    # Interleave scraped archival/topic images into odd cuts (keeping cut 0 as fast motion video)
+    scene_items = [("video", c) for c in clip_paths]
+    if image_paths:
+        img_iter = iter(image_paths)
+        for idx in range(1, len(scene_items), 2):
+            nxt = next(img_iter, None)
+            if not nxt:
+                break
+            scene_items[idx] = ("image", nxt)
 
-    per_clip = duration / len(clip_paths)
+    print(f"[4/5] Multi-cut render ({len(scene_items)} cuts, {duration:.2f}s, {sum(1 for k,_ in scene_items if k=='image')} scraped imgs) [Color: {color_cfg['name']} | Soundscape: {audio_cfg['name']}]...")
+
+    per_clip = duration / len(scene_items)
+    frames_per_cut = max(1, int(round(per_clip * 30)))
     inputs = []
     filter_parts = []
 
-    for i, clip in enumerate(clip_paths):
-        # Calculate random start offset so different segments of the clip are shown
-        clip_dur = get_video_duration(clip)
-        max_offset = max(0.0, clip_dur - per_clip - 0.5)
-        offset = round(random.uniform(0.0, min(max_offset, 6.0)), 2) if max_offset > 1.0 else 0.0
-
-        inputs.extend(["-stream_loop", "-1", "-ss", f"{offset:.2f}", "-t", f"{per_clip:.3f}", "-i", clip])
-
-        # 30% chance of subtle horizontal mirror flip for visual novelty
-        flip_filter = ",hflip" if random.random() < 0.30 else ""
-
-        # Alternating subtle punch-in (1.1x zoom) vs standard scale for rapid pattern-interrupts
-        if i % 2 == 0:
-            scale_crop = "scale=1200:2133:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
+    for i, (kind, media_path) in enumerate(scene_items):
+        if kind == "image":
+            inputs.extend(["-i", media_path])
+            z_expr = "min(zoom+0.0014,1.14)" if i % 2 == 1 else "max(1.14-0.0014*on,1.0)"
+            filter_parts.append(
+                f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,"
+                f"zoompan=z='{z_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames_per_cut}:s=1080x1920:fps=30,"
+                f"setpts=PTS-STARTPTS[v{i}]"
+            )
         else:
-            scale_crop = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
+            clip_dur = get_video_duration(media_path)
+            max_offset = max(0.0, clip_dur - per_clip - 0.5)
+            offset = round(random.uniform(0.0, min(max_offset, 6.0)), 2) if max_offset > 1.0 else 0.0
 
-        filter_parts.append(
-            f"[{i}:v]trim=duration={per_clip:.3f},setpts=PTS-STARTPTS,fps=30,"
-            f"{scale_crop},setsar=1{flip_filter}[v{i}]"
-        )
+            inputs.extend(["-stream_loop", "-1", "-ss", f"{offset:.2f}", "-t", f"{per_clip:.3f}", "-i", media_path])
 
-    concat_ins = "".join(f"[v{i}]" for i in range(len(clip_paths)))
-    concat_filter = f"{concat_ins}concat=n={len(clip_paths)}:v=1:a=0[vbase]"
+            flip_filter = ",hflip" if random.random() < 0.30 else ""
+            if i % 2 == 0:
+                scale_crop = "scale=1200:2133:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
+            else:
+                scale_crop = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
+
+            filter_parts.append(
+                f"[{i}:v]trim=duration={per_clip:.3f},setpts=PTS-STARTPTS,fps=30,"
+                f"{scale_crop},setsar=1{flip_filter}[v{i}]"
+            )
+
+    concat_ins = "".join(f"[v{i}]" for i in range(len(scene_items)))
+    concat_filter = f"{concat_ins}concat=n={len(scene_items)}:v=1:a=0[vbase]"
 
     # Apply Procedural Color Grade Look
     grade_filter = f"[vbase]{color_cfg['filter']}[vgraded]"
@@ -763,6 +780,32 @@ def _probe_media_dims(path: str) -> tuple:
     except Exception:
         pass
     return 0, 0
+
+
+def download_valid_images(urls: list, dest_dir: str, limit: int = 3) -> list:
+    """Downloads up to `limit` valid >=500x350 images in parallel for hybrid Documentary Shorts."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(item):
+        idx, u = item
+        dest = os.path.join(dest_dir, f"topic_img_{idx}.img")
+        try:
+            r = requests.get(u, headers={"User-Agent": "ShadowMindBot/1.0"}, timeout=7)
+            if r.status_code != 200 or len(r.content) < 8000:
+                return None
+            with open(dest, "wb") as f:
+                f.write(r.content)
+            w, h = _probe_media_dims(dest)
+            if w < 500 or h < 350:
+                os.remove(dest)
+                return None
+            return dest
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        valid = [p for p in ex.map(_one, enumerate((urls or [])[:limit * 2])) if p]
+    return valid[:limit]
 
 
 def render_news_media_short(

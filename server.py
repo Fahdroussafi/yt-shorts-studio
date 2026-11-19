@@ -1993,7 +1993,7 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                 )
                 await asyncio.to_thread(render_news_media_short, resolved_media_urls, audio_file, ass_file, output_mp4, dur, True, False)
 
-            else:  # ShadowMind cinematic_cuts -> stock clips
+            else:  # ShadowMind cinematic_cuts -> hybrid stock clips + Wikimedia/Wikipedia archival images
                 niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
                 target_cuts = max(8, min(14, round(dur / 3.0)))
                 timeline_queries = extract_timeline_visual_queries(
@@ -2003,14 +2003,30 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                     niche=niche
                 )
 
-                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Fetching {len(timeline_queries)} script-synchronized stock clips in parallel: {timeline_queries}...")
-                clip_paths = await _fetch_timeline_clips_parallel(timeline_queries, niche)
+                if not resolved_media_urls:
+                    try:
+                        from viral_discovery import scrape_topic_media
+                        resolved_media_urls = await asyncio.to_thread(scrape_topic_media, req.title or clean_script[:60], niche, 4)
+                    except Exception:
+                        resolved_media_urls = []
+
+                PRODUCTION_TASKS[task_id]["log"].append(
+                    f"[3/5] Fetching {len(timeline_queries)} stock clips + {len(resolved_media_urls)} topic images in parallel..."
+                )
+                from produce_motion_short import download_valid_images
+                clip_paths, img_paths = await asyncio.gather(
+                    _fetch_timeline_clips_parallel(timeline_queries, niche),
+                    asyncio.to_thread(download_valid_images, resolved_media_urls, target_dir, 3),
+                )
 
                 PRODUCTION_TASKS[task_id]["progress"] = 70
-                PRODUCTION_TASKS[task_id]["log"].append(f"[4/5] Rendering 1080x1920 vertical video ({len(clip_paths)} dynamic cuts with random offsets & flips)...")
+                PRODUCTION_TASKS[task_id]["log"].append(
+                    f"[4/5] Rendering 1080x1920 vertical video ({len(clip_paths)} clips + {len(img_paths)} archival Ken Burns cuts)..."
+                )
 
                 # 4. Render (Non-blocking async execution)
-                await asyncio.to_thread(render_motion_video, clip_paths, audio_file, ass_file, output_mp4, dur)
+                await asyncio.to_thread(render_motion_video, clip_paths, audio_file, ass_file, output_mp4, dur, None, None, img_paths)
+                clip_paths.extend(img_paths)
 
             PRODUCTION_TASKS[task_id]["progress"] = 90
             PRODUCTION_TASKS[task_id]["log"].append("[5/5] Metadata sanitized (-map_metadata -1) & packaging SEO...")

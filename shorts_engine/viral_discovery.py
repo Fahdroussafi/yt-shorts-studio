@@ -177,3 +177,58 @@ def discover_viral_angle(
         return pick["title"], f"Real verified psychological/historical topic ({pick['source']}): {pick['title']} — {pick['context']}"
 
     return None
+
+
+_BAD_WIKI_IMG = ("logo", "icon", "flag", "map", "diagram", "chart", "signature", "button", "arrow", "commons-logo")
+
+
+def scrape_topic_media(topic_title: str, niche: str = "dark_psychology", max_images: int = 4) -> List[str]:
+    """Scrapes real archival/documentary images from Wikimedia Commons & Wikipedia for ShadowMind topics."""
+    clean_q = re.sub(r"#\S+", "", topic_title or "").strip()
+    clean_q = re.sub(r"[^\w\s-]", " ", clean_q).strip()
+    niche_q = NICHE_DISCOVERY_QUERIES.get(niche, NICHE_DISCOVERY_QUERIES["dark_psychology"])["wiki"]
+    queries = [q for q in (clean_q[:80], niche_q) if q]
+
+    urls: List[str] = []
+    seen = set()
+    for q in queries:
+        if len(urls) >= max_images:
+            break
+        try:
+            r = requests.get(
+                "https://commons.wikimedia.org/w/api.php",
+                params={
+                    "action": "query",
+                    "generator": "search",
+                    "gsrnamespace": 6,
+                    "gsrsearch": q,
+                    "gsrlimit": 12,
+                    "prop": "imageinfo",
+                    "iiprop": "url|size|mime",
+                    "format": "json",
+                },
+                headers={"User-Agent": "ShadowMindBot/1.0"},
+                timeout=7,
+            )
+            if r.status_code != 200:
+                continue
+            pages = r.json().get("query", {}).get("pages", {})
+            for p in pages.values():
+                ii = (p.get("imageinfo") or [{}])[0]
+                mime = (ii.get("mime") or "").lower()
+                w = int(ii.get("width") or 0)
+                h = int(ii.get("height") or 0)
+                u = (ii.get("url") or "").strip()
+                low = u.lower()
+                if mime not in ("image/jpeg", "image/png", "image/webp"):
+                    continue
+                if w < 500 or h < 350 or any(b in low for b in _BAD_WIKI_IMG):
+                    continue
+                if u not in seen:
+                    seen.add(u)
+                    urls.append(u)
+                    if len(urls) >= max_images:
+                        break
+        except Exception:
+            continue
+    return urls[:max_images]

@@ -519,6 +519,11 @@ def generate_ai_script(
                 pass
 
         final_data = clean_and_assemble_script(parsed, brand_name, brand_handle, profile, chosen_angle)
+        try:
+            from viral_discovery import scrape_topic_media
+            final_data["media_urls"] = scrape_topic_media(chosen_angle or final_data.get("title", ""), niche, max_images=4)
+        except Exception:
+            final_data["media_urls"] = []
         record_topic_history(topic_history_file, final_data.get("title", ""), niche, chosen_angle)
         return final_data
 
