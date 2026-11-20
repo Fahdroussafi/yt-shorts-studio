@@ -494,9 +494,9 @@ def download_vod_slice(vod_url: str, start_sec: float, end_sec: float, dest_mp4:
 
 
 _OPENROUTER_VISION_MODELS = [
+    "nvidia/nemotron-3.5-super-vl:free",
     "google/gemma-4-26b-a4b-it:free",
     "google/gemma-4-31b-it:free",
-    "nvidia/nemotron-3.5-super-vl:free",
     "particle-ai/particle-1:free",
 ]
 
@@ -552,12 +552,19 @@ def analyze_clip_with_vision(clip_mp4: str, duration: float, vod_title: str = ""
             resp = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": mid, "messages": [{"role": "user", "content": content_blocks}], "max_tokens": 350, "temperature": 0.4},
+                json={
+                    "model": mid,
+                    "reasoning": {"enabled": False},
+                    "messages": [{"role": "user", "content": content_blocks}],
+                    "max_tokens": 700,
+                    "temperature": 0.4,
+                },
                 timeout=20,
             )
             if resp.status_code != 200:
                 continue
-            raw = resp.json()["choices"][0]["message"].get("content") or ""
+            msg = resp.json()["choices"][0]["message"]
+            raw = msg.get("content") or msg.get("reasoning") or ""
             raw = re.sub(r"<think>[\s\S]*?</think>", "", raw).strip()
             m = re.search(r"(\{[\s\S]*\})", raw)
             if not m:
