@@ -2447,9 +2447,11 @@ def upload_to_youtube(req: UploadRequest, user: dict = Depends(require_auth)):
             from uploader import upload_short
             yt_url = upload_short(video_path, title, description, tags, req.privacy_status, token_file=token_to_use)
 
+        from datetime import datetime, timezone
         yt_id = yt_url.split("/")[-1].split("?")[0]
         status_label = "SCHEDULED" if req.publish_at else req.privacy_status.upper()
-        save_user_video_mapping(paths["mappings_file"], req.video_id, yt_id, status_label, req.publish_at)
+        pub_val = req.publish_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        save_user_video_mapping(paths["mappings_file"], req.video_id, yt_id, status_label, pub_val)
 
         try:
             from usage_tracker import record_youtube_upload
