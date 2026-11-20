@@ -142,7 +142,7 @@ def generate_guide_blueprint(
         f'- Keep each bullet under 56 chars so it fits cleanly on 1920x1080 UI cards.\n'
         f'- Output strictly valid JSON:\n'
         f'{{\n'
-        f'  "title": "Catchy 16:9 YouTube Guide Title (under 70 chars, NO #shorts)",\n'
+        f'  "title": "High-CTR curiosity-gap YouTube title under 65 chars (e.g. \\"99% of GTA 6 Players Will Miss THIS\\", \\"Don\'t Make This GTA 6 Day One Mistake\\"). NO channel name, NO generic \'Master X: Pro Tips\', NO #shorts, NO fake claims",\n'
         f'  "description": "2-sentence SEO summary for YouTube description",\n'
         f'  "search_tags": ["gta 6 guide", "gta 6 tips", "gta vi", "rockstar games"],\n'
         f'  "pinned_comment": "Short question for viewers in comments",\n'

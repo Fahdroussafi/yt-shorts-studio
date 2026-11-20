@@ -368,8 +368,8 @@ def _rewrite_gta_short_with_groq(
             f'Headline: {headline}\n'
             f'Facts: {snippet}\n\n'
             f'Rules:\n'
-            f'- hook_banner: ALL CAPS 3-5 words, <= 28 chars, complete phrase, NO cutoffs.\n'
-            f'- title: Complete catchy title <= 48 chars (NO hashtags, NO cut-off words, NO unbalanced quotes).\n'
+            f'- hook_banner: ALL CAPS 3-5 words, <= 28 chars, high-curiosity hook, complete phrase, NO cutoffs.\n'
+            f'- title: High-CTR curiosity-gap YouTube title <= 48 chars (e.g. "Rockstar Just Hid THIS in GTA 6...", "Why GTA 6 Players Are Panicking"). NO hashtags, NO channel name, NO fake claims, NO cut-off words.\n'
             f'- script: 45-58 words total, spoken punchy style: 1-line hook, 2 concrete facts, end with "Follow {brand_name} for more."\n'
             f'Respond ONLY with JSON: {{"hook_banner":"...","title":"...","script":"..."}}'
         )

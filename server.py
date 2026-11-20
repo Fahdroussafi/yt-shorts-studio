@@ -621,19 +621,24 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
     if not force and (now - last_synced < 60):
         return {"status": "cached", "last_synced_at": last_synced, "live_count": stats_cache.get("_meta", {}).get("live_count", 0)}
 
-    url = f"https://www.youtube.com/{handle_clean}/shorts"
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9"
-    })
-
     discovered_live = {}
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            html = resp.read().decode("utf-8", errors="ignore")
+        for tab_suffix in ("shorts", "videos"):
+            tab_url = f"https://www.youtube.com/{handle_clean}/{tab_suffix}"
+            tab_req = urllib.request.Request(tab_url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9"
+            })
+            try:
+                with urllib.request.urlopen(tab_req, timeout=8) as resp:
+                    html = resp.read().decode("utf-8", errors="ignore")
+            except Exception:
+                continue
             m = re.search(r'var ytInitialData\s*=\s*({.*?});</script>', html)
-            if m:
-                data = json.loads(m.group(1))
+            if not m:
+                continue
+            data = json.loads(m.group(1))
+            if tab_suffix == "shorts":
                 def find_items(obj):
                     found = []
                     if isinstance(obj, dict):
@@ -663,6 +668,31 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
                         "title": p_text or (acc.split(",")[0] if acc else f"Short {video_id}"),
                         "views": parse_view_count(s_text),
                         "views_display": s_text or "0 views"
+                    }
+            else:
+                def find_vids(obj):
+                    found = []
+                    if isinstance(obj, dict):
+                        if "videoRenderer" in obj:
+                            found.append(obj["videoRenderer"])
+                        for v in obj.values():
+                            found.extend(find_vids(v))
+                    elif isinstance(obj, list):
+                        for it in obj:
+                            found.extend(find_vids(it))
+                    return found
+
+                for vr in find_vids(data):
+                    video_id = vr.get("videoId", "")
+                    if not video_id or video_id in discovered_live:
+                        continue
+                    t_runs = vr.get("title", {}).get("runs") or []
+                    v_title = "".join(r.get("text", "") for r in t_runs) or vr.get("title", {}).get("simpleText", "")
+                    v_text = vr.get("viewCountText", {}).get("simpleText", "") or vr.get("shortViewCountText", {}).get("simpleText", "")
+                    discovered_live[video_id] = {
+                        "title": v_title or f"Video {video_id}",
+                        "views": parse_view_count(v_text),
+                        "views_display": v_text or "0 views"
                     }
     except Exception as e:
         print(f"Warning: Channel live scrape failed: {e}")
@@ -793,7 +823,34 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
                 except Exception:
                     pass
 
-            if not is_future_scheduled:
+            if is_future_scheduled:
+                continue
+
+            # Verify via public oEmbed before marking DELETED_ON_YOUTUBE (catches 16:9 /videos & newly published items)
+            oembed_title = None
+            is_public_oembed = False
+            try:
+                oe_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={yt_id}&format=json"
+                oe_req = urllib.request.Request(oe_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(oe_req, timeout=5) as oe_resp:
+                    if oe_resp.status == 200:
+                        oe_data = json.loads(oe_resp.read().decode("utf-8", errors="ignore"))
+                        oembed_title = oe_data.get("title")
+                        is_public_oembed = True
+            except Exception:
+                pass
+
+            if is_public_oembed:
+                info["default_status"] = "LIVE"
+                exact_v = fetch_exact_video_view_count(yt_id) or stats_cache.get(short_key, {}).get("views", 0)
+                stats_cache[short_key] = {
+                    "views": exact_v,
+                    "views_display": f"{exact_v:,} views",
+                    "title": oembed_title or stats_cache.get(short_key, {}).get("title") or f"Video {yt_id}",
+                    "likes": stats_cache.get(short_key, {}).get("likes", "0"),
+                    "last_synced": now,
+                }
+            else:
                 info["default_status"] = "DELETED_ON_YOUTUBE"
                 if short_key in stats_cache:
                     stats_cache[short_key]["deleted"] = True
