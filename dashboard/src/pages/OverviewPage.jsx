@@ -10,7 +10,13 @@ function formatScheduleDate(isoStr) {
   if (!isoStr) return "Scheduled on YouTube";
   try {
     const d = new Date(isoStr);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' · ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    if (Number.isNaN(d.getTime())) return isoStr;
+    return (
+      d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) +
+      ' · ' +
+      d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'UTC' }) +
+      ' UTC'
+    );
   } catch {
     return isoStr;
   }
@@ -58,15 +64,12 @@ export default function OverviewPage() {
         if (timeA !== timeB) return timeA - timeB;
         return (a.short_id || '').localeCompare(b.short_id || '');
       }
-      if (tableTab === 'live') {
-        const dateA = a.publish_at ? new Date(a.publish_at).getTime() : 0;
-        const dateB = b.publish_at ? new Date(b.publish_at).getTime() : 0;
-        if (dateA !== dateB) return dateB - dateA;
-        const numA = parseInt((a.short_id || '').replace(/\D/g, '') || '0', 10);
-        const numB = parseInt((b.short_id || '').replace(/\D/g, '') || '0', 10);
-        return numB - numA;
-      }
-      return 0;
+      const dateA = a.publish_at ? new Date(a.publish_at).getTime() : 0;
+      const dateB = b.publish_at ? new Date(b.publish_at).getTime() : 0;
+      if (dateA !== dateB) return dateB - dateA;
+      const numA = parseInt((a.short_id || '').replace(/\D/g, '') || '0', 10);
+      const numB = parseInt((b.short_id || '').replace(/\D/g, '') || '0', 10);
+      return numB - numA;
     });
 
   // Clamping effects when lists resize
@@ -315,7 +318,7 @@ export default function OverviewPage() {
                         {item.publish_at && (
                           <div className="text-[10px] text-slate-400 font-mono mt-0.5 flex items-center space-x-1">
                             <Calendar className="w-3 h-3 text-violet-400/80 shrink-0" />
-                            <span>{item.status === 'LIVE' ? 'Published ' : 'Drops '}{formatScheduleDate(item.publish_at)}</span>
+                            <span>{!isScheduled ? 'Published ' : 'Drops '}{formatScheduleDate(item.publish_at)}</span>
                           </div>
                         )}
                       </td>
