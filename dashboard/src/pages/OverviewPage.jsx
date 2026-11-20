@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  BarChart3, RefreshCw, Eye, Flame, Video, ArrowUpRight, 
+  BarChart3, RefreshCw, Eye, Flame, Video, 
   Calendar, Clock, ExternalLink 
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -99,8 +99,8 @@ export default function OverviewPage() {
 
       {/* Top Stats Metric Cards */}
       {loadingStats && !stats ? (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((i) => (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
             <div key={i} className="p-4 rounded-2xl bg-[#12121a] border border-slate-800/80 space-y-3 animate-pulse">
               <div className="flex justify-between items-center">
                 <div className="h-3 w-28 bg-slate-800 rounded"></div>
@@ -111,7 +111,7 @@ export default function OverviewPage() {
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="p-4 rounded-2xl bg-[#12121a] border border-slate-800/80 hover:border-slate-700 transition">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>Total Channel Views</span>
@@ -146,17 +146,6 @@ export default function OverviewPage() {
             <div className="mt-2 flex items-baseline space-x-2">
               <span className="text-3xl font-black text-white font-mono">{videos.length}</span>
               <span className="text-xs text-cyan-400 font-bold">1080x1920 HD</span>
-            </div>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-[#12121a] border border-slate-800/80 hover:border-slate-700 transition">
-            <div className="flex items-center justify-between text-slate-400 text-xs">
-              <span>Target Geographic RPM</span>
-              <ArrowUpRight className="w-4 h-4 text-emerald-400" />
-            </div>
-            <div className="mt-2 flex items-baseline space-x-2">
-              <span className="text-3xl font-black text-emerald-400 font-mono">$0.25</span>
-              <span className="text-xs text-slate-400">US/UK Tier 1</span>
             </div>
           </div>
         </div>

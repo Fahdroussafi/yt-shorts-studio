@@ -5,6 +5,7 @@ import { useApp } from '../context/AppContext';
 
 export default function IdeasPage() {
   const {
+    usage,
     niches,
     selectedNiche, setSelectedNiche,
     seriesMode, setSeriesMode,
@@ -27,32 +28,34 @@ export default function IdeasPage() {
         <p className="text-sm text-slate-400">Discover trending niches, psychological hooks, and 1-click script structures</p>
       </div>
 
-      {/* Niche Selector Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {niches.map((n) => (
-          <button
-            key={n.id}
-            onClick={() => setSelectedNiche(n.id)}
-            className={`p-4 rounded-2xl text-left border transition flex flex-col justify-between space-y-2 ${
-              selectedNiche === n.id
-                ? 'bg-violet-950/40 border-violet-500 shadow-lg shadow-violet-500/10'
-                : 'bg-[#12121a] border-slate-800/80 hover:border-slate-700'
-            }`}
-          >
-            <div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-bold text-white text-sm">{n.name}</span>
-                <span className="text-emerald-400 font-mono font-bold">{n.rpm_range}</span>
+      {/* Niche Selector Cards (hidden in GTA mode) */}
+      {usage?.studio_mode !== 'gta' && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {niches.map((n) => (
+            <button
+              key={n.id}
+              onClick={() => setSelectedNiche(n.id)}
+              className={`p-4 rounded-2xl text-left border transition flex flex-col justify-between space-y-2 ${
+                selectedNiche === n.id
+                  ? 'bg-violet-950/40 border-violet-500 shadow-lg shadow-violet-500/10'
+                  : 'bg-[#12121a] border-slate-800/80 hover:border-slate-700'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-white text-sm">{n.name}</span>
+                  <span className="text-emerald-400 font-mono font-bold">{n.rpm_range}</span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1 line-clamp-2">{n.description}</p>
               </div>
-              <p className="text-xs text-slate-400 mt-1 line-clamp-2">{n.description}</p>
-            </div>
-            <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-800/40">
-              <span>Retention: <strong className="text-slate-300">{n.retention_rate}</strong></span>
-              <span className="font-mono text-cyan-400">{n.voice_recommended.split('-')[2]}</span>
-            </div>
-          </button>
-        ))}
-      </div>
+              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-800/40">
+                <span>Retention: <strong className="text-slate-300">{n.retention_rate}</strong></span>
+                <span className="font-mono text-cyan-400">{n.voice_recommended.split('-')[2]}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Concept Generator Card */}
       <div className="p-5 rounded-2xl bg-[#12121a] border border-slate-800/80 space-y-4">

@@ -2585,6 +2585,12 @@ async def run_guide_production(task_id: str, req: GuideProduceRequest, target_vi
                     f"PINNED COMMENT:\n{req.blueprint.get('pinned_comment', '')}\n"
                 )
 
+            u_dir = os.path.dirname(target_videos_dir)
+            clear_user_video_mapping({
+                "mappings_file": os.path.join(u_dir, "video_mappings.json"),
+                "stats_file": os.path.join(u_dir, "stats_cache.json"),
+            }, req.video_id)
+
             PRODUCTION_TASKS[task_id]["progress"] = 100
             PRODUCTION_TASKS[task_id]["status"] = "completed"
             PRODUCTION_TASKS[task_id]["output_file"] = output_mp4
