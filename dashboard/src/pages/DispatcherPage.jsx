@@ -48,6 +48,8 @@ export default function DispatcherPage() {
 
   const quotaRemaining = usage?.youtube?.uploads_remaining ?? 6;
   const maxBatch = Math.max(0, Math.min(6, quotaRemaining));
+  const minDateUtc = new Date().toISOString().slice(0, 10);
+  const minDateTimeUtc = `${minDateUtc}T00:00`;
 
   const readyVideos = useMemo(
     () => (videos || []).filter((v) => !v.yt_id && v.status === 'LOCAL_READY'),
@@ -221,8 +223,13 @@ export default function DispatcherPage() {
               </label>
               <input
                 type="datetime-local"
+                min={minDateTimeUtc}
                 value={dispatchTime}
-                onChange={(e) => setDispatchTime(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v && v.slice(0, 10) < minDateUtc) return;
+                  setDispatchTime(v);
+                }}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-blue-500 outline-none text-sm text-white font-mono"
               />
               <p className="text-[11px] text-slate-500 font-mono">
@@ -292,8 +299,13 @@ export default function DispatcherPage() {
               </label>
               <input
                 type="date"
+                min={minDateUtc}
                 value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v && v < minDateUtc) return;
+                  setStartDate(v);
+                }}
                 className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 focus:border-blue-500 outline-none text-sm text-white font-mono"
               />
             </div>
