@@ -2188,28 +2188,10 @@ class VodProduceRequest(BaseModel):
     end_time: str
     vod_title: Optional[str] = None
     game_name: Optional[str] = None
-    broadcaster_name: Optional[str] = None
     hook_banner: Optional[str] = None
     title: Optional[str] = None
     tts_hook: Optional[str] = None
     video_id: Optional[str] = None
-
-
-class TopGtaSpikesRequest(BaseModel):
-    min_msgs_per_min: int = 80
-    language: str = "en"
-
-
-@app.post("/api/vod/top-gta-spikes")
-async def get_top_gta_chat_spikes(req: TopGtaSpikesRequest, user: dict = Depends(require_auth)):
-    """Agent 1: Scans top live GTA VI/V Twitch streams for chat-spike moments (GTA mode only)."""
-    if not ADMIN_ONLY_MODE:
-        raise HTTPException(status_code=403, detail="VOD clipper is only enabled on the GTA studio.")
-    from vod_clipper import scan_top_gta_chat_spikes
-    try:
-        return await asyncio.to_thread(scan_top_gta_chat_spikes, req.min_msgs_per_min, 12, req.language)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/vod/inspect")
@@ -2329,8 +2311,7 @@ async def run_vod_production(task_id: str, req: VodProduceRequest, target_videos
             else:
                 PRODUCTION_TASKS[task_id]["log"].append("[2/4] Using pure Xbox game audio + Top Hook Banner...")
 
-            badge_name = (req.broadcaster_name or brand_name).strip()
-            build_ass_subtitles(words, ass_file, margin_v=520, top_badge=f"@{badge_name}", hook_banner=hook_text)
+            build_ass_subtitles(words, ass_file, margin_v=520, top_badge=f"@{brand_name}", hook_banner=hook_text)
             PRODUCTION_TASKS[task_id]["progress"] = 70
             PRODUCTION_TASKS[task_id]["log"].append(f"[3/4] Rendering 1080x1920 Cinema Frame ({dur:.1f}s, -14 LUFS)...")
 
@@ -2353,10 +2334,9 @@ async def run_vod_production(task_id: str, req: VodProduceRequest, target_videos
             yt_title = clean_title if "#shorts" in clean_title.lower() else f"{clean_title} #shorts #gta6"
             tags_line = ai_tags or "gta 6 gameplay, gta 6 xbox series x, gta vi shorts, gta 6 clips, pixelbreach"
             comment_line = ai_comment or "Rate this moment 1-10! Playing GTA 6 live on Series X."
-            credit_line = f"Credit: @{req.broadcaster_name} (twitch.tv/{req.broadcaster_name.lower()}) — " if req.broadcaster_name else ""
             with open(meta_file, "w", encoding="utf-8") as f:
                 f.write(f"TITLE:\n{yt_title}\n\n")
-                f.write(f"DESCRIPTION:\n{credit_line}{hook_text}. Subscribe to {brand_handle} #shorts #gta6 #gtavi #xbox\n\n")
+                f.write(f"DESCRIPTION:\n{hook_text} — Live from Series X. Subscribe to {brand_handle} #shorts #gta6 #gtavi #xbox\n\n")
                 f.write(f"TAGS:\n{tags_line}\n\n")
                 f.write(f"PINNED COMMENT:\n{comment_line}\n")
 

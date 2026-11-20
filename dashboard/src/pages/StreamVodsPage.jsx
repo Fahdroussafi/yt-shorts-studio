@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Radio, Scissors, RefreshCw, Play, Sparkles, Flame } from 'lucide-react';
+import { Radio, Scissors, RefreshCw, Play, Sparkles } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export default function StreamVodsPage() {
@@ -13,9 +13,6 @@ export default function StreamVodsPage() {
   const [vods, setVods] = useState([]);
   const [clips, setClips] = useState([]);
   const [highlights, setHighlights] = useState([]);
-  const [topSpikes, setTopSpikes] = useState([]);
-  const [scanningTopGta, setScanningTopGta] = useState(false);
-  const [topLang, setTopLang] = useState('en');
   const [selectedVod, setSelectedVod] = useState(null);
   const [activeTask, setActiveTask] = useState(null);
 
@@ -88,27 +85,8 @@ export default function StreamVodsPage() {
     }
   };
 
-  const handleScanTopGta = async () => {
-    setScanningTopGta(true);
-    try {
-      const res = await authFetch('/api/vod/top-gta-spikes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ min_msgs_per_min: 60, language: topLang }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-      setTopSpikes(data.spikes || []);
-      showToast(`Scanned ${data.streams_scanned || 0} live GTA streams — found ${(data.spikes || []).length} chat spikes!`, 'success');
-    } catch (err) {
-      showToast(err.message, 'error');
-    } finally {
-      setScanningTopGta(false);
-    }
-  };
-
   const handleCutHighlight = async (h) => {
-    const vodUrl = h.vod_url || h.url || selectedVod?.url || (channelInput.includes('twitch.tv/videos/') ? channelInput.trim() : '');
+    const vodUrl = h.url || selectedVod?.url || (channelInput.includes('twitch.tv/videos/') ? channelInput.trim() : '');
     if (!vodUrl) return showToast('Select a VOD first.', 'error');
     setActiveTask({ task_id: null, status: 'queued', progress: 5, log: [`Queueing ${h.start}–${h.end}...`] });
     try {
@@ -117,9 +95,8 @@ export default function StreamVodsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           vod_url: vodUrl,
-          vod_title: h.vod_title || h.title || selectedVod?.title || undefined,
+          vod_title: h.title || selectedVod?.title || undefined,
           game_name: h.game_name || undefined,
-          broadcaster_name: h.streamer || undefined,
           start_time: h.start,
           end_time: h.end,
         }),
@@ -145,72 +122,6 @@ export default function StreamVodsPage() {
         <p className="text-sm text-slate-400 mt-1">
           Auto-detects top moments from your Twitch Series X streams and renders 1080×1920 Cinema Frame Shorts.
         </p>
-      </div>
-
-      <div className="p-5 rounded-2xl bg-[#12121a] border border-slate-800/80 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-bold text-white flex items-center space-x-2">
-              <Flame className="w-4 h-4 text-orange-400" />
-              <span>Top GTA Streams — Live Chat-Spike Radar (Agent 1)</span>
-            </div>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Scans top live GTA VI / GTA V Twitch streams for chat explosions (msgs/min) and cuts clips automatically.
-            </p>
-          </div>
-          <div className="flex items-center space-x-2 shrink-0">
-            <select
-              value={topLang}
-              onChange={(e) => setTopLang(e.target.value)}
-              className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-white outline-none"
-            >
-              <option value="en">EN</option>
-              <option value="all">ALL</option>
-            </select>
-            <button
-              type="button"
-              onClick={handleScanTopGta}
-              disabled={scanningTopGta}
-              className="px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs flex items-center space-x-1.5 transition disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${scanningTopGta ? 'animate-spin' : ''}`} />
-              <span>{scanningTopGta ? 'Scanning Top GTA...' : 'Scan Top GTA Streams'}</span>
-            </button>
-          </div>
-        </div>
-
-        {topSpikes.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {topSpikes.map((sp, i) => (
-              <div key={i} className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center space-x-2">
-                    <span className="text-xs font-bold text-white truncate">@{sp.streamer}</span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold ${
-                      sp.msgs_per_min >= 500 ? 'bg-red-950 text-red-300 border border-red-700' : 'bg-orange-950 text-orange-300 border border-orange-800'
-                    }`}>
-                      {sp.msgs_per_min} msgs/min
-                    </span>
-                  </div>
-                  <div className="text-[11px] font-mono text-slate-400 mt-0.5">
-                    {sp.start}–{sp.end} · {sp.viewer_count.toLocaleString()} viewers
-                  </div>
-                  {sp.sample && (
-                    <div className="text-[11px] text-slate-500 truncate mt-0.5">"{sp.sample}"</div>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => handleCutHighlight(sp)}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white inline-flex items-center space-x-1 shrink-0 disabled:opacity-50"
-                >
-                  <Scissors className="w-3.5 h-3.5" /><span>Cut & Render</span>
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       <form onSubmit={handleLoadVods} className="p-5 rounded-2xl bg-[#12121a] border border-slate-800/80 flex flex-col sm:flex-row gap-3">
