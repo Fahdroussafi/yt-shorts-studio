@@ -811,6 +811,38 @@ export function AppProvider({ children }) {
     }
   };
 
+  const handleStartGuideProduction = async (topic, targetMinutes = 6) => {
+    setIsProducing(true);
+    setTaskStatus({ status: 'queued', progress: 5, log: ['Generating 16:9 guide chapters & UI card blueprint...'] });
+    try {
+      const genRes = await authFetch('/api/guides/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: topic || '', target_minutes: Number(targetMinutes) || 6 })
+      });
+      const genData = await genRes.json();
+      if (!genRes.ok) throw new Error(genData.detail || `HTTP ${genRes.status}`);
+
+      setStudioVideoId(genData.next_id);
+      setStudioTitle(genData.blueprint?.title || '');
+      const prodRes = await authFetch('/api/guides/produce', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          video_id: genData.next_id,
+          blueprint: genData.blueprint,
+          voice: studioVoice
+        })
+      });
+      const prodData = await prodRes.json();
+      if (!prodRes.ok) throw new Error(prodData.detail || `HTTP ${prodRes.status}`);
+      setActiveTaskId(prodData.task_id);
+    } catch (e) {
+      showToast(`Guide build error: ${e.message}`, "error");
+      setIsProducing(false);
+    }
+  };
+
   const formatPublishAt = (t) => {
     if (!t) return null;
     if (t.includes('Z')) return t;
@@ -944,7 +976,7 @@ export function AppProvider({ children }) {
     studioComment, setStudioComment,
     visualMode, setVisualMode,
     studioSearchTags, setStudioSearchTags,
-    activeTaskId, taskStatus, isProducing, pendingTaskQueue, seriesTasks, handleStartProduction,
+    activeTaskId, taskStatus, isProducing, pendingTaskQueue, seriesTasks, handleStartProduction, handleStartGuideProduction,
     dispatchVideoId, setDispatchVideoId,
     dispatchMode, setDispatchMode,
     dispatchTime, setDispatchTime,

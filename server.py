@@ -2500,6 +2500,123 @@ def update_video_schedule(short_id: str, req: UpdateScheduleRequest, user: dict 
     }
 
 
+class GuideGenerateRequest(BaseModel):
+    topic: Optional[str] = None
+    target_minutes: Optional[int] = 6
+
+
+class GuideProduceRequest(BaseModel):
+    video_id: str
+    blueprint: dict
+    voice: Optional[str] = "en-US-AndrewMultilingualNeural"
+
+
+@app.post("/api/guides/generate")
+def generate_long_guide(req: GuideGenerateRequest, user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    from idea_bank import get_next_short_id
+    from guide_builder import generate_guide_blueprint
+
+    next_id = get_next_short_id(paths["videos_dir"])
+    brand_name, brand_handle = get_user_brand(paths, user)
+    bp = generate_guide_blueprint(
+        topic=req.topic or "",
+        brand_name=brand_name,
+        brand_handle=brand_handle,
+        target_minutes=max(5, min(10, int(req.target_minutes or 6))),
+        user_key_file=paths["key_file"],
+    )
+    return {"next_id": next_id, "blueprint": bp}
+
+
+async def run_guide_production(task_id: str, req: GuideProduceRequest, target_videos_dir: str, brand_name: str):
+    sem = get_render_semaphore()
+    RENDER_QUEUE_LIST.append(task_id)
+    pos = len(RENDER_QUEUE_LIST)
+    if pos > MAX_CONCURRENT_RENDERS:
+        PRODUCTION_TASKS[task_id]["log"].append(f"[QUEUE] Server busy — queued at position #{pos - MAX_CONCURRENT_RENDERS}.")
+
+    async with sem:
+        try:
+            from guide_builder import render_long_guide_video
+
+            PRODUCTION_TASKS[task_id]["status"] = "processing"
+            PRODUCTION_TASKS[task_id]["progress"] = 10
+            PRODUCTION_TASKS[task_id]["log"].append("[1/3] Starting 16:9 UI Info-Card Guide render...")
+
+            target_dir = os.path.join(target_videos_dir, req.video_id)
+            work_dir = os.path.join(target_dir, "guide_work")
+            os.makedirs(target_dir, exist_ok=True)
+            output_mp4 = os.path.join(target_dir, f"{req.video_id}.mp4")
+            thumb_jpg = os.path.join(target_dir, "thumbnail.jpg")
+            meta_file = os.path.join(target_dir, "seo_metadata.txt")
+
+            chapters = req.blueprint.get("chapters") or []
+            total_ch = max(1, len(chapters))
+
+            def _log_cb(msg: str):
+                PRODUCTION_TASKS[task_id]["log"].append(msg)
+                m = re.match(r"\[(\d+)/", msg)
+                if m:
+                    done = int(m.group(1))
+                    PRODUCTION_TASKS[task_id]["progress"] = min(88, 12 + int((done / total_ch) * 76))
+
+            res = await render_long_guide_video(
+                blueprint=req.blueprint,
+                output_mp4=output_mp4,
+                thumb_jpg=thumb_jpg,
+                work_dir=work_dir,
+                brand_name=brand_name,
+                voice=req.voice or "en-US-AndrewMultilingualNeural",
+                log_cb=_log_cb,
+            )
+
+            tags_str = ", ".join(req.blueprint.get("search_tags") or ["gta 6 guide", "gta vi"])
+            full_desc = f"{req.blueprint.get('description', '')}\n\nChapters:\n{res['chapters_text']}".strip()
+            with open(meta_file, "w", encoding="utf-8") as f:
+                f.write(
+                    f"TITLE:\n{req.blueprint.get('title', req.video_id)}\n\n"
+                    f"DESCRIPTION:\n{full_desc}\n\n"
+                    f"SEARCH TAGS (Paste into YouTube Tags Box):\n{tags_str}\n\n"
+                    f"PINNED COMMENT:\n{req.blueprint.get('pinned_comment', '')}\n"
+                )
+
+            PRODUCTION_TASKS[task_id]["progress"] = 100
+            PRODUCTION_TASKS[task_id]["status"] = "completed"
+            PRODUCTION_TASKS[task_id]["output_file"] = output_mp4
+            PRODUCTION_TASKS[task_id]["log"].append(
+                f"[SUCCESS] 16:9 Guide ready ({res['duration_sec']/60:.1f} min, {res['segments']} chapters) -> {req.video_id}.mp4"
+            )
+        except Exception as e:
+            PRODUCTION_TASKS[task_id]["status"] = "failed"
+            PRODUCTION_TASKS[task_id]["error"] = str(e)
+            PRODUCTION_TASKS[task_id]["log"].append(f"[ERROR] {str(e)}")
+        finally:
+            if task_id in RENDER_QUEUE_LIST:
+                RENDER_QUEUE_LIST.remove(task_id)
+
+
+@app.post("/api/guides/produce")
+async def start_guide_produce(req: GuideProduceRequest, background_tasks: BackgroundTasks, user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    cleaned_id = sanitize_short_id(req.video_id)
+    req.video_id = cleaned_id
+    brand_name, _ = get_user_brand(paths, user)
+    task_id = f"task_{cleaned_id}_{int(time.time())}"
+    PRODUCTION_TASKS[task_id] = {
+        "task_id": task_id,
+        "user_id": paths["user_id"],
+        "video_id": cleaned_id,
+        "status": "queued",
+        "progress": 0,
+        "log": [],
+        "output_file": None,
+        "error": None,
+    }
+    background_tasks.add_task(run_guide_production, task_id, req, paths["videos_dir"], brand_name)
+    return {"task_id": task_id, "status": "queued", "video_id": cleaned_id}
+
+
 # Mount React static files if built
 if os.path.exists(DASHBOARD_DIST):
     app.mount("/assets", StaticFiles(directory=os.path.join(DASHBOARD_DIST, "assets")), name="assets")

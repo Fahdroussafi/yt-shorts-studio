@@ -14,7 +14,7 @@ export default function StudioPage() {
     studioComment, setStudioComment,
     visualMode, setVisualMode,
     studioSearchTags, setStudioSearchTags,
-    isProducing, seriesTasks, handleStartProduction,
+    isProducing, seriesTasks, handleStartProduction, handleStartGuideProduction,
     taskStatus, generatingIdea, autoGenerateAndFillStudio,
     videos, setPreviewVideo, handleDeleteVideo, usage
   } = useApp();
@@ -23,6 +23,8 @@ export default function StudioPage() {
 
   const navigate = useNavigate();
   const [previewingVoice, setPreviewingVoice] = useState(false);
+  const [guideTopic, setGuideTopic] = useState('');
+  const [guideMinutes, setGuideMinutes] = useState(6);
   const voiceAudioRef = useRef(null);
 
   const handleToggleVoicePreview = async () => {
@@ -277,6 +279,53 @@ export default function StudioPage() {
               : 'Render 1080x1920 Short'}
           </span>
         </button>
+      </div>
+
+      {/* Long-Form 16:9 UI Info-Card Guide Builder */}
+      <div className="bg-[#12121a] border border-cyan-500/30 rounded-2xl p-5 space-y-3 shadow-lg">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h3 className="font-bold text-sm text-white flex items-center space-x-2">
+              <span>📊</span>
+              <span>16:9 UI Info-Card Guide Builder (5–8 min)</span>
+            </h3>
+            <p className="text-xs text-slate-400">Chaptered 1920x1080 info cards (Steps, Stat Bars, Do/Avoid) + YouTube timestamps.</p>
+          </div>
+          <div className="flex items-center space-x-1.5">
+            {[5, 6, 8].map((mins) => (
+              <button
+                key={mins}
+                type="button"
+                onClick={() => setGuideMinutes(mins)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold border transition ${
+                  guideMinutes === mins
+                    ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
+                }`}
+              >
+                {mins}m
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2.5">
+          <input
+            type="text"
+            value={guideTopic}
+            onChange={(e) => setGuideTopic(e.target.value)}
+            placeholder="Topic or guide URL (e.g. GTA 6 Best Settings & Early Money Tips)..."
+            className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-cyan-500 outline-none text-sm text-white"
+          />
+          <button
+            type="button"
+            disabled={isProducing}
+            onClick={() => handleStartGuideProduction(guideTopic, guideMinutes)}
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:opacity-50 text-white font-bold text-sm flex items-center justify-center space-x-2 transition shrink-0"
+          >
+            {isProducing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
+            <span>Render 16:9 Guide</span>
+          </button>
+        </div>
       </div>
 
       {/* Multi-Screen Dynamic Series Grid (2 or 3 parts side-by-side) */}
