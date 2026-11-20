@@ -2503,6 +2503,7 @@ def update_video_schedule(short_id: str, req: UpdateScheduleRequest, user: dict 
 class GuideGenerateRequest(BaseModel):
     topic: Optional[str] = None
     target_minutes: Optional[int] = 6
+    niche: Optional[str] = None
 
 
 class GuideProduceRequest(BaseModel):
@@ -2519,12 +2520,15 @@ def generate_long_guide(req: GuideGenerateRequest, user: dict = Depends(require_
 
     next_id = get_next_short_id(paths["videos_dir"])
     brand_name, brand_handle = get_user_brand(paths, user)
+    niche = req.niche or ("gta6_launch" if ADMIN_ONLY_MODE else "dark_psychology")
     bp = generate_guide_blueprint(
         topic=req.topic or "",
         brand_name=brand_name,
         brand_handle=brand_handle,
         target_minutes=max(5, min(10, int(req.target_minutes or 6))),
         user_key_file=paths["key_file"],
+        niche=niche,
+        topic_history_file=paths.get("topic_history_file"),
     )
     return {"next_id": next_id, "blueprint": bp}
 

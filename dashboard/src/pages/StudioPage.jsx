@@ -313,9 +313,19 @@ export default function StudioPage() {
             type="text"
             value={guideTopic}
             onChange={(e) => setGuideTopic(e.target.value)}
-            placeholder="Topic or guide URL (e.g. GTA 6 Best Settings & Early Money Tips)..."
+            placeholder="Leave blank for Surprise Me (live topic) or paste topic / URL..."
             className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-cyan-500 outline-none text-sm text-white"
           />
+          {studioScript && (
+            <button
+              type="button"
+              disabled={isProducing}
+              onClick={() => handleStartGuideProduction(`${studioTitle}\n${studioScript}`, guideMinutes)}
+              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-cyan-300 border border-cyan-500/30 font-bold text-xs transition shrink-0"
+            >
+              Expand Studio Script
+            </button>
+          )}
           <button
             type="button"
             disabled={isProducing}
@@ -323,7 +333,7 @@ export default function StudioPage() {
             className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:opacity-50 text-white font-bold text-sm flex items-center justify-center space-x-2 transition shrink-0"
           >
             {isProducing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
-            <span>Render 16:9 Guide</span>
+            <span>{guideTopic.trim() ? 'Render 16:9 Guide' : 'Surprise Me & Render'}</span>
           </button>
         </div>
       </div>

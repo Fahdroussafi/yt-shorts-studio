@@ -818,7 +818,11 @@ export function AppProvider({ children }) {
       const genRes = await authFetch('/api/guides/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: topic || '', target_minutes: Number(targetMinutes) || 6 })
+        body: JSON.stringify({
+          topic: topic || '',
+          target_minutes: Number(targetMinutes) || 6,
+          niche: selectedNiche
+        })
       });
       const genData = await genRes.json();
       if (!genRes.ok) throw new Error(genData.detail || `HTTP ${genRes.status}`);

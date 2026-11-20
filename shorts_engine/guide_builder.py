@@ -74,40 +74,73 @@ def generate_guide_blueprint(
     brand_handle: str = "@PixelBreach-y6",
     target_minutes: int = 6,
     user_key_file: Optional[str] = None,
+    niche: str = "gta6_launch",
+    topic_history_file: Optional[str] = None,
 ) -> Dict:
-    """Generates a structured 5-10 min 16:9 chaptered guide blueprint with UI card specs."""
+    """Generates a true 5-8 min 16:9 chaptered guide blueprint (2-stage outline + deep per-chapter narration)."""
+    from concurrent.futures import ThreadPoolExecutor
     from gemini_generator import get_groq_key, generate_with_groq_lpu
-    from gta_news_engine import _fetch_article_paragraphs, scrape_article_media
+    from gta_news_engine import _fetch_article_paragraphs, scrape_article_media, fetch_gta_articles
+    from idea_bank import load_topic_history, record_topic_history, pick_concept_without_repeats
 
-    raw_topic = (topic or "").strip() or "GTA 6 Beginner Tips, Settings & Fast Money Strategy"
+    raw_topic = (topic or "").strip()
     scraped_context = ""
     media_urls: List[str] = []
 
-    if raw_topic.startswith("http://") or raw_topic.startswith("https://"):
-        scraped_context = _fetch_article_paragraphs(raw_topic)[:3500]
+    # Surprise Me mode when topic is blank: auto-pick fresh real RSS article (GTA) or unused concept
+    if not raw_topic:
+        used_titles = set()
+        for e in load_topic_history(topic_history_file):
+            for k in ("angle", "concept", "title"):
+                val = str(e.get(k, "")).strip().lower()
+                if val:
+                    used_titles.add(val)
+
+        if niche == "gta6_launch":
+            articles = fetch_gta_articles(topic_filter=None, used_titles=used_titles) or fetch_gta_articles(topic_filter=None, used_titles=set())
+            if articles:
+                art = articles[0]
+                raw_topic = art["title"]
+                body = art.get("body") or ""
+                if len(body) < 500 and art.get("link"):
+                    fetched = _fetch_article_paragraphs(art["link"])
+                    if len(fetched) > len(body):
+                        body = fetched
+                scraped_context = body[:3800]
+                media_urls = scrape_article_media(art.get("link", ""), max_items=10)
+            else:
+                raw_topic = "GTA 6 Complete Beginner Guide, Best Settings & Early Strategy"
+        else:
+            picked = pick_concept_without_repeats(niche=niche, history_file=topic_history_file, brand_name=brand_name, brand_handle=brand_handle)
+            raw_topic = picked.get("title", "Deep Dive Guide").replace("#shorts", "").strip()
+            scraped_context = picked.get("script", "")
+    elif raw_topic.startswith("http://") or raw_topic.startswith("https://"):
+        scraped_context = _fetch_article_paragraphs(raw_topic)[:3800]
         media_urls = scrape_article_media(raw_topic, max_items=10)
     elif len(raw_topic) > 180:
-        scraped_context = raw_topic[:3500]
+        scraped_context = raw_topic[:3800]
         raw_topic = raw_topic.splitlines()[0][:90].strip()
 
-    num_chapters = max(5, min(9, int(target_minutes)))
-    words_per_ch = 115  # ~48s per chapter -> 6 chapters ~= 5 min, 9 chapters ~= 7.5 min
+    target_minutes = max(5, min(10, int(target_minutes or 6)))
+    num_chapters = target_minutes  # ~1 min per chapter (155 words @ +3% edge-tts = ~60s)
+    words_per_ch = 155
 
     g_key = get_groq_key(user_key_file, allow_fallback=True)
     if not g_key:
         raise RuntimeError("Groq API key required for long-form guide generation.")
 
-    ctx_block = f"\nReference Article Facts:\n{scraped_context}\n" if scraped_context else ""
-    prompt = (
-        f'Create a complete {target_minutes}-minute YouTube 16:9 guide video blueprint on:\n'
+    ctx_block = f"\nReference Source Facts:\n{scraped_context}\n" if scraped_context else ""
+
+    # Stage 1: Outline + UI Info Card specs (fast, fits cleanly inside JSON token budget)
+    outline_prompt = (
+        f'Plan a complete {target_minutes}-minute YouTube 16:9 guide video on:\n'
         f'Topic: "{raw_topic}"\n{ctx_block}\n'
         f'Channel: {brand_name} ({brand_handle})\n\n'
         f'Requirements:\n'
-        f'- Produce {num_chapters} chapters (Chapter 1 = Intro/Hook, Chapters 2..{num_chapters-1} = actionable tips/mechanics/comparisons, Final Chapter = Summary & Outro).\n'
-        f'- Mix card_type across chapters: "step" (2-3 concise bullets), "stats" (3-4 rated bars 0-100), "compare" (do_list vs avoid_list).\n'
-        f'- Each chapter narration MUST be ~{words_per_ch} words of clear, engaging spoken YouTube commentary (no markdown, no stage directions).\n'
-        f'- Keep bullet text under 58 chars so it fits cleanly on 1920x1080 UI cards.\n'
-        f'- Output strictly valid JSON matching this schema:\n'
+        f'- Exactly {num_chapters} chapters (Chapter 1 = Intro/Hook, middle = deep actionable tips/mechanics/comparisons, final = Summary & Outro).\n'
+        f'- Mix card_type across chapters: "step" (3 concise bullets), "stats" (3-4 rated bars 0-100), "compare" (do_list vs avoid_list).\n'
+        f'- Keep each bullet under 56 chars so it fits cleanly on 1920x1080 UI cards.\n'
+        f'- Output strictly valid JSON:\n'
         f'{{\n'
         f'  "title": "Catchy 16:9 YouTube Guide Title (under 70 chars, NO #shorts)",\n'
         f'  "description": "2-sentence SEO summary for YouTube description",\n'
@@ -115,33 +148,77 @@ def generate_guide_blueprint(
         f'  "pinned_comment": "Short question for viewers in comments",\n'
         f'  "chapters": [\n'
         f'    {{\n'
-        f'      "chapter_title": "Short Chapter Name (for YouTube timestamps)",\n'
+        f'      "chapter_title": "Short Chapter Name",\n'
         f'      "badge": "INTRO" or "TIP 01" or "STATS" or "DO VS AVOID",\n'
         f'      "headline": "Big UI Card Headline (under 42 chars)",\n'
         f'      "card_type": "step",\n'
-        f'      "bullets": ["Concise takeaway 1", "Concise takeaway 2", "Concise takeaway 3"],\n'
-        f'      "stats": [{{"label": "Metric Name", "value": 85}}],\n'
+        f'      "bullets": ["Takeaway 1", "Takeaway 2", "Takeaway 3"],\n'
+        f'      "stats": [{{"label": "Metric", "value": 85}}],\n'
         f'      "do_list": ["Smart move 1", "Smart move 2"],\n'
-        f'      "avoid_list": ["Common mistake 1", "Common mistake 2"],\n'
-        f'      "narration": "Spoken script for this chapter (~{words_per_ch} words)."\n'
+        f'      "avoid_list": ["Mistake 1", "Mistake 2"]\n'
         f'    }}\n'
         f'  ]\n'
         f'}}'
     )
 
-    res = generate_with_groq_lpu(prompt, g_key)
-    if not isinstance(res, dict) or not res.get("chapters"):
-        raise RuntimeError("Failed to generate guide blueprint from AI.")
+    outline = generate_with_groq_lpu(outline_prompt, g_key)
+    if not isinstance(outline, dict) or not outline.get("chapters"):
+        raise RuntimeError("Failed to generate guide outline from AI.")
+
+    chapters = outline["chapters"][:num_chapters]
+    guide_title = (outline.get("title") or raw_topic)[:85].replace("#shorts", "").strip()
+
+    # Stage 2: Expand each chapter narration to ~155 spoken words (~60s each -> true 5/6/8 min total)
+    def _expand_chapter(idx_ch):
+        idx, ch = idx_ch
+        is_first = idx == 0
+        is_last = idx == len(chapters) - 1
+        role = (
+            "Opening hook & roadmap: grab viewer attention immediately and preview what this guide covers."
+            if is_first
+            else (
+                f"Final wrap-up: recap top takeaways and close with 'Subscribe to {brand_name} for more in-depth guides.'"
+                if is_last
+                else f"Deep-dive explanation for Chapter {idx + 1}: explain WHY it works, give concrete examples, numbers, and step-by-step advice."
+            )
+        )
+        p = (
+            f'Write the spoken voiceover narration for Chapter {idx + 1} of {len(chapters)} in the YouTube guide "{guide_title}".\n'
+            f'Chapter Title: {ch.get("chapter_title")}\n'
+            f'Card Headline: {ch.get("headline")}\n'
+            f'On-screen points: {json.dumps(ch.get("bullets") or ch.get("do_list") or ch.get("stats") or [])}\n'
+            f'Context: {scraped_context[:1000]}\n'
+            f'Role: {role}\n'
+            f'Rules: Write between {words_per_ch - 10} and {words_per_ch + 20} words of natural, punchy spoken English. '
+            f'No markdown, no bullet symbols, no stage directions, no "Chapter X" label.\n'
+            f'Respond ONLY with JSON: {{"narration": "..."}}'
+        )
+        r = generate_with_groq_lpu(p, g_key)
+        narr = re.sub(r"\s+", " ", (r.get("narration") or "").strip()) if isinstance(r, dict) else ""
+        if len(narr.split()) < 60:
+            pts = ". ".join(str(x) for x in (ch.get("bullets") or ch.get("do_list") or [ch.get("headline", "")]))
+            narr = f"{ch.get('headline', '')}. {pts}. {narr}".strip()
+        ch["narration"] = narr
+        return ch
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        chapters = list(pool.map(_expand_chapter, list(enumerate(chapters))))
+
+    if topic_history_file:
+        record_topic_history(topic_history_file, guide_title, niche, raw_topic)
+
+    total_words = sum(len((c.get("narration") or "").split()) for c in chapters)
 
     return {
-        "title": (res.get("title") or raw_topic)[:85].replace("#shorts", "").strip(),
-        "description": (res.get("description") or raw_topic).strip(),
-        "search_tags": res.get("search_tags") or ["gta 6 guide", "gta 6 tips", "gta vi"],
-        "pinned_comment": res.get("pinned_comment") or "Which tip helped you most? Drop it below.",
-        "chapters": res["chapters"],
+        "title": guide_title,
+        "description": (outline.get("description") or raw_topic).strip(),
+        "search_tags": outline.get("search_tags") or ["gta 6 guide", "gta 6 tips", "gta vi"],
+        "pinned_comment": outline.get("pinned_comment") or "Which tip helped you most? Drop it below.",
+        "chapters": chapters,
         "media_urls": media_urls,
         "target_minutes": target_minutes,
-        "model_used": res.get("model_used", "groq-lpu"),
+        "total_words": total_words,
+        "model_used": outline.get("model_used", "groq-lpu"),
     }
 
 
