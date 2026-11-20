@@ -65,7 +65,7 @@ def _fmt_ts(sec: float) -> str:
     s = max(0, int(round(sec)))
     m, rem = divmod(s, 60)
     h, m = divmod(m, 60)
-    return f"{h}:{m:02d}:{rem:02d}" if h else f"{m}:{rem:02d}"
+    return f"{h:02d}:{m:02d}:{rem:02d}" if h else f"{m:02d}:{rem:02d}"
 
 
 def generate_guide_blueprint(
@@ -337,6 +337,8 @@ def render_guide_card_png(
     total: int,
     bg_image_path: Optional[str] = None,
     active_step: Optional[int] = None,
+    all_chapters: Optional[List[Dict]] = None,
+    start_ts: str = "00:00",
 ) -> str:
     """Renders a 1920x1080 GTA-styled UI Info Card PNG using Pillow."""
     W, H = 1920, 1080
@@ -509,15 +511,36 @@ def render_guide_card_png(
             except Exception:
                 pass
 
-    # 6. Bottom Progress Bar
+    # 6. YouTube-Style Segmented Chapter Timeline Bar inside Video Frame
     draw = ImageDraw.Draw(canvas)
-    prog_w = int((W - 176) * ((idx + 1) / max(1, total)))
-    draw.rounded_rectangle((88, H - 52, W - 88, H - 36), radius=8, fill=(30, 41, 59, 220))
-    draw.rounded_rectangle((88, H - 52, 88 + max(24, prog_w), H - 36), radius=8, fill=(56, 189, 248, 255))
-    footer_txt = f"CHAPTER: {chapter.get('chapter_title', '')}"
+    bar_left, bar_right = 110, W - 110
+    bar_w = bar_right - bar_left
+    gap = 10
+    n_seg = max(1, total)
+    seg_w = int((bar_w - gap * (n_seg - 1)) / n_seg)
+    f_seg = _load_font(18, bold=True)
+
+    footer_txt = f"[{start_ts}]  CHAPTER {idx + 1}/{total}: {str(chapter.get('chapter_title', '')).upper()}"
     while len(footer_txt) > 12 and (draw.textbbox((0, 0), footer_txt, font=f_small)[2] - draw.textbbox((0, 0), footer_txt, font=f_small)[0]) > (W - 288):
         footer_txt = footer_txt[:-4].rstrip() + "..."
-    draw.text((144, H - 132), footer_txt, font=f_small, fill=(148, 163, 184, 255))
+    draw.text((144, H - 140), footer_txt, font=f_small, fill=(56, 189, 248, 255))
+
+    for s_i in range(n_seg):
+        sx0 = bar_left + s_i * (seg_w + gap)
+        sx1 = bar_right if s_i == n_seg - 1 else (sx0 + seg_w)
+        if s_i < idx:
+            fill_col = (14, 116, 144, 240)
+            txt_col = (148, 163, 184, 230)
+        elif s_i == idx:
+            fill_col = (236, 72, 153, 255)
+            txt_col = (255, 255, 255, 255)
+        else:
+            fill_col = (30, 41, 59, 220)
+            txt_col = (100, 116, 139, 210)
+        draw.rounded_rectangle((sx0, H - 56, sx1, H - 38), radius=6, fill=fill_col)
+        if all_chapters and s_i < len(all_chapters):
+            c_lbl = str(all_chapters[s_i].get("chapter_title") or f"Part {s_i+1}")[:18]
+            draw.text((sx0 + 4, H - 82), c_lbl, font=f_seg, fill=txt_col)
 
     canvas.convert("RGB").save(out_png, quality=92)
     return out_png
@@ -558,8 +581,9 @@ async def render_long_guide_video(
         seg_mp4 = os.path.join(work_dir, f"seg_{idx}.mp4")
 
         await generate_voice(narration, mp3_path, voice=voice, rate="+3%", brand_name=brand_name)
-        dur = max(4.0, get_audio_duration(mp3_path))
-        chapter_timestamps.append(f"{_fmt_ts(elapsed)} {ch.get('chapter_title', f'Chapter {idx+1}')}")
+        dur = max(10.0, get_audio_duration(mp3_path))
+        cur_ts = _fmt_ts(elapsed)
+        chapter_timestamps.append(f"{cur_ts} - {ch.get('chapter_title', f'Chapter {idx+1}')}")
         elapsed += dur
 
         bg_pick = bg_imgs[idx % len(bg_imgs)] if bg_imgs else None
@@ -576,7 +600,7 @@ async def render_long_guide_video(
             p_png = os.path.join(work_dir, f"ch_{idx}_{s_i}.png")
             await asyncio.to_thread(
                 render_guide_card_png, ch, p_png, brand_name, idx, total, bg_pick,
-                s_i if step_count > 1 else None,
+                s_i if step_count > 1 else None, chapters, cur_ts,
             )
             frame_pngs.append(p_png)
 
