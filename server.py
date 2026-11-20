@@ -1641,11 +1641,11 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
     from gemini_generator import generate_with_gemini_flash
     from usage_tracker import record_gemini_request
 
-    niche = req.niche
+    niche = "gta6_launch" if ADMIN_ONLY_MODE else req.niche
 
     # If user selected Surprise Me, preserve their selected niche! Only pick random if explicitly empty or 'random'
     if not niche or niche == "random" or (niche not in NICHE_PROFILES and niche not in CONCEPTS_DATABASE):
-        niche = random.choice(list(NICHE_PROFILES.keys()))
+        niche = "gta6_launch" if ADMIN_ONLY_MODE else random.choice(list(NICHE_PROFILES.keys()))
 
     next_id = get_next_short_id(paths["videos_dir"])
     brand_name, brand_handle = get_user_brand(paths, user)
@@ -2520,7 +2520,7 @@ def generate_long_guide(req: GuideGenerateRequest, user: dict = Depends(require_
 
     next_id = get_next_short_id(paths["videos_dir"])
     brand_name, brand_handle = get_user_brand(paths, user)
-    niche = req.niche or ("gta6_launch" if ADMIN_ONLY_MODE else "dark_psychology")
+    niche = "gta6_launch" if ADMIN_ONLY_MODE else (req.niche or "dark_psychology")
     bp = generate_guide_blueprint(
         topic=req.topic or "",
         brand_name=brand_name,

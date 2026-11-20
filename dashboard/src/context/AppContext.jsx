@@ -185,6 +185,14 @@ export function AppProvider({ children }) {
     fetchUsage();
   }, [authToken]);
 
+  // Lock default niche & voice to GTA 6 when running in GTA studio mode
+  useEffect(() => {
+    if (usage?.studio_mode === 'gta') {
+      setSelectedNiche('gta6_launch');
+      setStudioVoice((prev) => (prev === 'en-US-ChristopherNeural' ? 'en-US-AndrewMultilingualNeural' : prev));
+    }
+  }, [usage?.studio_mode]);
+
   // Background Telemetry Sync every 45s
   useEffect(() => {
     if (!authToken) return;
@@ -595,7 +603,7 @@ export function AppProvider({ children }) {
   const handleGenerateIdea = async (overrideNiche = null, isSurprise = false, countOverride = null) => {
     setGeneratingIdea(true);
     try {
-      const targetNiche = overrideNiche || selectedNiche;
+      const targetNiche = usage?.studio_mode === 'gta' ? 'gta6_launch' : (overrideNiche || selectedNiche);
       const count = countOverride !== null ? countOverride : seriesMode;
       const res = await authFetch('/api/ideas/generate', {
         method: 'POST',
@@ -635,20 +643,12 @@ export function AppProvider({ children }) {
       const res = await authFetch('/api/ideas/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ niche: 'random', concept: '' })
+        body: JSON.stringify({ niche: usage?.studio_mode === 'gta' ? 'gta6_launch' : 'random', concept: '', surprise: true })
       });
       if (res.ok) {
         const data = await res.json();
         setGeneratedIdea(data);
-        setStudioVideoId(data.next_id || 'short_08');
-        setStudioTitle(data.title);
-        setStudioScript(data.script);
-        setStudioKeywords(data.keywords.join(', '));
-        setStudioDesc(data.description);
-        setStudioComment(data.pinned_comment);
-        if (data.voice) {
-          setStudioVoice(data.voice);
-        }
+        sendIdeaToStudio(data);
       }
     } catch (e) {
       console.error("Auto generate error:", e);
@@ -800,7 +800,7 @@ export function AppProvider({ children }) {
         description: studioDesc,
         pinned_comment: studioComment,
         voice: studioVoice,
-        niche: selectedNiche,
+        niche: usage?.studio_mode === 'gta' ? 'gta6_launch' : selectedNiche,
         media_urls: studioMediaUrls,
         hook_banner: studioHookBanner || undefined
       });
@@ -821,7 +821,7 @@ export function AppProvider({ children }) {
         body: JSON.stringify({
           topic: topic || '',
           target_minutes: Number(targetMinutes) || 6,
-          niche: selectedNiche
+          niche: usage?.studio_mode === 'gta' ? 'gta6_launch' : selectedNiche
         })
       });
       const genData = await genRes.json();
