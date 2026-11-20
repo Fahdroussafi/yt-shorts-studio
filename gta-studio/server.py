@@ -1,0 +1,2739 @@
+import os
+import sys
+import re
+import json
+import time
+import hmac
+import hashlib
+import base64
+import random
+import asyncio
+import subprocess
+import urllib.request
+import urllib.error
+import urllib.parse
+import shutil
+import requests
+from typing import Optional, List, Dict
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Response, status, Request, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+# Load environment variables from .env if present
+def _load_env_file(path: str = None):
+    if not path:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        except Exception:
+            pass
+
+_load_env_file()
+
+# Auth & Platform Configuration
+AUTH_SERVICE_URL = os.environ.get("AUTH_SERVICE_URL", "http://127.0.0.1:8051")
+JWT_SECRET = os.environ.get("JWT_SECRET", "yt-shorts-studio-secret-key-2026")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@admin.com").strip().lower()
+DEFAULT_BRAND_NAME = os.environ.get("DEFAULT_BRAND_NAME", "PixelBreach").strip()
+DEFAULT_CHANNEL_HANDLE = os.environ.get("DEFAULT_CHANNEL_HANDLE", "@PixelBreach-y6").strip()
+DEFAULT_CHANNEL_URL = os.environ.get("DEFAULT_CHANNEL_URL", f"https://www.youtube.com/{DEFAULT_CHANNEL_HANDLE}").strip()
+DEFAULT_REDIRECT_URI = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost").strip()
+ADMIN_ONLY_MODE = True
+DISABLE_LEGACY_MIGRATION = True
+
+def verify_jwt_token(token: str) -> dict:
+    """Verifies HS256 JWT signature and expiration. Standard library only."""
+    if not token or not isinstance(token, str):
+        return None
+    try:
+        parts = token.strip().split(".")
+        if len(parts) != 3:
+            return None
+        header_b64, payload_b64, sig_b64 = parts
+        
+        message = f"{header_b64}.{payload_b64}".encode("utf-8")
+        expected_sig = hmac.new(
+            JWT_SECRET.encode("utf-8"),
+            message,
+            hashlib.sha256
+        ).digest()
+        
+        rem = len(sig_b64) % 4
+        sig_padded = sig_b64 + ("=" * (4 - rem) if rem else "")
+        actual_sig = base64.urlsafe_b64decode(sig_padded)
+        
+        if not hmac.compare_digest(expected_sig, actual_sig):
+            return None
+            
+        rem_p = len(payload_b64) % 4
+        payload_padded = payload_b64 + ("=" * (4 - rem_p) if rem_p else "")
+        payload_json = base64.urlsafe_b64decode(payload_padded).decode("utf-8")
+        payload = json.loads(payload_json)
+        
+        if "exp" in payload and time.time() > payload["exp"]:
+            return None
+            
+        return payload
+    except Exception:
+        return None
+
+def require_auth(authorization: Optional[str] = Header(None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized: Valid JWT required")
+    token = authorization[7:].strip()
+    user = verify_jwt_token(token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized: Invalid or expired JWT")
+    if ADMIN_ONLY_MODE and (user.get("email") or "").strip().lower() != ADMIN_EMAIL:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Exclusive studio restricted to owner account.")
+    return user
+
+def sanitize_short_id(short_id: str) -> str:
+    """Sanitizes and validates video/short IDs to strictly disallow directory traversal."""
+    if not short_id or not isinstance(short_id, str):
+        raise HTTPException(status_code=400, detail="Short ID cannot be empty")
+    cleaned = short_id.strip()
+    if not re.match(r'^[a-zA-Z0-9_-]{1,64}$', cleaned):
+        raise HTTPException(status_code=400, detail="Invalid short ID format")
+    return cleaned
+
+# Workspace Paths
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+VIDEOS_DIR = os.path.join(BASE_DIR, "videos")
+TOOLS_DIR = os.path.join(BASE_DIR, "tools")
+ENGINE_DIR = os.path.join(BASE_DIR, "shorts_engine")
+DASHBOARD_DIST = os.path.join(BASE_DIR, "dashboard", "dist")
+
+sys.path.append(TOOLS_DIR)
+sys.path.append(ENGINE_DIR)
+
+app = FastAPI(
+    title="PixelBreach GTA 6 Studio API",
+    version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ==========================================
+# MULTI-TENANT STORAGE MANAGEMENT
+# ==========================================
+USERS_DATA_DIR = os.environ.get("USERS_DATA_DIR") or os.path.join(BASE_DIR, "users_data")
+os.makedirs(USERS_DATA_DIR, exist_ok=True)
+LEGACY_CLAIM_FILE = os.path.join(USERS_DATA_DIR, ".legacy_claimed.json")
+
+# Fallback global paths
+TOKEN_FILE = os.path.join(BASE_DIR, "token.json")
+CLIENT_SECRETS_FILE = os.path.join(BASE_DIR, "client_secret.json")
+
+def get_user_id(user: dict) -> str:
+    sub = user.get("sub") or user.get("id") or user.get("email") or "default_user"
+    return re.sub(r'[^a-zA-Z0-9_-]', '_', str(sub))
+
+def is_legacy_owner(uid: str, email: Optional[str] = None) -> bool:
+    if email and email.lower() == ADMIN_EMAIL:
+        return True
+    if os.path.exists(LEGACY_CLAIM_FILE):
+        try:
+            with open(LEGACY_CLAIM_FILE, "r", encoding="utf-8") as f:
+                claim_data = json.load(f)
+            return claim_data.get("owner_id") == uid or (email and claim_data.get("email") == email)
+        except Exception:
+            return False
+    return False
+
+def get_admin_yt_ids() -> set:
+    """Dynamically loads all YouTube IDs owned by the platform administrator (root + admin user folder)."""
+    admin_ids = set()
+    candidate_files = [os.path.join(BASE_DIR, "video_mappings.json")]
+    if os.path.exists(LEGACY_CLAIM_FILE):
+        try:
+            with open(LEGACY_CLAIM_FILE, "r", encoding="utf-8") as f:
+                owner_id = json.load(f).get("owner_id")
+            if owner_id:
+                candidate_files.append(os.path.join(USERS_DATA_DIR, owner_id, "video_mappings.json"))
+        except Exception:
+            pass
+    for mf in candidate_files:
+        if os.path.exists(mf):
+            try:
+                with open(mf, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for v in data.values():
+                    if isinstance(v, dict) and v.get("yt_id"):
+                        admin_ids.add(v["yt_id"])
+            except Exception:
+                pass
+    return admin_ids
+
+def get_user_paths(user: dict) -> dict:
+    uid = get_user_id(user)
+    u_dir = os.path.join(USERS_DATA_DIR, uid)
+    v_dir = os.path.join(u_dir, "videos")
+    os.makedirs(v_dir, exist_ok=True)
+
+    email = user.get("email", "").lower()
+    is_admin = (email == ADMIN_EMAIL)
+
+    # Initial Migration Check: Only admin inherits the existing platform channel and shorts
+    if not DISABLE_LEGACY_MIGRATION and not os.path.exists(LEGACY_CLAIM_FILE) and is_admin:
+        try:
+            with open(LEGACY_CLAIM_FILE, "w", encoding="utf-8") as f:
+                json.dump({"owner_id": uid, "claimed_at": time.time(), "email": user.get("email")}, f, indent=2)
+
+            if os.path.exists(VIDEOS_DIR) and os.listdir(VIDEOS_DIR):
+                for item in os.listdir(VIDEOS_DIR):
+                    s = os.path.join(VIDEOS_DIR, item)
+                    d = os.path.join(v_dir, item)
+                    if os.path.isdir(s) and not os.path.exists(d):
+                        shutil.copytree(s, d)
+
+            for fname in ["video_mappings.json", "stats_cache.json", "usage_tracker.json", "groq_api_key.txt", "token.json", "client_secret.json"]:
+                s = os.path.join(BASE_DIR, fname)
+                d = os.path.join(u_dir, fname)
+                if os.path.exists(s) and not os.path.exists(d):
+                    shutil.copy2(s, d)
+
+            ch_info = {
+                "channel_handle": DEFAULT_CHANNEL_HANDLE,
+                "channel_url": DEFAULT_CHANNEL_URL
+            }
+            with open(os.path.join(u_dir, "channel_info.json"), "w", encoding="utf-8") as f:
+                json.dump(ch_info, f, indent=2)
+        except Exception as e:
+            print(f"[Warning] Error during legacy claim: {e}")
+
+    # Ensure baseline files exist for the user
+    ch_path = os.path.join(u_dir, "channel_info.json")
+    vm_path = os.path.join(u_dir, "video_mappings.json")
+    sc_path = os.path.join(u_dir, "stats_cache.json")
+
+    # If this user is the legacy owner, ensure mappings and stats are populated from root
+    if not DISABLE_LEGACY_MIGRATION and is_legacy_owner(uid, user.get("email")):
+        try:
+            root_vm = os.path.join(BASE_DIR, "video_mappings.json")
+            if (not os.path.exists(vm_path) or os.path.getsize(vm_path) <= 4) and os.path.exists(root_vm):
+                shutil.copy2(root_vm, vm_path)
+
+            root_sc = os.path.join(BASE_DIR, "stats_cache.json")
+            if (not os.path.exists(sc_path) or os.path.getsize(sc_path) <= 4) and os.path.exists(root_sc):
+                shutil.copy2(root_sc, sc_path)
+
+            root_token = os.path.join(BASE_DIR, "token.json")
+            user_token = os.path.join(u_dir, "token.json")
+            # Only copy on initial claim if user directory was just created and user_token doesn't exist
+            # Do NOT resurrect if user explicitly deleted/disconnected token
+
+            root_cs = os.path.join(BASE_DIR, "client_secret.json")
+            user_cs = os.path.join(u_dir, "client_secret.json")
+            if not os.path.exists(user_cs) and os.path.exists(root_cs):
+                shutil.copy2(root_cs, user_cs)
+
+            if not os.path.exists(ch_path) or os.path.getsize(ch_path) <= 4:
+                with open(ch_path, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "channel_handle": DEFAULT_CHANNEL_HANDLE,
+                        "channel_url": DEFAULT_CHANNEL_URL
+                    }, f, indent=2)
+        except Exception as e:
+            print(f"[Warning] Error ensuring legacy files: {e}")
+
+    if not os.path.exists(ch_path):
+        with open(ch_path, "w", encoding="utf-8") as f:
+            json.dump({"channel_handle": "", "channel_url": ""}, f, indent=2)
+
+    if not os.path.exists(vm_path):
+        with open(vm_path, "w", encoding="utf-8") as f:
+            json.dump({}, f, indent=2)
+
+    if not os.path.exists(sc_path):
+        with open(sc_path, "w", encoding="utf-8") as f:
+            json.dump({}, f, indent=2)
+
+    return {
+        "user_id": uid,
+        "user_dir": u_dir,
+        "videos_dir": v_dir,
+        "mappings_file": vm_path,
+        "stats_cache_file": sc_path,
+        "usage_file": os.path.join(u_dir, "usage_tracker.json"),
+        "key_file": os.path.join(u_dir, "groq_api_key.txt"),
+        "token_file": os.path.join(u_dir, "token.json"),
+        "client_secret_file": os.path.join(u_dir, "client_secret.json"),
+        "channel_file": ch_path,
+        "topic_history_file": os.path.join(u_dir, "topic_history.json"),
+        "clip_history_file": os.path.join(u_dir, "clip_history.json")
+    }
+
+def load_user_stats_cache(stats_file: str) -> dict:
+    if os.path.exists(stats_file):
+        try:
+            with open(stats_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_user_stats_cache(cache: dict, stats_file: str):
+    try:
+        with open(stats_file, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2)
+    except Exception:
+        pass
+
+def get_user_video_mappings(mappings_file: str) -> dict:
+    if os.path.exists(mappings_file):
+        try:
+            with open(mappings_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_user_video_mapping(mappings_file: str, video_id: str, yt_id: str, status: str, publish_at: Optional[str] = None):
+    mappings = get_user_video_mappings(mappings_file)
+    entry = {"yt_id": yt_id, "default_status": status}
+    if publish_at:
+        entry["publish_at"] = publish_at
+    elif video_id in mappings and "publish_at" in mappings[video_id]:
+        entry["publish_at"] = mappings[video_id]["publish_at"]
+    mappings[video_id] = entry
+    try:
+        with open(mappings_file, "w", encoding="utf-8") as f:
+            json.dump(mappings, f, indent=2)
+    except Exception:
+        pass
+
+def clear_user_video_mapping(paths: dict, video_id: str):
+    """Clears stale YouTube mapping/stats when a slot is newly produced."""
+    for key, path in (("mappings", paths.get("mappings_file")), ("stats", paths.get("stats_file"))):
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and video_id in data:
+                del data[video_id]
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+        except Exception:
+            pass
+
+def get_user_channel_info(channel_file: str) -> dict:
+    if os.path.exists(channel_file):
+        try:
+            with open(channel_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"channel_handle": "", "channel_url": ""}
+
+def get_user_brand(paths: dict, user: Optional[dict] = None) -> tuple:
+    """
+    Returns (brand_name, brand_handle).
+    brand_name: clean name for spoken scripts (e.g. "ShadowMind" or "GameVortex")
+    brand_handle: @handle for descriptions and titles (e.g. "@TheShadowMindHQ-Hub" or "@GameVortex")
+    """
+    ch_info = get_user_channel_info(paths.get("channel_file", ""))
+    handle = (ch_info.get("channel_handle") or "").strip()
+
+    if handle:
+        clean = handle.lstrip("@").strip()
+        if clean.lower() in [DEFAULT_CHANNEL_HANDLE.lower().lstrip("@"), DEFAULT_BRAND_NAME.lower()]:
+            return DEFAULT_BRAND_NAME, DEFAULT_CHANNEL_HANDLE
+        spoken_name = clean.split("-")[0].strip() if "-" in clean else clean
+        return (spoken_name or clean), (f"@{clean}" if not handle.startswith("@") else handle)
+
+    uid = paths.get("user_id", "")
+    if uid and is_legacy_owner(uid):
+        return DEFAULT_BRAND_NAME, DEFAULT_CHANNEL_HANDLE
+
+    if user:
+        name = (user.get("name") or "").strip()
+        if name and name.lower() not in ["admin", "root", "user"]:
+            clean_name = name.lstrip("@").strip()
+            return clean_name, f"@{clean_name}"
+        email = (user.get("email") or "").strip()
+        if email:
+            prefix = email.split("@")[0].strip()
+            if prefix and prefix.lower() not in ["admin", "root"]:
+                cap_p = prefix.capitalize()
+                return cap_p, f"@{cap_p}"
+
+    return "MyChannel", "@MyChannel"
+
+PRODUCTION_TASKS: Dict[str, dict] = {}
+
+
+# ==========================================
+# MODELS
+# ==========================================
+class ProduceRequest(BaseModel):
+    video_id: str
+    script_text: str
+    clip_keywords: List[str]
+    title: str
+    description: str
+    pinned_comment: str
+    voice: Optional[str] = "en-US-ChristopherNeural"
+    niche: Optional[str] = "dark_psychology"
+    visual_mode: Optional[str] = "cinematic_cuts"   # "cinematic_cuts" | "parkour_brainrot" | "split_retention"
+    search_tags: Optional[List[str]] = None
+    media_urls: Optional[List[str]] = None
+    hook_banner: Optional[str] = None
+
+
+class UploadRequest(BaseModel):
+    video_id: str
+    privacy_status: str = "public"
+    publish_at: Optional[str] = None
+
+
+class UpdateScheduleRequest(BaseModel):
+    publish_at: str
+
+
+class AIKeyRequest(BaseModel):
+    api_key: str
+
+
+class IdeaGenerateRequest(BaseModel):
+    niche: Optional[str] = "dark_psychology"
+    concept: Optional[str] = None
+    surprise: Optional[bool] = False
+    series_count: Optional[int] = 1   # 1 for single, 2 or 3 for multi-part connected story arc
+
+
+class ChannelSettingsRequest(BaseModel):
+    channel_handle: str
+    channel_url: Optional[str] = None
+
+
+class YouTubeTokenRequest(BaseModel):
+    token_json: str
+
+
+class OAuthCallbackRequest(BaseModel):
+    code_or_url: str
+
+
+def extract_client_credentials(cs_data: dict) -> tuple:
+    cfg = cs_data.get("installed") or cs_data.get("web") or cs_data
+    client_id = cfg.get("client_id", "")
+    client_secret = cfg.get("client_secret", "")
+    redirect_uris = cfg.get("redirect_uris", [DEFAULT_REDIRECT_URI])
+    redirect_uri = redirect_uris[0] if redirect_uris else DEFAULT_REDIRECT_URI
+    return client_id, client_secret, redirect_uri
+
+
+def get_auth_url_for_client(client_id: str, redirect_uri: str = DEFAULT_REDIRECT_URI) -> str:
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly",
+        "access_type": "offline",
+        "prompt": "consent"
+    }
+    return f"https://accounts.google.com/o/oauth2/v2/auth?{urllib.parse.urlencode(params)}"
+
+
+# ==========================================
+# VIDEO STREAMING (HTTP 206 Partial Content)
+# ==========================================
+def range_stream(file_path: str, start: int, end: int, chunk_size: int = 1024 * 64):
+    with open(file_path, "rb") as f:
+        f.seek(start)
+        remaining = end - start + 1
+        while remaining > 0:
+            bytes_to_read = min(chunk_size, remaining)
+            data = f.read(bytes_to_read)
+            if not data:
+                break
+            remaining -= len(data)
+            yield data
+
+
+# ==========================================
+# ENDPOINTS
+# ==========================================
+
+# -------------------------------------------------------------
+# NestJS Auth Proxy (Seamless same-origin authentication relay)
+# -------------------------------------------------------------
+@app.api_route("/api/auth/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+async def auth_proxy(full_path: str, req: Request):
+    if req.method == "OPTIONS":
+        return JSONResponse({"status": "ok"})
+
+    body = await req.body()
+    if ADMIN_ONLY_MODE:
+        sub_path = full_path.strip("/").lower()
+        if sub_path == "register":
+            return JSONResponse({"statusCode": 403, "message": "Registration disabled on this exclusive studio."}, status_code=403)
+        if sub_path == "login" and body:
+            try:
+                login_payload = json.loads(body.decode("utf-8"))
+                if (login_payload.get("email") or "").strip().lower() != ADMIN_EMAIL:
+                    return JSONResponse({"statusCode": 403, "message": "Access restricted to studio owner."}, status_code=403)
+            except Exception:
+                pass
+
+    target_url = f"{AUTH_SERVICE_URL}/api/auth/{full_path}"
+    query = str(req.query_params)
+    if query:
+        target_url += f"?{query}"
+
+    headers = {
+        "Content-Type": req.headers.get("Content-Type", "application/json")
+    }
+    if "Authorization" in req.headers:
+        headers["Authorization"] = req.headers["Authorization"]
+        
+    def _forward():
+        urllib_req = urllib.request.Request(
+            url=target_url,
+            data=body if body else None,
+            headers=headers,
+            method=req.method
+        )
+        try:
+            with urllib.request.urlopen(urllib_req, timeout=10) as resp:
+                resp_data = resp.read()
+                return resp.status, resp_data, resp.headers.get("Content-Type", "application/json")
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), e.headers.get("Content-Type", "application/json")
+        except Exception as e:
+            err_json = json.dumps({
+                "statusCode": 503,
+                "message": f"NestJS Auth Service offline on {AUTH_SERVICE_URL}: {str(e)}"
+            }).encode("utf-8")
+            return 503, err_json, "application/json"
+
+    status_code, content, content_type = await asyncio.to_thread(_forward)
+    return Response(content=content, status_code=status_code, media_type=content_type)
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "timestamp": time.time(), "engine": "PixelBreach GTA Studio v1.0"}
+
+
+def parse_view_count(text: str) -> int:
+    if not text:
+        return 0
+    t = text.lower().replace(",", "").strip()
+    m_m = re.search(r'([\d.]+)\s*(m|million)', t)
+    if m_m:
+        return int(float(m_m.group(1)) * 1000000)
+    m_k = re.search(r'([\d.]+)\s*(k|thousand)', t)
+    if m_k:
+        return int(float(m_k.group(1)) * 1000)
+    m_num = re.search(r'(\d+)', t)
+    if m_num:
+        return int(m_num.group(1))
+    return 0
+
+def fetch_exact_video_view_count(yt_id: str) -> Optional[int]:
+    """Fetches exact unrounded view count from YouTube's player API or public watch page."""
+    # 1. Try Innertube player endpoint
+    try:
+        url = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+        payload = {
+            "videoId": yt_id,
+            "context": {
+                "client": {
+                    "hl": "en",
+                    "gl": "US",
+                    "clientName": "WEB",
+                    "clientVersion": "2.20240101.00.00"
+                }
+            }
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            raw = data.get("videoDetails", {}).get("viewCount")
+            if raw is not None and str(raw).isdigit():
+                return int(raw)
+    except Exception:
+        pass
+
+    # 2. Datacenter fallback: scrape unrounded originalViewCount from watch page
+    try:
+        url = f"https://www.youtube.com/watch?v={yt_id}"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9"
+        })
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+            m = re.search(r'"originalViewCount":\s*"(\d+)"', html)
+            if m:
+                return int(m.group(1))
+            m_alt = re.search(r'"viewCount":\s*"(\d+)"', html)
+            if m_alt:
+                return int(m_alt.group(1))
+    except Exception:
+        pass
+
+    return None
+
+
+def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False, is_owner: bool = False) -> dict:
+    """Scrapes channel's /shorts page directly, updating mappings and stats_cache in one fast 0.4s call."""
+    if not channel_handle or not channel_handle.strip():
+        return {"status": "skipped", "reason": "no_channel_configured"}
+
+    handle_clean = channel_handle.strip()
+    if not handle_clean.startswith("@"):
+        handle_clean = f"@{handle_clean}"
+
+    if not is_owner and handle_clean.lower() == DEFAULT_CHANNEL_HANDLE.lower():
+        return {"status": "skipped", "reason": "unauthorized_channel"}
+
+    stats_cache = load_user_stats_cache(paths["stats_cache_file"])
+    now = time.time()
+    last_synced = stats_cache.get("_meta", {}).get("last_synced_at", 0)
+
+    # 60-second caching cooldown unless forced
+    if not force and (now - last_synced < 60):
+        return {"status": "cached", "last_synced_at": last_synced, "live_count": stats_cache.get("_meta", {}).get("live_count", 0)}
+
+    discovered_live = {}
+    try:
+        for tab_suffix in ("shorts", "videos"):
+            tab_url = f"https://www.youtube.com/{handle_clean}/{tab_suffix}"
+            tab_req = urllib.request.Request(tab_url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9"
+            })
+            try:
+                with urllib.request.urlopen(tab_req, timeout=8) as resp:
+                    html = resp.read().decode("utf-8", errors="ignore")
+            except Exception:
+                continue
+            m = re.search(r'var ytInitialData\s*=\s*({.*?});</script>', html)
+            if not m:
+                continue
+            data = json.loads(m.group(1))
+            if tab_suffix == "shorts":
+                def find_items(obj):
+                    found = []
+                    if isinstance(obj, dict):
+                        if "shortsLockupViewModel" in obj:
+                            found.append(obj["shortsLockupViewModel"])
+                        for v in obj.values():
+                            found.extend(find_items(v))
+                    elif isinstance(obj, list):
+                        for it in obj:
+                            found.extend(find_items(it))
+                    return found
+
+                for it in find_items(data):
+                    entity_id = it.get("entityId", "")
+                    video_id = entity_id.replace("shorts-shelf-item-", "")
+                    if not video_id:
+                        continue
+                    meta = it.get("overlayMetadata", {})
+                    p_text = meta.get("primaryText", {}).get("content", "")
+                    s_text = meta.get("secondaryText", {}).get("content", "")
+                    acc = it.get("accessibilityText", "")
+                    if not s_text and acc:
+                        vm = re.search(r'(\d+[\d.,]*\s*(?:k|m|views|thousand|million)?)', acc.lower())
+                        if vm:
+                            s_text = vm.group(1)
+                    discovered_live[video_id] = {
+                        "title": p_text or (acc.split(",")[0] if acc else f"Short {video_id}"),
+                        "views": parse_view_count(s_text),
+                        "views_display": s_text or "0 views"
+                    }
+            else:
+                def find_vids(obj):
+                    found = []
+                    if isinstance(obj, dict):
+                        if "videoRenderer" in obj:
+                            found.append(obj["videoRenderer"])
+                        for v in obj.values():
+                            found.extend(find_vids(v))
+                    elif isinstance(obj, list):
+                        for it in obj:
+                            found.extend(find_vids(it))
+                    return found
+
+                for vr in find_vids(data):
+                    video_id = vr.get("videoId", "")
+                    if not video_id or video_id in discovered_live:
+                        continue
+                    t_runs = vr.get("title", {}).get("runs") or []
+                    v_title = "".join(r.get("text", "") for r in t_runs) or vr.get("title", {}).get("simpleText", "")
+                    v_text = vr.get("viewCountText", {}).get("simpleText", "") or vr.get("shortViewCountText", {}).get("simpleText", "")
+                    discovered_live[video_id] = {
+                        "title": v_title or f"Video {video_id}",
+                        "views": parse_view_count(v_text),
+                        "views_display": v_text or "0 views"
+                    }
+    except Exception as e:
+        print(f"Warning: Channel live scrape failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+    # Refine views with exact unrounded counts from player API for rounded items (e.g. 1.2K -> 1228)
+    items_to_refine = [vid for vid, it in discovered_live.items() if ("k" in it["views_display"].lower() or "m" in it["views_display"].lower())]
+    if items_to_refine:
+        from concurrent.futures import ThreadPoolExecutor
+        def _fetch_one(vid):
+            exact = fetch_exact_video_view_count(vid)
+            return vid, exact
+        with ThreadPoolExecutor(max_workers=min(8, len(items_to_refine))) as ex:
+            for vid, exact_count in ex.map(_fetch_one, items_to_refine):
+                if exact_count is not None and exact_count > 0:
+                    discovered_live[vid]["views"] = exact_count
+                    discovered_live[vid]["views_display"] = f"{exact_count:,} views"
+
+    mappings = get_user_video_mappings(paths["mappings_file"])
+    from datetime import datetime, timezone
+    now_utc = datetime.now(timezone.utc)
+
+    # 0. If user has OAuth token with youtube.readonly, query official YouTube API for exact status, publishAt, and statistics
+    oauth_video_data = {}
+    token_file = paths.get("token_file")
+    if token_file and os.path.exists(token_file):
+        try:
+            with open(token_file, "r", encoding="utf-8") as tf:
+                tdata = json.load(tf)
+            scopes = tdata.get("scopes", [])
+            if any("readonly" in s or "youtube.force-ssl" in s or s.endswith("/youtube") for s in scopes):
+                all_yt_ids = [info.get("yt_id") for info in mappings.values() if info.get("yt_id")]
+                for vid in discovered_live.keys():
+                    if vid not in all_yt_ids:
+                        all_yt_ids.append(vid)
+                if all_yt_ids:
+                    from google.oauth2.credentials import Credentials
+                    from google.auth.transport.requests import Request as GoogleAuthRequest
+                    from googleapiclient.discovery import build
+                    creds = Credentials.from_authorized_user_info(tdata)
+                    if creds.expired and creds.refresh_token:
+                        creds.refresh(GoogleAuthRequest())
+                        with open(token_file, "w", encoding="utf-8") as tf_out:
+                            tf_out.write(creds.to_json())
+                    yt_service = build("youtube", "v3", credentials=creds)
+                    for i in range(0, len(all_yt_ids), 50):
+                        batch_ids = all_yt_ids[i:i+50]
+                        resp = yt_service.videos().list(
+                            part="status,statistics,snippet",
+                            id=",".join(batch_ids)
+                        ).execute()
+                        for v_item in resp.get("items", []):
+                            oauth_video_data[v_item["id"]] = v_item
+        except Exception as e:
+            print(f"[Warning] OAuth YouTube API sync error: {e}")
+
+    # 1. Update existing mappings with fresh scrape data & OAuth API data
+    for short_key, info in list(mappings.items()):
+        yt_id = info.get("yt_id")
+        if not yt_id:
+            continue
+
+        # Sync real-time schedule / status / exact views from YouTube Studio API if available
+        if yt_id in oauth_video_data:
+            v_api = oauth_video_data[yt_id]
+            v_status = v_api.get("status", {})
+            v_stats = v_api.get("statistics", {})
+            v_snip = v_api.get("snippet", {})
+            privacy = v_status.get("privacyStatus", "")
+            pub_at = v_status.get("publishAt")
+
+            if pub_at:
+                # Normalize ISO format
+                info["publish_at"] = pub_at
+                try:
+                    dt_pub = datetime.fromisoformat(pub_at.replace("Z", "+00:00"))
+                    if dt_pub > now_utc and privacy == "private":
+                        info["default_status"] = "SCHEDULED"
+                except Exception:
+                    pass
+            elif privacy == "public":
+                info["default_status"] = "LIVE"
+                if v_snip.get("publishedAt") and not info.get("publish_at"):
+                    info["publish_at"] = v_snip["publishedAt"]
+
+            if "viewCount" in v_stats:
+                exact_v = int(v_stats["viewCount"])
+                exact_l = str(v_stats.get("likeCount", stats_cache.get(short_key, {}).get("likes", "0")))
+                api_title = v_snip.get("title") or stats_cache.get(short_key, {}).get("title", f"Short {yt_id}")
+                if yt_id in discovered_live:
+                    discovered_live[yt_id]["views"] = exact_v
+                    discovered_live[yt_id]["views_display"] = f"{exact_v:,} views"
+                    discovered_live[yt_id]["title"] = api_title
+                stats_cache[short_key] = {
+                    "views": exact_v,
+                    "views_display": f"{exact_v:,} views",
+                    "title": api_title,
+                    "likes": exact_l,
+                    "last_synced": now
+                }
+
+        if yt_id in discovered_live:
+            item = discovered_live[yt_id]
+            info["default_status"] = "LIVE"
+            stats_cache[short_key] = {
+                "views": item["views"],
+                "views_display": item["views_display"],
+                "title": item["title"],
+                "likes": stats_cache.get(short_key, {}).get("likes", "0"),
+                "last_synced": now
+            }
+        else:
+            # If OAuth API responded and video was NOT in oauth_video_data (when oauth_video_data succeeded), it was deleted on YouTube
+            if oauth_video_data and yt_id not in oauth_video_data:
+                info["default_status"] = "DELETED_ON_YOUTUBE"
+                if short_key in stats_cache:
+                    stats_cache[short_key]["deleted"] = True
+                    stats_cache[short_key]["views"] = 0
+                continue
+
+            # Check if future scheduled
+            is_future_scheduled = False
+            if info.get("publish_at"):
+                try:
+                    dt = datetime.fromisoformat(info["publish_at"].replace("Z", "+00:00"))
+                    if dt > now_utc:
+                        is_future_scheduled = True
+                except Exception:
+                    pass
+
+            if is_future_scheduled:
+                continue
+
+            # Verify via public oEmbed before marking DELETED_ON_YOUTUBE (catches 16:9 /videos & newly published items)
+            oembed_title = None
+            is_public_oembed = False
+            try:
+                oe_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={yt_id}&format=json"
+                oe_req = urllib.request.Request(oe_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(oe_req, timeout=5) as oe_resp:
+                    if oe_resp.status == 200:
+                        oe_data = json.loads(oe_resp.read().decode("utf-8", errors="ignore"))
+                        author_url = (oe_data.get("author_url") or "").lower()
+                        if not author_url or handle_clean.lower() in author_url:
+                            oembed_title = oe_data.get("title")
+                            is_public_oembed = True
+            except Exception:
+                pass
+
+            if is_public_oembed:
+                info["default_status"] = "LIVE"
+                exact_v = fetch_exact_video_view_count(yt_id) or stats_cache.get(short_key, {}).get("views", 0)
+                stats_cache[short_key] = {
+                    "views": exact_v,
+                    "views_display": f"{exact_v:,} views",
+                    "title": oembed_title or stats_cache.get(short_key, {}).get("title") or f"Video {yt_id}",
+                    "likes": stats_cache.get(short_key, {}).get("likes", "0"),
+                    "last_synced": now,
+                }
+            else:
+                info["default_status"] = "DELETED_ON_YOUTUBE"
+                if short_key in stats_cache:
+                    stats_cache[short_key]["deleted"] = True
+                    stats_cache[short_key]["views"] = 0
+
+    # 2. Add any live video from YouTube that was missing in mappings
+    for yt_id, item in discovered_live.items():
+        already_mapped = any(info.get("yt_id") == yt_id for info in mappings.values())
+        if not already_mapped:
+            max_num = 0
+            for k in mappings.keys():
+                m = re.match(r"short_0*(\d+)", k.lower())
+                if m:
+                    max_num = max(max_num, int(m.group(1)))
+            short_key = f"short_{max_num + 1:02d}"
+
+            mappings[short_key] = {
+                "yt_id": yt_id,
+                "default_status": "LIVE",
+                "local_purged": True,
+                "synced_from_channel": True
+            }
+            stats_cache[short_key] = {
+                "views": item["views"],
+                "views_display": item["views_display"],
+                "title": item["title"],
+                "likes": "0",
+                "last_synced": now
+            }
+
+    stats_cache["_meta"] = {"last_synced_at": now, "live_count": len(discovered_live)}
+    save_user_stats_cache(stats_cache, paths["stats_cache_file"])
+    with open(paths["mappings_file"], "w", encoding="utf-8") as f:
+        json.dump(mappings, f, indent=2)
+
+    return {
+        "status": "synced",
+        "live_count": len(discovered_live),
+        "last_synced_at": now
+    }
+
+
+@app.get("/api/stats")
+def get_channel_stats(user: dict = Depends(require_auth)):
+    """Scrapes real-time public stats from YouTube with disk-backed caching fallback (User Scoped)."""
+    paths = get_user_paths(user)
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
+    channel_info = get_user_channel_info(paths["channel_file"])
+    channel_handle = (channel_info.get("channel_handle") or "").strip()
+
+    if not is_owner and channel_handle.lower() == DEFAULT_CHANNEL_HANDLE.lower():
+        channel_handle = ""
+
+    if not channel_handle and is_owner:
+        channel_handle = DEFAULT_CHANNEL_HANDLE
+
+    # 1. Automatically sync with channel live feed (60s cooldown cache) ONLY if channel is configured
+    if channel_handle:
+        sync_channel_live_feed(paths, channel_handle, force=False, is_owner=is_owner)
+
+    mappings = get_user_video_mappings(paths["mappings_file"])
+    stats_cache = load_user_stats_cache(paths["stats_cache_file"])
+
+    # Auto-heal / Purge pollution dynamically:
+    # If user is not the owner:
+    # 1. Purge any video whose yt_id belongs to the administrator's live mappings (root + admin folder).
+    # 2. If user has NO channel connected, purge any entry that lacks a physical local directory.
+    if not is_owner:
+        admin_yt_ids = get_admin_yt_ids()
+        purged = False
+        clean_mappings = {}
+        for short_key, info in list(mappings.items()):
+            yt_id = info.get("yt_id", "")
+            dir_path = os.path.join(paths["videos_dir"], short_key)
+            has_local = os.path.exists(dir_path)
+
+            if yt_id and yt_id in admin_yt_ids:
+                purged = True
+                stats_cache.pop(short_key, None)
+            elif not channel_handle and not has_local:
+                purged = True
+                stats_cache.pop(short_key, None)
+            else:
+                clean_mappings[short_key] = info
+
+        if purged:
+            mappings = clean_mappings
+            save_user_stats_cache(stats_cache, paths["stats_cache_file"])
+            try:
+                with open(paths["mappings_file"], "w", encoding="utf-8") as f:
+                    json.dump(mappings, f, indent=2)
+            except Exception:
+                pass
+
+    audit_results = []
+    total_views = 0
+    from datetime import datetime, timezone
+    now_utc = datetime.now(timezone.utc)
+
+    for short_key, info in mappings.items():
+        yt_id = info.get("yt_id", "")
+        cached = stats_cache.get(short_key, {})
+
+        # Status resolution
+        has_future_publish = False
+        if info.get("publish_at"):
+            try:
+                dt = datetime.fromisoformat(info["publish_at"].replace("Z", "+00:00"))
+                if dt > now_utc:
+                    has_future_publish = True
+            except Exception:
+                pass
+
+        if info.get("default_status") == "DELETED_ON_YOUTUBE" or cached.get("deleted"):
+            status_val = "DELETED_ON_YOUTUBE"
+        elif has_future_publish:
+            status_val = "SCHEDULED"
+        elif info.get("default_status") == "LIVE":
+            status_val = "LIVE"
+        else:
+            status_val = info.get("default_status", "LOCAL_READY")
+
+        # Views and title
+        views = cached.get("views", 0) if status_val != "DELETED_ON_YOUTUBE" else 0
+        likes = cached.get("likes", "0")
+        title = cached.get("title", "")
+
+        if status_val == "LIVE":
+            total_views += views
+
+        if not title:
+            meta_path = os.path.join(paths["videos_dir"], short_key, "seo_metadata.txt")
+            if os.path.exists(meta_path):
+                try:
+                    c = open(meta_path, "r", encoding="utf-8").read()
+                    t_m = re.search(r'TITLE:\s*(.*?)(?=\n\n|\nDESCRIPTION:|$)', c, re.DOTALL)
+                    if t_m:
+                        title = t_m.group(1).strip()
+                except Exception:
+                    pass
+        if not title:
+            title = f"{short_key} #shorts"
+
+        dir_path = os.path.join(paths["videos_dir"], short_key)
+        mp4_files = [x for x in os.listdir(dir_path) if x.endswith(".mp4")] if os.path.exists(dir_path) else []
+        file_size_mb = 0
+        if mp4_files:
+            target_mp4 = next((x for x in mp4_files if short_key in x), mp4_files[0])
+            file_size_mb = round(os.path.getsize(os.path.join(dir_path, target_mp4)) / (1024 * 1024), 2)
+        motion_type = "Real-Motion HD" if file_size_mb > 10 else "Still Pilot"
+
+        local_exists = os.path.exists(dir_path) and bool(mp4_files)
+        storage_status = "LOCAL_AND_CLOUD" if local_exists else "CLOUD_ARCHIVED"
+
+        yt_watch_url = f"https://youtube.com/shorts/{yt_id}" if "#shorts" in title.lower() else f"https://www.youtube.com/watch?v={yt_id}"
+        audit_results.append({
+            "short_id": short_key,
+            "yt_id": yt_id,
+            "title": title,
+            "views": views,
+            "likes": likes,
+            "motion_type": motion_type,
+            "status": status_val,
+            "publish_at": info.get("publish_at"),
+            "url": yt_watch_url,
+            "local_exists": local_exists,
+            "storage_status": storage_status
+        })
+
+    channel_handle_display = channel_handle if channel_handle else ""
+    channel_url = channel_info.get("channel_url") or (DEFAULT_CHANNEL_URL if (is_owner and channel_handle) else "")
+
+    # Fetch subscriber count for user's configured channel
+    subscribers = "Not Connected"
+    if channel_handle_display:
+        try:
+            handle_clean = channel_handle_display if channel_handle_display.startswith("@") else f"@{channel_handle_display}"
+            ch_req = urllib.request.Request(f"https://www.youtube.com/{handle_clean}", headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(ch_req, timeout=6) as resp:
+                ch_html = resp.read().decode("utf-8", errors="ignore")
+                sub_m = re.search(r'"subscriberCountText":\{"accessibility":\{"accessibilityData":\{"label":"(.*?)"\}\}', ch_html)
+                if sub_m:
+                    subscribers = sub_m.group(1)
+        except Exception:
+            subscribers = "Connected"
+
+    return {
+        "channel_handle": channel_handle_display if channel_handle_display else "No Channel Connected",
+        "channel_url": channel_url,
+        "subscribers": subscribers,
+        "total_views": total_views,
+        "videos": audit_results
+    }
+
+
+@app.get("/api/videos")
+def list_videos(user: dict = Depends(require_auth)):
+    """Lists user-scoped shorts directories, metadata, file sizes, and video files."""
+    paths = get_user_paths(user)
+    v_dir = paths["videos_dir"]
+    if not os.path.exists(v_dir):
+        return []
+
+    folders = sorted(os.listdir(v_dir))
+    results = []
+    mappings = get_user_video_mappings(paths["mappings_file"])
+
+    for f in folders:
+        dir_path = os.path.join(v_dir, f)
+        if not os.path.isdir(dir_path):
+            continue
+
+        mp4_files = [x for x in os.listdir(dir_path) if x.endswith(".mp4")]
+        if not mp4_files:
+            continue
+
+        # Prefer named mp4 matching folder name or latest
+        target_mp4 = next((x for x in mp4_files if f in x), mp4_files[0])
+        mp4_path = os.path.join(dir_path, target_mp4)
+        file_size_mb = round(os.path.getsize(mp4_path) / (1024 * 1024), 2)
+        mod_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(mp4_path)))
+
+        # Metadata
+        meta_path = os.path.join(dir_path, "seo_metadata.txt")
+        title = f
+        description = ""
+        pinned_comment = ""
+        tags = []
+
+        if os.path.exists(meta_path):
+            try:
+                content = open(meta_path, "r", encoding="utf-8").read()
+                t_match = re.search(r'TITLE:\s*(.*?)(?=\n\n|\nDESCRIPTION:|$)', content, re.DOTALL)
+                d_match = re.search(r'DESCRIPTION:\s*(.*?)(?=\n\n(?:SEARCH )?TAGS(?:\s*\([^)]*\))?:|\n\nPINNED COMMENT:|$)', content, re.DOTALL)
+                c_match = re.search(r'PINNED COMMENT:\s*(.*)', content, re.DOTALL)
+
+                if t_match:
+                    title = t_match.group(1).strip()
+                if d_match:
+                    description = d_match.group(1).strip()
+                    tags = re.findall(r'#(\w+)', description)
+                if c_match:
+                    pinned_comment = c_match.group(1).strip()
+            except Exception:
+                pass
+
+        mapping = mappings.get(f, {})
+        yt_id = mapping.get("yt_id")
+        is_guide = os.path.exists(meta_path) and "#shorts" not in title.lower()
+        has_thumb = os.path.exists(os.path.join(dir_path, "thumbnail.jpg"))
+        motion_type = "16:9 Guide" if is_guide else ("Real-Motion HD" if file_size_mb > 10 else "Still Pilot")
+        yt_watch_url = (f"https://youtube.com/shorts/{yt_id}" if not is_guide else f"https://www.youtube.com/watch?v={yt_id}") if yt_id else None
+
+        results.append({
+            "id": f,
+            "filename": target_mp4,
+            "size_mb": file_size_mb,
+            "modified": mod_time,
+            "title": title,
+            "description": description,
+            "tags": tags,
+            "pinned_comment": pinned_comment,
+            "motion_type": motion_type,
+            "is_guide": is_guide,
+            "has_thumbnail": has_thumb,
+            "yt_id": yt_id,
+            "yt_url": yt_watch_url,
+            "status": mapping.get("default_status", "LOCAL_READY")
+        })
+
+    return results
+
+
+@app.get("/api/videos/{short_id}/thumbnail")
+def get_video_thumbnail(short_id: str, req: Request, token: Optional[str] = None):
+    """Serves generated thumbnail.jpg for a user-scoped video."""
+    auth_token = token
+    if not auth_token:
+        auth_header = req.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            auth_token = auth_header[7:].strip()
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = verify_jwt(auth_token)
+    paths = get_user_paths(user)
+    clean_id = sanitize_short_id(short_id)
+    thumb_path = os.path.join(paths["videos_dir"], clean_id, "thumbnail.jpg")
+    if os.path.commonpath([thumb_path, paths["videos_dir"]]) != os.path.abspath(paths["videos_dir"]) or not os.path.isfile(thumb_path):
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
+    return FileResponse(thumb_path, media_type="image/jpeg")
+
+
+@app.api_route("/api/videos/{short_id}/stream", methods=["GET", "HEAD"])
+def stream_video(short_id: str, req: Request, range: Optional[str] = Header(None)):
+    """Streams the short MP4 with HTTP 206 partial range support strictly for authenticated owner."""
+    clean_id = sanitize_short_id(short_id)
+
+    # 1. Strict Authentication
+    token = None
+    auth_h = req.headers.get("Authorization")
+    if auth_h and auth_h.startswith("Bearer "):
+        token = auth_h[7:].strip()
+    elif req.query_params.get("token"):
+        token = req.query_params.get("token").strip()
+
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized: Valid authentication required to stream video")
+
+    user = verify_jwt_token(token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized: Invalid or expired authentication token")
+
+    # 2. Strict Partition Isolation - Only user's own videos directory
+    paths = get_user_paths(user)
+    dir_path = os.path.join(paths["videos_dir"], clean_id)
+
+    # Enforce path containment
+    if os.path.commonpath([dir_path, paths["videos_dir"]]) != os.path.abspath(paths["videos_dir"]) or not os.path.exists(dir_path):
+        raise HTTPException(status_code=404, detail="Short video not found in your library")
+
+    mp4_files = [x for x in os.listdir(dir_path) if x.endswith(".mp4")]
+    if not mp4_files:
+        raise HTTPException(status_code=404, detail="No MP4 found in directory")
+
+    target_mp4 = next((x for x in mp4_files if clean_id in x), mp4_files[0])
+    video_path = os.path.join(dir_path, target_mp4)
+    file_size = os.path.getsize(video_path)
+
+    if not range:
+        return FileResponse(video_path, media_type="video/mp4", filename=target_mp4)
+
+    range_match = re.match(r"bytes=(\d+)-(\d*)", range)
+    if not range_match:
+        return Response(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE)
+
+    start = int(range_match.group(1))
+    end = int(range_match.group(2)) if range_match.group(2) else file_size - 1
+
+    if start >= file_size:
+        return Response(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE)
+
+    content_length = end - start + 1
+    headers = {
+        "Content-Range": f"bytes {start}-{end}/{file_size}",
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(content_length),
+        "Content-Type": "video/mp4",
+    }
+
+    return StreamingResponse(
+        range_stream(video_path, start, end),
+        status_code=status.HTTP_206_PARTIAL_CONTENT,
+        headers=headers,
+        media_type="video/mp4"
+    )
+
+
+@app.delete("/api/videos/{short_id}")
+def delete_video(short_id: str, user: dict = Depends(require_auth)):
+    """Deletes a short directory and all its local files from disk to free VPS storage, keeping YouTube tracking intact."""
+    clean_id = sanitize_short_id(short_id)
+    paths = get_user_paths(user)
+    dir_path = os.path.join(paths["videos_dir"], clean_id)
+
+    if os.path.commonpath([dir_path, paths["videos_dir"]]) != os.path.abspath(paths["videos_dir"]):
+        raise HTTPException(status_code=400, detail="Invalid path traversal detected")
+
+    if os.path.exists(dir_path):
+        try:
+            shutil.rmtree(dir_path)
+        except Exception as e:
+            import gc
+            gc.collect()
+            time.sleep(0.3)
+            try:
+                shutil.rmtree(dir_path)
+            except Exception:
+                # Force delete via OS shell
+                if os.name == 'nt':
+                    subprocess.run(["cmd", "/c", "rd", "/s", "/q", dir_path], capture_output=True)
+                else:
+                    subprocess.run(["rm", "-rf", dir_path], capture_output=True)
+                if os.path.exists(dir_path):
+                    raise HTTPException(status_code=500, detail=f"Failed to delete short: {str(e)}")
+
+    # Crucial: If this video was mapped to a YouTube video, do NOT erase it from mappings!
+    # Mark it as local_purged so Telemetry & KPIs continue tracking the live/scheduled YouTube video.
+    mappings = get_user_video_mappings(paths["mappings_file"])
+    if clean_id in mappings:
+        entry = mappings[clean_id]
+        if isinstance(entry, dict) and entry.get("yt_id"):
+            entry["local_purged"] = True
+            mappings[clean_id] = entry
+        elif isinstance(entry, str) and entry:
+            mappings[clean_id] = {"yt_id": entry, "local_purged": True, "default_status": "LIVE"}
+        else:
+            del mappings[clean_id]
+        try:
+            with open(paths["mappings_file"], "w", encoding="utf-8") as f:
+                json.dump(mappings, f, indent=2)
+        except Exception:
+            pass
+
+    return {"success": True, "message": f"Short '{short_id}' local files removed from disk. Channel tracking preserved."}
+
+
+@app.post("/api/channel/sync")
+def sync_channel_videos(user: dict = Depends(require_auth)):
+    """Forces an immediate live feed synchronization with user's YouTube channel."""
+    paths = get_user_paths(user)
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
+    channel_info = get_user_channel_info(paths["channel_file"])
+    handle = (channel_info.get("channel_handle") or "").strip()
+    if not handle and is_owner:
+        handle = DEFAULT_CHANNEL_HANDLE
+
+    if not handle:
+        raise HTTPException(
+            status_code=400,
+            detail="No YouTube channel handle configured. Please enter your YouTube channel handle in Channel Settings first."
+        )
+
+    res = sync_channel_live_feed(paths, handle, force=True, is_owner=is_owner)
+    mappings = get_user_video_mappings(paths["mappings_file"])
+    live_count = sum(1 for m in mappings.values() if m.get("default_status") == "LIVE")
+
+    return {
+        "success": True,
+        "message": f"Channel synced live with YouTube. {res.get('live_count', live_count)} active shorts verified.",
+        "live_count": res.get("live_count", live_count),
+        "total_tracked": len(mappings)
+    }
+
+
+
+@app.get("/api/niches")
+def get_niches(_user: dict = Depends(require_auth)):
+    """Returns curated viral shorts niches with templates, hooks, and RPM metrics."""
+    from idea_bank import NICHE_PROFILES
+    out = []
+    for p in NICHE_PROFILES.values():
+        if not ADMIN_ONLY_MODE and p["id"] == "gta6_launch":
+            continue
+        out.append({
+            "id": p["id"],
+            "name": p["name"],
+            "rpm_range": p.get("rpm_range", "$0.18 - $0.35"),
+            "retention_rate": p.get("retention_rate", "60% - 75%"),
+            "voice_recommended": p.get("voice_recommended", "en-US-ChristopherNeural"),
+            "description": p.get("description", ""),
+            "hook_formulas": p.get("hook_formulas", []),
+            "sample_keywords": p.get("visual_bank", [])[:5]
+        })
+    return out
+
+
+ALLOWED_PREVIEW_VOICES = {
+    "en-US-AndrewMultilingualNeural", "en-US-BrianMultilingualNeural",
+    "en-US-BrianNeural", "en-US-SteffanNeural",
+    "en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-EricNeural",
+    "en-GB-RyanNeural", "en-US-AvaNeural", "en-US-JennyNeural",
+}
+
+
+@app.get("/api/voice-preview")
+async def preview_voice(voice: str = "en-US-BrianNeural", _user: dict = Depends(require_auth)):
+    """Generates and caches a short MP3 voice sample so users can preview voices in Studio."""
+    if voice not in ALLOWED_PREVIEW_VOICES:
+        raise HTTPException(status_code=400, detail="Unsupported voice selection")
+
+    cache_dir = os.path.join(BASE_DIR, ".voice_previews")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_mp3 = os.path.join(cache_dir, f"{voice}.mp3")
+
+    if not os.path.exists(cache_mp3) or os.path.getsize(cache_mp3) < 500:
+        import edge_tts
+        sample_text = "Hey, this is how your YouTube Short voiceover will sound."
+        buf = bytearray()
+        try:
+            comm = edge_tts.Communicate(sample_text, voice, rate="+0%")
+            async for chunk in comm.stream():
+                if chunk["type"] == "audio":
+                    buf.extend(chunk["data"])
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Voice preview unavailable ({voice}): {e}")
+        if len(buf) < 500:
+            raise HTTPException(status_code=503, detail=f"Empty audio returned for {voice}")
+        with open(cache_mp3, "wb") as f:
+            f.write(buf)
+
+    return FileResponse(cache_mp3, media_type="audio/mpeg")
+
+
+def verify_groq_api_key(key: str) -> tuple:
+    if not key or not isinstance(key, str):
+        return False, "API key cannot be empty."
+    clean_key = key.strip()
+    if not clean_key.startswith("gsk_") and len(clean_key) < 20:
+        return False, "Invalid Groq API key format (must start with 'gsk_')."
+
+    url = "https://api.groq.com/openai/v1/models"
+    try:
+        res = requests.get(url, headers={"Authorization": f"Bearer {clean_key}"}, timeout=5)
+        if res.status_code == 200:
+            return True, "Valid Groq API key."
+        elif res.status_code in (401, 403):
+            return False, "Groq rejected key (Invalid or unauthorized API key)."
+        return False, f"Groq API returned HTTP {res.status_code}"
+    except Exception as e:
+        return False, f"Network error contacting Groq API: {str(e)}"
+
+verify_gemini_api_key = verify_groq_api_key
+
+
+@app.get("/api/settings/ai")
+def get_ai_settings(user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    from gemini_generator import get_groq_key
+    user_custom_key = get_groq_key(paths["key_file"], allow_fallback=False)
+
+    # Auto-purge corrupted keys
+    if user_custom_key and len(user_custom_key.strip()) < 15:
+        try:
+            if os.path.exists(paths["key_file"]):
+                os.remove(paths["key_file"])
+        except Exception:
+            pass
+        user_custom_key = None
+
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
+    system_key = get_groq_key(paths["key_file"], allow_fallback=is_owner)
+    key = user_custom_key or system_key
+    masked = f"{key[:7]}...{key[-4:]}" if key and len(key) > 12 else None
+    return {
+        "has_key": bool(key),
+        "is_custom_key": bool(user_custom_key),
+        "masked_key": masked,
+        "model": "Groq LPU (1,000 Free RPD • 0.6s Speed) + Limitless Free OpenAI/DeepSeek Fallback",
+        "provider": "Groq LPU",
+        "status": "Groq LPU Online (Custom Key)" if user_custom_key else ("Groq LPU Online (System Pre-Configured)" if system_key else "OpenAI / DeepSeek Free Mode Active")
+    }
+
+
+@app.post("/api/settings/ai")
+def save_ai_settings(req: AIKeyRequest, user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    key = req.api_key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="API key cannot be empty.")
+
+    is_valid, err_msg = verify_groq_api_key(key)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=f"Invalid Groq API Key: {err_msg}")
+
+    from gemini_generator import save_groq_key
+    save_groq_key(key, paths["key_file"])
+    return {"success": True, "message": "Groq API Key verified with Groq Cloud and saved successfully!"}
+
+
+@app.delete("/api/settings/ai")
+def delete_ai_settings(user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    if os.path.exists(paths["key_file"]):
+        os.remove(paths["key_file"])
+    return {"success": True, "message": "Custom Groq API Key cleared. Default engine active."}
+
+
+@app.get("/api/settings/channel")
+def get_channel_settings(user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
+    info = get_user_channel_info(paths["channel_file"])
+    has_token = os.path.exists(paths["token_file"])
+    has_cs = os.path.exists(paths["client_secret_file"]) or (is_owner and os.path.exists(CLIENT_SECRETS_FILE))
+    return {
+        "channel_handle": info.get("channel_handle", ""),
+        "channel_url": info.get("channel_url", ""),
+        "has_youtube_token": has_token,
+        "has_client_secret": has_cs
+    }
+
+
+@app.post("/api/settings/channel")
+def save_channel_settings(req: ChannelSettingsRequest, user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    handle = (req.channel_handle or "").strip()
+    if not handle:
+        raise HTTPException(status_code=400, detail="Channel handle cannot be empty.")
+
+    # Extract handle if full URL was pasted
+    if "youtube.com/" in handle or "youtu.be/" in handle:
+        m = re.search(r'(@[a-zA-Z0-9_.-]+)', handle)
+        if m:
+            handle = m.group(1)
+        else:
+            parts = [p for p in handle.rstrip("/").split("/") if p]
+            if parts:
+                last = parts[-1]
+                handle = last if last.startswith("@") else f"@{last}"
+
+    if not handle.startswith("@"):
+        handle = "@" + handle
+
+    if not re.match(r"^@[a-zA-Z0-9_.-]{3,60}$", handle):
+        raise HTTPException(status_code=400, detail=f"Invalid YouTube channel handle format: {handle}. Must be 3-60 characters (@username).")
+
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
+    if not is_owner and handle.lower() == DEFAULT_CHANNEL_HANDLE.lower():
+        raise HTTPException(status_code=400, detail="Cannot claim the platform administrator's channel handle.")
+
+    old_info = get_user_channel_info(paths["channel_file"])
+    old_handle = old_info.get("channel_handle", "")
+
+    url = req.channel_url.strip() if req.channel_url else f"https://www.youtube.com/{handle}"
+    info = {"channel_handle": handle, "channel_url": url}
+    with open(paths["channel_file"], "w", encoding="utf-8") as f:
+        json.dump(info, f, indent=2)
+
+    # If handle changed, purge old scraped video mappings for non-owner
+    if not is_owner and old_handle and old_handle.lower() != handle.lower():
+        try:
+            if os.path.exists(paths["mappings_file"]):
+                with open(paths["mappings_file"], "r", encoding="utf-8") as f:
+                    mappings = json.load(f)
+                filtered = {
+                    k: v for k, v in mappings.items()
+                    if not v.get("synced_from_channel") and v.get("source") != "live_channel_sync"
+                }
+                with open(paths["mappings_file"], "w", encoding="utf-8") as f:
+                    json.dump(filtered, f, indent=2)
+            if os.path.exists(paths["stats_cache_file"]):
+                os.remove(paths["stats_cache_file"])
+        except Exception as e:
+            print(f"[Warning] Error purging old mappings on handle change: {e}")
+
+    return {"success": True, "channel_handle": handle, "channel_url": url}
+
+
+@app.get("/api/settings/youtube-auth-url")
+def get_youtube_auth_url(user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
+    cs_file = paths["client_secret_file"]
+    if not os.path.exists(cs_file) and is_owner:
+        cs_file = CLIENT_SECRETS_FILE
+    if not os.path.exists(cs_file):
+        return {"has_client_secret": False, "auth_url": None}
+
+    try:
+        with open(cs_file, "r", encoding="utf-8") as f:
+            cs_data = json.load(f)
+        client_id, _, redirect_uri = extract_client_credentials(cs_data)
+        if client_id:
+            return {
+                "has_client_secret": True,
+                "auth_url": get_auth_url_for_client(client_id, redirect_uri),
+                "client_id": client_id
+            }
+    except Exception:
+        pass
+    return {"has_client_secret": False, "auth_url": None}
+
+
+@app.post("/api/settings/youtube-token")
+def save_youtube_token(req: YouTubeTokenRequest, user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    try:
+        parsed = json.loads(req.token_json)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="Uploaded JSON must be a valid JSON object.")
+
+    # Detect if user uploaded client_secret.json instead of token.json
+    is_client_secret = (
+        "installed" in parsed or 
+        "web" in parsed or 
+        ("client_id" in parsed and "client_secret" in parsed and "refresh_token" not in parsed and "token" not in parsed)
+    )
+
+    if is_client_secret:
+        with open(paths["client_secret_file"], "w", encoding="utf-8") as f:
+            json.dump(parsed, f, indent=2)
+
+        client_id, client_secret, redirect_uri = extract_client_credentials(parsed)
+        if not client_id:
+            raise HTTPException(status_code=400, detail="Missing client_id in client_secret.json")
+
+        auth_url = get_auth_url_for_client(client_id, redirect_uri)
+        return {
+            "success": True,
+            "type": "client_secret",
+            "auth_required": True,
+            "auth_url": auth_url,
+            "client_id": client_id,
+            "message": "Client secret received! Authorize with Google to complete channel connection."
+        }
+
+    # Otherwise treat as token.json
+    has_token = ("token" in parsed or "access_token" in parsed or "refresh_token" in parsed)
+    if not has_token:
+        raise HTTPException(status_code=400, detail="Uploaded JSON is neither a valid token.json nor client_secret.json")
+
+    if "access_token" in parsed and "token" not in parsed:
+        parsed["token"] = parsed["access_token"]
+
+    with open(paths["token_file"], "w", encoding="utf-8") as f:
+        json.dump(parsed, f, indent=2)
+
+    return {
+        "success": True,
+        "type": "token",
+        "auth_required": False,
+        "message": "YouTube OAuth token connected successfully."
+    }
+
+
+@app.post("/api/settings/youtube-oauth-callback")
+def handle_oauth_callback(req: OAuthCallbackRequest, user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
+    raw = req.code_or_url.strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="No code or redirect URL provided.")
+
+    code = raw
+    if "code=" in raw:
+        match = re.search(r'[?&]code=([^&]+)', raw)
+        if match:
+            code = urllib.parse.unquote(match.group(1))
+        else:
+            code = urllib.parse.unquote(raw.split("code=")[1].split("&")[0])
+
+    cs_file = paths["client_secret_file"]
+    if not os.path.exists(cs_file) and is_owner:
+        cs_file = CLIENT_SECRETS_FILE
+    if not os.path.exists(cs_file):
+        raise HTTPException(status_code=400, detail="Missing client_secret.json. Please upload client secret first.")
+
+    try:
+        with open(cs_file, "r", encoding="utf-8") as f:
+            cs_data = json.load(f)
+        client_id, client_secret, redirect_uri = extract_client_credentials(cs_data)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read client credentials: {str(e)}")
+
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=400, detail="Invalid client credentials: missing client_id or client_secret.")
+
+    # Exchange code with Google OAuth endpoint
+    data = urllib.parse.urlencode({
+        "code": code,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code"
+    }).encode("utf-8")
+
+    exchange_req = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"}
+    )
+
+    try:
+        with urllib.request.urlopen(exchange_req, timeout=15) as resp:
+            token_resp = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode("utf-8", errors="ignore")
+        raise HTTPException(status_code=400, detail=f"Google token exchange failed ({e.code}): {err_msg}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Google token exchange request failed: {str(e)}")
+
+    access_token = token_resp.get("access_token")
+    refresh_token = token_resp.get("refresh_token")
+    if not access_token:
+        raise HTTPException(status_code=400, detail=f"Google response missing access_token: {token_resp}")
+
+    import datetime
+    expires_in = token_resp.get("expires_in", 3600)
+    expiry = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=expires_in)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+    scopes_list = [s for s in token_resp.get("scope", "https://www.googleapis.com/auth/youtube.upload").split(" ") if s]
+    if not scopes_list:
+        scopes_list = ["https://www.googleapis.com/auth/youtube.upload"]
+
+    token_data = {
+        "token": access_token,
+        "refresh_token": refresh_token,
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "scopes": scopes_list,
+        "universe_domain": "googleapis.com",
+        "account": "",
+        "expiry": expiry
+    }
+
+    with open(paths["token_file"], "w", encoding="utf-8") as f:
+        json.dump(token_data, f, indent=2)
+
+    # Immediately force sync so scheduled dates and stats update right away
+    try:
+        ch_info = get_user_channel_info(paths["channel_file"])
+        ch_handle = ch_info.get("channel_handle", "")
+        if ch_handle:
+            sync_channel_live_feed(paths, ch_handle, force=True, is_owner=is_owner)
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "message": "YouTube OAuth channel connected successfully!"
+    }
+
+
+@app.delete("/api/settings/youtube-token")
+def disconnect_youtube(user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    if os.path.exists(paths["token_file"]):
+        try:
+            os.remove(paths["token_file"])
+        except Exception:
+            pass
+    # If legacy admin, also remove root fallback token so it never resurrects
+    if not DISABLE_LEGACY_MIGRATION and is_legacy_owner(paths["user_id"], user.get("email")):
+        if os.path.exists(TOKEN_FILE):
+            try:
+                os.remove(TOKEN_FILE)
+            except Exception:
+                pass
+    return {"success": True, "message": "YouTube channel disconnected."}
+
+
+@app.get("/api/usage")
+def get_usage(user: dict = Depends(require_auth)):
+    """Returns exact daily quota & credit consumption for Groq LPU and YouTube (User Scoped)."""
+    paths = get_user_paths(user)
+    from usage_tracker import get_usage_summary
+    from gemini_generator import get_groq_key
+
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
+    has_token = os.path.exists(paths["token_file"])
+    has_ai_key = bool(get_groq_key(paths["key_file"], allow_fallback=is_owner))
+
+    summary = get_usage_summary(paths["usage_file"], allow_live_gcp=is_owner)
+    summary["youtube"]["connected"] = has_token
+    summary["gemini"]["has_key"] = has_ai_key
+    summary["ai"] = summary.get("ai", summary["gemini"])
+    summary["ai"]["has_key"] = has_ai_key
+    summary["studio_mode"] = "gta" if ADMIN_ONLY_MODE else "standard"
+    return summary
+
+
+@app.get("/api/next-short-id")
+def get_next_id(user: dict = Depends(require_auth)):
+    """Calculates next sequential short folder ID automatically for the user's library."""
+    paths = get_user_paths(user)
+    from idea_bank import get_next_short_id
+    next_id = get_next_short_id(paths["videos_dir"])
+    return {"next_id": next_id}
+
+
+@app.post("/api/ideas/generate")
+def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
+    """Generates dynamic viral script structure, SEO metadata, and clip keywords."""
+    paths = get_user_paths(user)
+    from idea_bank import NICHE_PROFILES, CONCEPTS_DATABASE, get_next_short_id, pick_concept_without_repeats, record_topic_history
+    from gemini_generator import generate_with_gemini_flash
+    from usage_tracker import record_gemini_request
+
+    niche = "gta6_launch" if ADMIN_ONLY_MODE else req.niche
+
+    # If user selected Surprise Me, preserve their selected niche! Only pick random if explicitly empty or 'random'
+    if not niche or niche == "random" or (niche not in NICHE_PROFILES and niche not in CONCEPTS_DATABASE):
+        niche = "gta6_launch" if ADMIN_ONLY_MODE else random.choice(list(NICHE_PROFILES.keys()))
+
+    next_id = get_next_short_id(paths["videos_dir"])
+    brand_name, brand_handle = get_user_brand(paths, user)
+    is_owner = is_legacy_owner(paths["user_id"], user.get("email"))
+
+    # If series_count > 1, generate a multi-part story series IN PARALLEL
+    series_count = max(1, min(3, req.series_count or 1))
+    if series_count > 1:
+        base_num = int(re.search(r'\d+', next_id).group()) if re.search(r'\d+', next_id) else 1
+        profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
+        series_topic = req.concept.strip() if req.concept and req.concept.strip() else ""
+        if not series_topic:
+            angles_pool = profile.get("angles", [])
+            series_topic = random.choice(angles_pool) if angles_pool else "The 3 Forbidden Stages of Influence"
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _generate_single_part(ep_idx):
+            ep_id = f"short_{base_num + ep_idx - 1:02d}"
+            ep_concept = f"{series_topic} (Part {ep_idx} of {series_count})"
+            ai_ep = None
+            try:
+                ai_ep = generate_with_gemini_flash(
+                    niche=niche,
+                    concept=ep_concept,
+                    user_key_file=paths["key_file"],
+                    brand_name=brand_name,
+                    brand_handle=brand_handle,
+                    allow_fallback=is_owner,
+                    user_tracker_file=paths["usage_file"],
+                    surprise=False,
+                    topic_history_file=paths.get("topic_history_file")
+                )
+            except Exception as e:
+                print(f"Series episode {ep_idx} generation error: {e}")
+            if ai_ep:
+                ep_script = ai_ep.get("script", "").strip()
+                if ep_idx < series_count:
+                    cliffhanger = f" That was Part {ep_idx}. Watch Part {ep_idx + 1} pinned in comments."
+                    if f"part {ep_idx + 1}" not in ep_script.lower():
+                        ep_script = ep_script.rstrip(" .,!?:;-") + cliffhanger
+                else:
+                    outro_mandate = profile.get("outro_phrase", f"Follow {brand_name} for more.").format(brand_name=brand_name)
+                    if brand_name.lower() not in ep_script.lower():
+                        ep_script = ep_script.rstrip(" .,!?:;-") + f". {outro_mandate}"
+
+                return {
+                    "series_part": ep_idx,
+                    "series_total": series_count,
+                    "source": ai_ep.get("model_used", "groq-lpu"),
+                    "next_id": ep_id,
+                    "niche": niche,
+                    "title": f"{ai_ep.get('title', series_topic).replace(' #shorts', '')} (Part {ep_idx}/{series_count}) #shorts",
+                    "script": ep_script,
+                    "keywords": ai_ep.get("keywords", profile.get("visual_bank", ["dark", "mystery"])[:8]),
+                    "search_tags": ai_ep.get("search_tags", ["psychology facts", "dark psychology", "human behavior"]),
+                    "description": ai_ep.get("description", ""),
+                    "pinned_comment": f"👉 Watch Part {ep_idx + 1 if ep_idx < series_count else 1} right here! Drop your thoughts below. 👇",
+                    "voice": ai_ep.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
+                    "visual_mode": ai_ep.get("visual_mode"),
+                    "chosen_angle": ep_concept,
+                    "generation_type": f"story_series_part_{ep_idx}"
+                }
+            else:
+                chosen = pick_concept_without_repeats(
+                    niche=niche,
+                    history_file=paths.get("topic_history_file"),
+                    brand_name=brand_name,
+                    brand_handle=brand_handle
+                )
+                ep_title = f"{chosen['title'].replace(' #shorts', '')} (Part {ep_idx}/{series_count}) #shorts"
+                return {
+                    "series_part": ep_idx,
+                    "series_total": series_count,
+                    "source": "local-generator",
+                    "next_id": ep_id,
+                    "niche": niche,
+                    "title": ep_title,
+                    "script": chosen["script"],
+                    "keywords": chosen["keywords"],
+                    "search_tags": chosen.get("search_tags", ["psychology facts", "dark psychology", "human behavior"]),
+                    "description": chosen["description"],
+                    "pinned_comment": f"Part {ep_idx} of {series_count}. Watch the next chapter pinned on channel!",
+                    "voice": chosen.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
+                    "chosen_angle": ep_concept,
+                    "generation_type": f"story_series_part_{ep_idx}"
+                }
+
+        # Generate series parts sequentially with slight pause to avoid Groq burst-rate limit
+        episodes = []
+        for ep_num in range(1, series_count + 1):
+            ep_res = _generate_single_part(ep_num)
+            episodes.append(ep_res)
+            if ep_num < series_count:
+                time.sleep(0.35)
+
+        return {
+            "is_series": True,
+            "series_count": len(episodes),
+            "episodes": episodes
+        }
+
+    # 1. Primary AI Call (Groq LPU / OpenAI-DeepSeek Zero-Key Fallback)
+    ai_result = None
+    try:
+        ai_result = generate_with_gemini_flash(
+            niche=niche,
+            concept=req.concept,
+            user_key_file=paths["key_file"],
+            brand_name=brand_name,
+            brand_handle=brand_handle,
+            allow_fallback=is_owner,
+            user_tracker_file=paths["usage_file"],
+            surprise=bool(req.surprise),
+            topic_history_file=paths.get("topic_history_file"),
+            token_file=paths.get("token_file")
+        )
+    except Exception as e:
+        print(f"AI script generation error: {e}")
+    if ai_result:
+        from idea_bank import collect_channel_titles, find_duplicate_concept
+        if not (req.concept and req.concept.strip()):
+            existing_items = collect_channel_titles(paths["user_dir"])
+            if find_duplicate_concept(ai_result.get("title", ""), ai_result.get("chosen_angle", "") + " " + ai_result.get("script", "")[:160], existing_items):
+                try:
+                    retry_res = generate_with_gemini_flash(
+                        niche=niche,
+                        concept=None,
+                        user_key_file=paths["key_file"],
+                        brand_name=brand_name,
+                        brand_handle=brand_handle,
+                        allow_fallback=is_owner,
+                        user_tracker_file=paths["usage_file"],
+                        surprise=True,
+                        topic_history_file=paths.get("topic_history_file"),
+                        token_file=paths.get("token_file"),
+                    )
+                    if retry_res:
+                        ai_result = retry_res
+                except Exception:
+                    pass
+
+        final_script = ai_result.get("script", "").strip()
+        profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
+        outro_mandate = profile.get("outro_phrase", f"Follow {brand_name} for psychological rules that put you five steps ahead.").format(brand_name=brand_name)
+        if brand_name.lower() not in final_script.lower():
+            final_script = final_script.rstrip(" .,!?:;-") + f". {outro_mandate}"
+
+        keywords_list = ai_result.get("keywords", profile.get("visual_bank", ["dark", "mystery"])[:8])
+        search_tags_list = ai_result.get("search_tags", ["psychology facts", "dark psychology", "human behavior"])
+
+        return {
+            "source": ai_result.get("model_used", "groq-lpu"),
+            "next_id": next_id,
+            "niche": niche,
+            "title": ai_result.get("title", ""),
+            "script": final_script,
+            "keywords": keywords_list,
+            "search_tags": search_tags_list,
+            "description": ai_result.get("description", ""),
+            "pinned_comment": ai_result.get("pinned_comment", "Drop your thoughts below. 👇"),
+            "voice": ai_result.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
+            "visual_mode": ai_result.get("visual_mode"),
+            "media_urls": ai_result.get("media_urls", []),
+            "hook_banner": ai_result.get("hook_banner"),
+            "chosen_angle": ai_result.get("chosen_angle", req.concept or "Viral Psychology Hook"),
+            "generation_type": "surprise_seed" if req.surprise else "custom_concept"
+        }
+
+    # 2. Smooth fallback to rich local combinatorial generator (History-aware)
+    chosen = pick_concept_without_repeats(
+        niche=niche,
+        history_file=paths.get("topic_history_file"),
+        brand_name=brand_name,
+        brand_handle=brand_handle
+    )
+
+    if req.concept and req.concept.strip():
+        chosen["title"] = f"{req.concept.strip().title()} #shorts"
+
+    profile = NICHE_PROFILES.get(niche, NICHE_PROFILES["dark_psychology"])
+    record_topic_history(paths.get("topic_history_file"), chosen["title"], niche, req.concept or "")
+
+    return {
+        "source": "local-generator",
+        "next_id": next_id,
+        "niche": niche,
+        "title": chosen["title"],
+        "script": chosen["script"],
+        "keywords": chosen["keywords"],
+        "search_tags": chosen.get("search_tags", ["psychology facts", "dark psychology", "human behavior"]),
+        "description": chosen["description"],
+        "pinned_comment": chosen["pinned_comment"],
+        "voice": chosen.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
+        "chosen_angle": req.concept or chosen.get("title", "Curated Niche Angle"),
+        "generation_type": "surprise_seed" if req.surprise else "custom_concept"
+    }
+
+
+# Production Concurrency Limiter & FIFO Queue
+# 1 concurrent render on 2-OCPU host reserves 1 full CPU for API, UI, and OS stability
+MAX_CONCURRENT_RENDERS = int(os.environ.get("MAX_CONCURRENT_RENDERS", "1"))
+RENDER_QUEUE_LIST: List[str] = []
+_RENDER_SEMAPHORE: Optional[asyncio.Semaphore] = None
+
+def get_render_semaphore() -> asyncio.Semaphore:
+    global _RENDER_SEMAPHORE
+    if _RENDER_SEMAPHORE is None:
+        _RENDER_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_RENDERS)
+    return _RENDER_SEMAPHORE
+
+
+# Production Background Task Runner
+async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: str):
+    RENDER_QUEUE_LIST.append(task_id)
+    pos = len(RENDER_QUEUE_LIST)
+
+    if pos > MAX_CONCURRENT_RENDERS:
+        PRODUCTION_TASKS[task_id]["status"] = "queued"
+        PRODUCTION_TASKS[task_id]["progress"] = 5
+        PRODUCTION_TASKS[task_id]["queue_position"] = pos
+        PRODUCTION_TASKS[task_id]["log"].append(f"[QUEUE] Server CPU busy. You are #{pos} in queue. Waiting for slot...")
+    else:
+        PRODUCTION_TASKS[task_id]["status"] = "processing"
+        PRODUCTION_TASKS[task_id]["progress"] = 10
+        PRODUCTION_TASKS[task_id]["log"].append("[QUEUE] Slot allocated. Starting production pipeline...")
+
+    sem = get_render_semaphore()
+    async with sem:
+        try:
+            PRODUCTION_TASKS[task_id]["status"] = "processing"
+            if pos > MAX_CONCURRENT_RENDERS:
+                PRODUCTION_TASKS[task_id]["log"].append("[QUEUE] Render slot ready. Starting production...")
+            PRODUCTION_TASKS[task_id]["progress"] = 10
+            PRODUCTION_TASKS[task_id]["log"].append("[1/5] Synthesizing voiceover with edge-tts...")
+
+            from engine import generate_voice, get_audio_duration, build_ass_subtitles, strip_watermarks
+            from produce_motion_short import (
+                download_clip_with_smart_fallback,
+                load_clip_history,
+                record_clip_usage,
+                render_motion_video,
+                render_gameplay_short,
+                render_split_retention_short,
+                extract_timeline_visual_queries,
+                fetch_unsplash_thumbnail
+            )
+            from idea_bank import NICHE_PROFILES
+
+            target_dir = os.path.join(target_videos_dir, req.video_id)
+            os.makedirs(target_dir, exist_ok=True)
+
+            audio_file = os.path.join(target_dir, "voice.mp3")
+            ass_file = os.path.join(target_dir, "captions.ass")
+            output_mp4 = os.path.join(target_dir, f"{req.video_id}.mp4")
+            meta_file = os.path.join(target_dir, "seo_metadata.txt")
+
+            # Channel brand guarantee
+            u_dir = os.path.dirname(target_videos_dir)
+            ch_file = os.path.join(u_dir, "channel_info.json")
+            user_paths_mock = {"channel_file": ch_file, "user_id": os.path.basename(u_dir)}
+            brand_name, brand_handle = get_user_brand(user_paths_mock)
+
+            clean_script = req.script_text.strip()
+            clean_handle_str = brand_handle.lstrip("@").strip()
+            if clean_handle_str and clean_handle_str.lower() != brand_name.lower():
+                clean_script = re.sub(re.escape(brand_handle), brand_name, clean_script, flags=re.IGNORECASE)
+                clean_script = re.sub(rf"\b{re.escape(clean_handle_str)}\b", brand_name, clean_script, flags=re.IGNORECASE)
+            if brand_name.lower() != DEFAULT_BRAND_NAME.lower():
+                clean_script = re.sub(r'(?i)\btheshadowmindhq(?:-hub)?\b', brand_name, clean_script)
+                clean_script = re.sub(r'(?i)@ShadowMind\b', brand_name, clean_script)
+                clean_script = re.sub(rf'(?i)\b{DEFAULT_BRAND_NAME}\b', brand_name, clean_script)
+
+            if brand_name.lower() not in clean_script.lower():
+                clean_script = clean_script.rstrip(" .,!?:;-") + f". Follow {brand_name} for more."
+
+            v_mode = getattr(req, "visual_mode", "cinematic_cuts") or "cinematic_cuts"
+            use_cinema_frame = ADMIN_ONLY_MODE and v_mode in ("cinematic_cuts", "parkour_brainrot")
+
+            # 1. Voice with Micro-variation
+            voice_choice = req.voice or ("en-US-AndrewMultilingualNeural" if ADMIN_ONLY_MODE else "en-US-ChristopherNeural")
+            words = await generate_voice(clean_script, audio_file, voice=voice_choice, rate="+4%", brand_name=brand_name)
+            dur = get_audio_duration(audio_file)
+            PRODUCTION_TASKS[task_id]["progress"] = 30
+            PRODUCTION_TASKS[task_id]["log"].append(f"[2/5] Voice synthesized ({dur:.2f}s, {voice_choice}). Building viral ASS subtitles...")
+
+            explicit_banner = (req.hook_banner or "").strip()[:32]
+            if explicit_banner:
+                hook_banner = explicit_banner
+            else:
+                from gta_news_engine import _clean_phrase_limit
+                clean_b = _clean_phrase_limit(req.title or "", max_chars=28, min_words=2).upper()
+                hook_banner = clean_b if len(clean_b.split()) >= 2 else ("GTA 6 BREAKING NEWS" if use_cinema_frame else None)
+            top_badge = f"@{brand_name}" if use_cinema_frame else None
+
+            # 2. Subtitles with Pop-In Animations & High-Contrast Colors
+            caption_style_used = build_ass_subtitles(
+                words,
+                ass_file,
+                margin_v=520 if use_cinema_frame else 860,
+                top_badge=top_badge,
+                hook_banner=hook_banner,
+            )
+            PRODUCTION_TASKS[task_id]["progress"] = 50
+            PRODUCTION_TASKS[task_id]["log"].append(f"[2/5] Dynamic subtitles baked [Style: {caption_style_used}].")
+
+            # 3. Visual Mode Handling (cinematic_cuts, parkour_brainrot, split_retention)
+            clip_paths = []
+
+            async def _fetch_timeline_clips_parallel(queries_list, niche_name):
+                clip_history_file = os.path.join(u_dir, "clip_history.json")
+                clip_history = load_clip_history(clip_history_file)
+                used_in_video = set()
+                dl_sem = asyncio.Semaphore(4)
+
+                async def _one(idx, kw):
+                    cp = os.path.join(target_dir, f"clip_{idx}.mp4")
+                    async with dl_sem:
+                        _, chosen_url = await asyncio.to_thread(
+                            download_clip_with_smart_fallback,
+                            kw,
+                            cp,
+                            niche_name,
+                            used_in_video,
+                            clip_history,
+                        )
+                    return cp, chosen_url
+
+                pairs = await asyncio.gather(*[_one(i, k) for i, k in enumerate(queries_list)])
+                paths_out = [p for p, _ in pairs]
+                urls_out = [u for _, u in pairs]
+                record_clip_usage(clip_history_file, urls_out)
+                return paths_out
+
+            resolved_media_urls = list(req.media_urls or [])
+            if v_mode == "parkour_brainrot":
+                PRODUCTION_TASKS[task_id]["progress"] = 70
+                PRODUCTION_TASKS[task_id]["log"].append(
+                    "[3/5] Visual Mode: GTA 6 Server Gameplay (8-Cut Cinema Frame)..." if use_cinema_frame
+                    else "[3/5] Visual Mode: Hypnotic Gameplay Loop (Minecraft Parkour / Subway Surfers). Instant local slicing..."
+                )
+                await asyncio.to_thread(render_gameplay_short, audio_file, ass_file, output_mp4, dur, None, use_cinema_frame)
+
+            elif v_mode == "split_retention":
+                niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
+                target_cuts = 4  # High quality story scenes for top half
+                timeline_queries = extract_timeline_visual_queries(
+                    script_text=clean_script,
+                    target_cuts=target_cuts,
+                    keywords_from_prompt=req.clip_keywords,
+                    niche=niche
+                )
+
+                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Visual Mode: Split-Screen Retention. Fetching {len(timeline_queries)} timeline clips in parallel: {timeline_queries}...")
+                clip_paths = await _fetch_timeline_clips_parallel(timeline_queries, niche)
+                PRODUCTION_TASKS[task_id]["progress"] = 70
+                PRODUCTION_TASKS[task_id]["log"].append("[4/5] Rendering 50/50 Split-Screen (Narrative Story on Top, Hypnotic Parkour on Bottom)...")
+                await asyncio.to_thread(render_split_retention_short, clip_paths, audio_file, ass_file, output_mp4, dur)
+
+            elif ADMIN_ONLY_MODE:  # GTA Cinematic Cuts -> Scraped News Article Images & Videos
+                if not resolved_media_urls and req.description:
+                    url_m = re.search(r"https?://[^\s)]+", req.description)
+                    if url_m:
+                        from gta_news_engine import scrape_article_media
+                        resolved_media_urls = await asyncio.to_thread(scrape_article_media, url_m.group(0).rstrip(".,;"))
+                from produce_motion_short import render_news_media_short
+                PRODUCTION_TASKS[task_id]["progress"] = 70
+                PRODUCTION_TASKS[task_id]["log"].append(
+                    f"[3/5] Visual Mode: News Media Cuts ({len(resolved_media_urls)} scraped article visuals + Ken Burns Cinema Frame)..."
+                )
+                await asyncio.to_thread(render_news_media_short, resolved_media_urls, audio_file, ass_file, output_mp4, dur, True, False)
+
+            else:  # ShadowMind cinematic_cuts -> pure full-screen stock clips (Pixabay -> Mixkit -> Unsplash)
+                niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
+                target_cuts = max(8, min(14, round(dur / 3.0)))
+                scene_kws = list(req.clip_keywords or [])
+                if len(scene_kws) < max(4, target_cuts // 2):
+                    try:
+                        from gemini_generator import generate_scene_visual_queries
+                        key_file = os.path.join(u_dir, "groq_api_key.txt")
+                        llm_scenes = await asyncio.to_thread(generate_scene_visual_queries, clean_script, target_cuts, key_file, True)
+                        if llm_scenes:
+                            scene_kws = llm_scenes
+                    except Exception:
+                        pass
+                timeline_queries = extract_timeline_visual_queries(
+                    script_text=clean_script,
+                    target_cuts=target_cuts,
+                    keywords_from_prompt=scene_kws,
+                    niche=niche
+                )
+
+                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Fetching {len(timeline_queries)} script-synchronized stock clips in parallel: {timeline_queries}...")
+                clip_paths = await _fetch_timeline_clips_parallel(timeline_queries, niche)
+
+                PRODUCTION_TASKS[task_id]["progress"] = 70
+                PRODUCTION_TASKS[task_id]["log"].append(f"[4/5] Rendering 1080x1920 vertical video ({len(clip_paths)} dynamic cuts with random offsets & flips)...")
+
+                # 4. Render (Non-blocking async execution)
+                await asyncio.to_thread(render_motion_video, clip_paths, audio_file, ass_file, output_mp4, dur)
+
+            PRODUCTION_TASKS[task_id]["progress"] = 90
+            PRODUCTION_TASKS[task_id]["log"].append("[5/5] Metadata sanitized (-map_metadata -1) & packaging SEO...")
+
+            # 6. Save SEO with High-Intent Multi-Word Search Tags
+            title_to_save = req.title
+            desc_to_save = req.description
+            pinned_to_save = req.pinned_comment
+            if brand_name.lower() != DEFAULT_BRAND_NAME.lower():
+                for val_name in ["title", "desc", "pinned"]:
+                    target_str = title_to_save if val_name == "title" else (desc_to_save if val_name == "desc" else pinned_to_save)
+                    target_str = re.sub(r'(?i)\btheshadowmindhq(?:-hub)?\b', brand_handle.lstrip("@"), target_str)
+                    target_str = re.sub(r'(?i)@ShadowMind\b', brand_handle, target_str)
+                    target_str = re.sub(rf'(?i)\b{DEFAULT_BRAND_NAME}\b', brand_name, target_str)
+                    if val_name == "title": title_to_save = target_str
+                    elif val_name == "desc": desc_to_save = target_str
+                    elif val_name == "pinned": pinned_to_save = target_str
+
+            # 7. Thumbnail Generation (prefer article hero image on GTA news shorts, fallback to Unsplash)
+            thumb_path = os.path.join(target_dir, "thumbnail.jpg")
+            thumb_saved = False
+            if use_cinema_frame and resolved_media_urls:
+                img_u = next((u for u in resolved_media_urls if not u.split("?")[0].lower().endswith((".mp4", ".webm"))), None)
+                if img_u:
+                    try:
+                        import requests as _req
+                        tr = await asyncio.to_thread(_req.get, img_u, headers={"User-Agent": "Mozilla/5.0"}, timeout=7)
+                        if tr.status_code == 200 and len(tr.content) > 5000:
+                            with open(thumb_path, "wb") as tf:
+                                tf.write(tr.content)
+                            thumb_saved = True
+                    except Exception:
+                        pass
+            if not thumb_saved:
+                thumb_query = (req.clip_keywords[0] if req.clip_keywords else "") or req.title or "cinematic mystery"
+                try:
+                    await asyncio.to_thread(fetch_unsplash_thumbnail, thumb_query, thumb_path)
+                except Exception as te:
+                    print(f"Thumbnail generation note: {te}")
+
+            tags_str = ", ".join(req.search_tags) if req.search_tags else ""
+            with open(meta_file, "w", encoding="utf-8") as f:
+                f.write(f"TITLE:\n{title_to_save}\n\n")
+                f.write(f"DESCRIPTION:\n{desc_to_save}\n\n")
+                if tags_str:
+                    f.write(f"TAGS:\n{tags_str}\n\n")
+                f.write(f"PINNED COMMENT:\n{pinned_to_save}\n")
+
+            # Clean intermediate clips
+            for cp in clip_paths:
+                try:
+                    if os.path.exists(cp):
+                        os.remove(cp)
+                except Exception:
+                    pass
+
+            clear_user_video_mapping({
+                "mappings_file": os.path.join(u_dir, "video_mappings.json"),
+                "stats_file": os.path.join(u_dir, "stats_cache.json"),
+            }, req.video_id)
+            mb = round(os.path.getsize(output_mp4) / (1024 * 1024), 2)
+            PRODUCTION_TASKS[task_id]["status"] = "completed"
+            PRODUCTION_TASKS[task_id]["progress"] = 100
+            file_name = os.path.basename(output_mp4)
+            PRODUCTION_TASKS[task_id]["output_file"] = file_name
+            PRODUCTION_TASKS[task_id]["log"].append(f"[SUCCESS] Real-motion short generated ({mb} MB): {file_name}")
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            PRODUCTION_TASKS[task_id]["status"] = "failed"
+            PRODUCTION_TASKS[task_id]["error"] = str(e)
+            PRODUCTION_TASKS[task_id]["log"].append(f"[ERROR] Production failed: {str(e)}")
+
+        finally:
+            if task_id in RENDER_QUEUE_LIST:
+                RENDER_QUEUE_LIST.remove(task_id)
+
+
+@app.post("/api/produce")
+async def start_produce(req: ProduceRequest, background_tasks: BackgroundTasks, user: dict = Depends(require_auth)):
+    """Triggers end-to-end motion short production in background (User Scoped)."""
+    paths = get_user_paths(user)
+    cleaned_video_id = sanitize_short_id(req.video_id)
+    req.video_id = cleaned_video_id
+
+    from idea_bank import collect_channel_titles, find_duplicate_concept
+    existing_items = collect_channel_titles(paths["user_dir"], exclude_video_id=cleaned_video_id)
+    # Exclude history_ entries at render gate so re-generating/tweaking in Studio only blocks against actual channel/vault shorts
+    channel_shorts = [it for it in existing_items if not str(it.get("id", "")).startswith("history_")]
+    dup = find_duplicate_concept(req.title, req.script_text[:220], channel_shorts)
+    if dup:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Duplicate concept blocked: too close to {dup['id'].upper()} \"{dup['title']}\" ({dup['score']}% match: {', '.join(dup['matched'])}). Change the title/hook or generate a fresh idea.",
+        )
+
+    task_id = f"task_{cleaned_video_id}_{int(time.time())}"
+    PRODUCTION_TASKS[task_id] = {
+        "task_id": task_id,
+        "user_id": paths["user_id"],
+        "video_id": req.video_id,
+        "status": "queued",
+        "progress": 0,
+        "log": [],
+        "output_file": None,
+        "error": None
+    }
+    background_tasks.add_task(run_production, task_id, req, paths["videos_dir"])
+    return {"task_id": task_id, "status": "queued", "message": f"Production of {req.video_id} queued."}
+
+
+@app.get("/api/produce/status/{task_id}")
+def get_produce_status(task_id: str, user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    if task_id not in PRODUCTION_TASKS:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task = PRODUCTION_TASKS[task_id]
+    if task.get("user_id") and task["user_id"] != paths["user_id"]:
+        raise HTTPException(status_code=403, detail="Access denied to this task")
+    if task.get("status") == "queued" and task_id in RENDER_QUEUE_LIST:
+        pos = RENDER_QUEUE_LIST.index(task_id) + 1
+        task["queue_position"] = pos
+    return task
+
+
+class VodInspectRequest(BaseModel):
+    channel_or_url: str
+
+
+class VodHighlightsRequest(BaseModel):
+    vod_url: str
+
+
+class VodProduceRequest(BaseModel):
+    vod_url: str
+    start_time: str
+    end_time: str
+    vod_title: Optional[str] = None
+    game_name: Optional[str] = None
+    hook_banner: Optional[str] = None
+    title: Optional[str] = None
+    tts_hook: Optional[str] = None
+    video_id: Optional[str] = None
+
+
+@app.post("/api/vod/inspect")
+async def inspect_twitch_vods(req: VodInspectRequest, user: dict = Depends(require_auth)):
+    """Lists recent Twitch VODs and channel clips via Helix API (GTA mode only)."""
+    if not ADMIN_ONLY_MODE:
+        raise HTTPException(status_code=403, detail="VOD clipper is only enabled on the GTA studio.")
+    from vod_clipper import list_twitch_vods, list_twitch_channel_clips
+    try:
+        vods, clips = await asyncio.gather(
+            asyncio.to_thread(list_twitch_vods, req.channel_or_url, 8),
+            asyncio.to_thread(list_twitch_channel_clips, req.channel_or_url, 8),
+        )
+        return {"vods": vods, "clips": clips}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/vod/highlights")
+async def scan_twitch_vod_highlights(req: VodHighlightsRequest, user: dict = Depends(require_auth)):
+    """Two-pass auto highlight scanner (Storyboard visual jumps + Audio_Only contrast) for 1-14h VODs."""
+    if not ADMIN_ONLY_MODE:
+        raise HTTPException(status_code=403, detail="VOD clipper is only enabled on the GTA studio.")
+    from vod_clipper import find_vod_highlights
+    try:
+        highlights = await asyncio.to_thread(find_vod_highlights, req.vod_url, 8)
+        return {"highlights": highlights}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+async def run_vod_production(task_id: str, req: VodProduceRequest, target_videos_dir: str):
+    if task_id not in RENDER_QUEUE_LIST:
+        RENDER_QUEUE_LIST.append(task_id)
+    sem = get_render_semaphore()
+    try:
+        async with sem:
+            PRODUCTION_TASKS[task_id]["status"] = "processing"
+            PRODUCTION_TASKS[task_id]["progress"] = 15
+            PRODUCTION_TASKS[task_id]["log"].append(f"[1/4] Downloading VOD slice {req.start_time} -> {req.end_time}...")
+
+            from vod_clipper import parse_timestamp_sec, download_vod_slice, render_vod_cinema_short, analyze_clip_with_vision
+            from engine import generate_voice, build_ass_subtitles
+            from produce_motion_short import FFMPEG
+
+            start_sec = parse_timestamp_sec(req.start_time)
+            end_sec = parse_timestamp_sec(req.end_time)
+
+            target_dir = os.path.join(target_videos_dir, req.video_id)
+            os.makedirs(target_dir, exist_ok=True)
+            raw_mp4 = os.path.join(target_dir, "vod_slice.mp4")
+            ass_file = os.path.join(target_dir, "captions.ass")
+            tts_file = os.path.join(target_dir, "hook_voice.mp3")
+            output_mp4 = os.path.join(target_dir, f"{req.video_id}.mp4")
+            meta_file = os.path.join(target_dir, "seo_metadata.txt")
+            thumb_file = os.path.join(target_dir, "thumbnail.jpg")
+
+            dur = await asyncio.to_thread(download_vod_slice, req.vod_url, start_sec, end_sec, raw_mp4)
+            PRODUCTION_TASKS[task_id]["progress"] = 45
+
+            u_dir = os.path.dirname(target_videos_dir)
+            brand_name, brand_handle = get_user_brand({"channel_file": os.path.join(u_dir, "channel_info.json"), "user_id": os.path.basename(u_dir)})
+
+            ai_hook, ai_title, ai_tags, ai_comment, ai_tts = None, None, None, None, None
+            if not req.hook_banner:
+                try:
+                    vis_res = await asyncio.to_thread(
+                        analyze_clip_with_vision, raw_mp4, dur, req.vod_title or "", req.game_name or ""
+                    )
+                    if isinstance(vis_res, dict):
+                        ai_hook = (vis_res.get("hook_banner") or "").strip()[:42]
+                        ai_title = (vis_res.get("title") or "").strip()[:68]
+                        ai_tags = (vis_res.get("tags") or "").strip()
+                        ai_comment = (vis_res.get("pinned_comment") or "").strip()
+                        ai_tts = (vis_res.get("tts_opener") or "").strip()
+                        PRODUCTION_TASKS[task_id]["log"].append(f"[VISION] {vis_res.get('model_used')} -> {ai_hook}")
+                except Exception:
+                    pass
+                if not ai_hook:
+                    try:
+                        from gemini_generator import get_groq_key, generate_with_groq_lpu
+                        g_key = get_groq_key(os.path.join(u_dir, "groq_api_key.txt"), allow_fallback=True)
+                        if g_key:
+                            v_ctx = (req.vod_title or "GTA 6 Xbox Series X Gameplay").strip()
+                            g_prompt = (
+                                f'Write viral YouTube Shorts metadata for a 30s action highlight from this stream: "{v_ctx}" '
+                                f'(slice {req.start_time} to {req.end_time}). '
+                                'Respond ONLY with JSON: {"hook_banner":"ALL CAPS 3-6 WORD HOOK UNDER 36 CHARS",'
+                                '"title":"Punchy title under 50 chars + #shorts #gta6",'
+                                '"tags":"5 comma-separated search tags",'
+                                '"pinned_comment":"Short question for viewers"}'
+                            )
+                            g_res = await asyncio.to_thread(generate_with_groq_lpu, g_prompt, g_key)
+                            if isinstance(g_res, dict):
+                                ai_hook = (g_res.get("hook_banner") or "").strip()[:42]
+                                ai_title = (g_res.get("title") or "").strip()[:68]
+                                ai_tags = (g_res.get("tags") or "").strip()
+                                ai_comment = (g_res.get("pinned_comment") or "").strip()
+                    except Exception:
+                        pass
+
+            default_hooks = [
+                "WAIT FOR THE ENDING",
+                "NO WAY THIS JUST HAPPENED",
+                "GTA 6 CHAOS ON SERIES X",
+                "WATCH CLOSELY AT THE END",
+            ]
+            import random as _rnd
+            hook_text = (req.hook_banner or ai_hook or _rnd.choice(default_hooks)).strip()[:42]
+            tts_text = (req.tts_hook or ai_tts or "").strip()
+            words = []
+            tts_used = None
+            if tts_text:
+                PRODUCTION_TASKS[task_id]["log"].append("[2/4] Synthesizing optional TTS hook...")
+                words = await generate_voice(tts_text, tts_file, voice="en-US-AndrewMultilingualNeural", rate="+4%", brand_name=brand_name)
+                tts_used = tts_file
+            else:
+                PRODUCTION_TASKS[task_id]["log"].append("[2/4] Using pure Xbox game audio + Top Hook Banner...")
+
+            build_ass_subtitles(words, ass_file, margin_v=520, top_badge=f"@{brand_name}", hook_banner=hook_text, fallback_duration=dur)
+            PRODUCTION_TASKS[task_id]["progress"] = 70
+            PRODUCTION_TASKS[task_id]["log"].append(f"[3/4] Rendering 1080x1920 Cinema Frame ({dur:.1f}s, -14 LUFS)...")
+
+            await asyncio.to_thread(render_vod_cinema_short, raw_mp4, output_mp4, dur, ass_file, tts_used)
+
+            # Extract crisp frame as thumbnail.jpg
+            await asyncio.to_thread(
+                subprocess.run,
+                [FFMPEG, "-y", "-ss", f"{min(2.0, dur / 2):.1f}", "-i", raw_mp4, "-frames:v", "1", thumb_file],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            for tmp in (raw_mp4, tts_file):
+                if os.path.exists(tmp):
+                    try:
+                        os.remove(tmp)
+                    except Exception:
+                        pass
+
+            clean_title = (req.title or ai_title or hook_text or "Insane GTA 6 Moment").strip()[:68]
+            yt_title = clean_title if "#shorts" in clean_title.lower() else f"{clean_title} #shorts #gta6"
+            tags_line = ai_tags or "gta 6 gameplay, gta 6 xbox series x, gta vi shorts, gta 6 clips, pixelbreach"
+            comment_line = ai_comment or "Rate this moment 1-10! Playing GTA 6 live on Series X."
+            with open(meta_file, "w", encoding="utf-8") as f:
+                f.write(f"TITLE:\n{yt_title}\n\n")
+                f.write(f"DESCRIPTION:\n{hook_text} — Live from Series X. Subscribe to {brand_handle} #shorts #gta6 #gtavi #xbox\n\n")
+                f.write(f"TAGS:\n{tags_line}\n\n")
+                f.write(f"PINNED COMMENT:\n{comment_line}\n")
+
+            clear_user_video_mapping({
+                "mappings_file": os.path.join(u_dir, "video_mappings.json"),
+                "stats_file": os.path.join(u_dir, "stats_cache.json"),
+            }, req.video_id)
+            mb = round(os.path.getsize(output_mp4) / (1024 * 1024), 2)
+            PRODUCTION_TASKS[task_id]["status"] = "completed"
+            PRODUCTION_TASKS[task_id]["progress"] = 100
+            PRODUCTION_TASKS[task_id]["output_file"] = os.path.basename(output_mp4)
+            PRODUCTION_TASKS[task_id]["log"].append(f"[SUCCESS] Stream Short rendered ({mb} MB): {os.path.basename(output_mp4)}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        PRODUCTION_TASKS[task_id]["status"] = "failed"
+        PRODUCTION_TASKS[task_id]["error"] = str(e)
+        PRODUCTION_TASKS[task_id]["log"].append(f"[ERROR] VOD render failed: {str(e)}")
+    finally:
+        if task_id in RENDER_QUEUE_LIST:
+            RENDER_QUEUE_LIST.remove(task_id)
+
+
+@app.post("/api/vod/produce")
+async def start_vod_produce(req: VodProduceRequest, background_tasks: BackgroundTasks, user: dict = Depends(require_auth)):
+    """Slices a Twitch VOD timestamp range and renders a 1080x1920 Cinema Frame Short (GTA mode only)."""
+    if not ADMIN_ONLY_MODE:
+        raise HTTPException(status_code=403, detail="VOD clipper is only enabled on the GTA studio.")
+    paths = get_user_paths(user)
+    from idea_bank import get_next_short_id
+    vid = sanitize_short_id(req.video_id) if req.video_id else get_next_short_id(paths["videos_dir"])
+    req.video_id = vid
+    task_id = f"task_{vid}_{int(time.time())}"
+    PRODUCTION_TASKS[task_id] = {
+        "task_id": task_id,
+        "user_id": paths["user_id"],
+        "video_id": vid,
+        "status": "queued",
+        "progress": 0,
+        "log": [],
+        "output_file": None,
+        "error": None,
+    }
+    background_tasks.add_task(run_vod_production, task_id, req, paths["videos_dir"])
+    return {"task_id": task_id, "video_id": vid, "status": "queued"}
+
+
+@app.post("/api/upload")
+def upload_to_youtube(req: UploadRequest, user: dict = Depends(require_auth)):
+    """Uploads a generated short to YouTube (Public or Scheduled) using user's token.json."""
+    paths = get_user_paths(user)
+    cleaned_video_id = sanitize_short_id(req.video_id)
+    req.video_id = cleaned_video_id
+    dir_path = os.path.join(paths["videos_dir"], cleaned_video_id)
+    if not os.path.exists(dir_path):
+        raise HTTPException(status_code=404, detail=f"Short folder '{req.video_id}' not found")
+
+    mp4_files = [x for x in os.listdir(dir_path) if x.endswith(".mp4")]
+    if not mp4_files:
+        raise HTTPException(status_code=404, detail="No MP4 file found in folder")
+
+    target_mp4 = next((x for x in mp4_files if req.video_id in x), mp4_files[0])
+    video_path = os.path.join(dir_path, target_mp4)
+
+    # Read SEO
+    meta_path = os.path.join(dir_path, "seo_metadata.txt")
+    title = f"{req.video_id} #shorts"
+    description = ""
+    tags = ["gta 6", "gta vi", "gaming"] if ADMIN_ONLY_MODE else ["shorts", "psychology", "darkpsychology"]
+
+    if os.path.exists(meta_path):
+        try:
+            content = open(meta_path, "r", encoding="utf-8").read()
+            t_m = re.search(r'TITLE:\s*(.*?)(?=\n\n|\nDESCRIPTION:|$)', content, re.DOTALL)
+            d_m = re.search(r'DESCRIPTION:\s*(.*?)(?=\n\n(?:SEARCH )?TAGS(?:\s*\([^)]*\))?:|\n\nPINNED COMMENT:|$)', content, re.DOTALL)
+            if t_m:
+                title = t_m.group(1).strip()
+            if d_m:
+                description = d_m.group(1).strip()
+            tags_m = re.search(r'(?:SEARCH )?TAGS(?:\s*\([^)]*\))?:\s*(.*?)(?=\n\nPINNED COMMENT:|\nPINNED COMMENT:|$)', content, re.DOTALL)
+            if tags_m and tags_m.group(1).strip():
+                tags = [t.strip() for t in tags_m.group(1).split(",") if t.strip()]
+            else:
+                extracted_tags = re.findall(r'#(\w+)', description)
+                if extracted_tags:
+                    tags = extracted_tags
+        except Exception:
+            pass
+
+    # Strict YouTube Token Isolation:
+    # Only legacy owner can fall back to root token.json if user token is missing.
+    # Non-owner accounts MUST have their own token.json in their user directory.
+    if os.path.exists(paths["token_file"]):
+        token_to_use = paths["token_file"]
+    elif not DISABLE_LEGACY_MIGRATION and is_legacy_owner(paths["user_id"], user.get("email")) and os.path.exists(TOKEN_FILE):
+        token_to_use = TOKEN_FILE
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="YouTube channel not connected for this account. Please go to Channel Settings and connect your YouTube OAuth token (token.json) to upload."
+        )
+
+    thumb_file = os.path.join(dir_path, "thumbnail.jpg")
+    thumb_arg = thumb_file if os.path.exists(thumb_file) else None
+    cat_id = "20" if ADMIN_ONLY_MODE else "27"
+    try:
+        if req.publish_at:
+            from upload_scheduled import upload_scheduled_short
+            yt_url = upload_scheduled_short(video_path, title, description, tags, req.publish_at, token_file=token_to_use, category_id=cat_id, thumbnail_path=thumb_arg)
+        else:
+            from uploader import upload_short
+            yt_url = upload_short(video_path, title, description, tags, req.privacy_status, token_file=token_to_use, category_id=cat_id, thumbnail_path=thumb_arg)
+
+        from datetime import datetime, timezone
+        yt_id = yt_url.split("/")[-1].split("?")[0]
+        status_label = "SCHEDULED" if req.publish_at else req.privacy_status.upper()
+        pub_val = req.publish_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        save_user_video_mapping(paths["mappings_file"], req.video_id, yt_id, status_label, pub_val)
+
+        try:
+            from usage_tracker import record_youtube_upload
+            record_youtube_upload(tracker_file=paths["usage_file"])
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "video_id": req.video_id,
+            "url": yt_url,
+            "yt_id": yt_id,
+            "privacy": req.privacy_status,
+            "scheduled": req.publish_at
+        }
+    except Exception as e:
+        err_msg = str(e)
+        if "invalid_grant" in err_msg.lower() or "expired or revoked" in err_msg.lower():
+            raise HTTPException(
+                status_code=401,
+                detail="YouTube OAuth token expired or revoked. Go to Channel Settings and reconnect your YouTube account."
+            )
+        raise HTTPException(status_code=500, detail=err_msg)
+
+
+@app.patch("/api/videos/{short_id}/schedule")
+def update_video_schedule(short_id: str, req: UpdateScheduleRequest, user: dict = Depends(require_auth)):
+    """Updates the release date/time for a scheduled short locally."""
+    paths = get_user_paths(user)
+    cleaned_id = sanitize_short_id(short_id)
+    mappings = get_user_video_mappings(paths["mappings_file"])
+
+    if cleaned_id not in mappings:
+        raise HTTPException(status_code=404, detail=f"Short '{cleaned_id}' not found in user library")
+
+    info = mappings[cleaned_id]
+    info["publish_at"] = req.publish_at.strip()
+    info["default_status"] = "SCHEDULED"
+
+    with open(paths["mappings_file"], "w", encoding="utf-8") as f:
+        json.dump(mappings, f, indent=2)
+
+    return {
+        "success": True,
+        "short_id": cleaned_id,
+        "publish_at": info["publish_at"],
+        "message": f"Schedule date for {cleaned_id} updated successfully"
+    }
+
+
+class GuideGenerateRequest(BaseModel):
+    topic: Optional[str] = None
+    target_minutes: Optional[int] = 6
+    niche: Optional[str] = None
+
+
+class GuideProduceRequest(BaseModel):
+    video_id: str
+    blueprint: dict
+    voice: Optional[str] = "en-US-AndrewMultilingualNeural"
+
+
+@app.post("/api/guides/generate")
+def generate_long_guide(req: GuideGenerateRequest, user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    from idea_bank import get_next_short_id
+    from guide_builder import generate_guide_blueprint
+
+    next_id = get_next_short_id(paths["videos_dir"])
+    brand_name, brand_handle = get_user_brand(paths, user)
+    niche = "gta6_launch" if ADMIN_ONLY_MODE else (req.niche or "dark_psychology")
+    bp = generate_guide_blueprint(
+        topic=req.topic or "",
+        brand_name=brand_name,
+        brand_handle=brand_handle,
+        target_minutes=max(5, min(10, int(req.target_minutes or 6))),
+        user_key_file=paths["key_file"],
+        niche=niche,
+        topic_history_file=paths.get("topic_history_file"),
+    )
+    return {"next_id": next_id, "blueprint": bp}
+
+
+async def run_guide_production(task_id: str, req: GuideProduceRequest, target_videos_dir: str, brand_name: str):
+    sem = get_render_semaphore()
+    RENDER_QUEUE_LIST.append(task_id)
+    pos = len(RENDER_QUEUE_LIST)
+    if pos > MAX_CONCURRENT_RENDERS:
+        PRODUCTION_TASKS[task_id]["log"].append(f"[QUEUE] Server busy — queued at position #{pos - MAX_CONCURRENT_RENDERS}.")
+
+    async with sem:
+        try:
+            from guide_builder import render_long_guide_video
+
+            PRODUCTION_TASKS[task_id]["status"] = "processing"
+            PRODUCTION_TASKS[task_id]["progress"] = 10
+            PRODUCTION_TASKS[task_id]["log"].append("[1/3] Starting 16:9 UI Info-Card Guide render...")
+
+            target_dir = os.path.join(target_videos_dir, req.video_id)
+            work_dir = os.path.join(target_dir, "guide_work")
+            os.makedirs(target_dir, exist_ok=True)
+            output_mp4 = os.path.join(target_dir, f"{req.video_id}.mp4")
+            thumb_jpg = os.path.join(target_dir, "thumbnail.jpg")
+            meta_file = os.path.join(target_dir, "seo_metadata.txt")
+
+            chapters = req.blueprint.get("chapters") or []
+            total_ch = max(1, len(chapters))
+
+            def _log_cb(msg: str):
+                PRODUCTION_TASKS[task_id]["log"].append(msg)
+                m = re.match(r"\[(\d+)/", msg)
+                if m:
+                    done = int(m.group(1))
+                    PRODUCTION_TASKS[task_id]["progress"] = min(88, 12 + int((done / total_ch) * 76))
+
+            res = await render_long_guide_video(
+                blueprint=req.blueprint,
+                output_mp4=output_mp4,
+                thumb_jpg=thumb_jpg,
+                work_dir=work_dir,
+                brand_name=brand_name,
+                voice=req.voice or "en-US-AndrewMultilingualNeural",
+                log_cb=_log_cb,
+            )
+
+            tags_str = ", ".join(req.blueprint.get("search_tags") or ["gta 6 guide", "gta vi"])
+            full_desc = f"{req.blueprint.get('description', '')}\n\nChapters:\n{res['chapters_text']}".strip()
+            with open(meta_file, "w", encoding="utf-8") as f:
+                f.write(
+                    f"TITLE:\n{req.blueprint.get('title', req.video_id)}\n\n"
+                    f"DESCRIPTION:\n{full_desc}\n\n"
+                    f"TAGS:\n{tags_str}\n\n"
+                    f"PINNED COMMENT:\n{req.blueprint.get('pinned_comment', '')}\n"
+                )
+
+            u_dir = os.path.dirname(target_videos_dir)
+            clear_user_video_mapping({
+                "mappings_file": os.path.join(u_dir, "video_mappings.json"),
+                "stats_file": os.path.join(u_dir, "stats_cache.json"),
+            }, req.video_id)
+
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+            PRODUCTION_TASKS[task_id]["progress"] = 100
+            PRODUCTION_TASKS[task_id]["status"] = "completed"
+            PRODUCTION_TASKS[task_id]["output_file"] = output_mp4
+            PRODUCTION_TASKS[task_id]["log"].append(
+                f"[SUCCESS] 16:9 Guide ready ({res['duration_sec']/60:.1f} min, {res['segments']} chapters) -> {req.video_id}.mp4"
+            )
+        except Exception as e:
+            PRODUCTION_TASKS[task_id]["status"] = "failed"
+            PRODUCTION_TASKS[task_id]["error"] = str(e)
+            PRODUCTION_TASKS[task_id]["log"].append(f"[ERROR] {str(e)}")
+        finally:
+            if task_id in RENDER_QUEUE_LIST:
+                RENDER_QUEUE_LIST.remove(task_id)
+
+
+@app.post("/api/guides/produce")
+async def start_guide_produce(req: GuideProduceRequest, background_tasks: BackgroundTasks, user: dict = Depends(require_auth)):
+    paths = get_user_paths(user)
+    cleaned_id = sanitize_short_id(req.video_id)
+    req.video_id = cleaned_id
+    brand_name, _ = get_user_brand(paths, user)
+    task_id = f"task_{cleaned_id}_{int(time.time())}"
+    PRODUCTION_TASKS[task_id] = {
+        "task_id": task_id,
+        "user_id": paths["user_id"],
+        "video_id": cleaned_id,
+        "status": "queued",
+        "progress": 0,
+        "log": [],
+        "output_file": None,
+        "error": None,
+    }
+    background_tasks.add_task(run_guide_production, task_id, req, paths["videos_dir"], brand_name)
+    return {"task_id": task_id, "status": "queued", "video_id": cleaned_id}
+
+
+# Mount React static files if built
+if os.path.exists(DASHBOARD_DIST):
+    app.mount("/assets", StaticFiles(directory=os.path.join(DASHBOARD_DIST, "assets")), name="assets")
+
+    @app.get("/{full_path:path}")
+    def serve_react_spa(full_path: str):
+        dist_real = os.path.realpath(DASHBOARD_DIST)
+        file_path = os.path.realpath(os.path.join(DASHBOARD_DIST, full_path))
+        if full_path and file_path.startswith(dist_real + os.sep) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(
+            os.path.join(DASHBOARD_DIST, "index.html"),
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        )
+
+if __name__ == "__main__":
+    import uvicorn
+    server_port = int(os.environ.get("PORT", "8050"))
+    server_host = os.environ.get("HOST", "127.0.0.1")
+    enable_reload = os.environ.get("DEV_RELOAD", "false").lower() == "true"
+    uvicorn.run("server:app", host=server_host, port=server_port, app_dir=BASE_DIR, reload=enable_reload)

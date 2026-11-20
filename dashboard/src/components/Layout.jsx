@@ -199,13 +199,6 @@ export default function Layout() {
               </div>
             </NavLink>
 
-            {usage?.studio_mode === 'gta' && (
-              <NavLink to="/stream-vods" className={getNavClass}>
-                <Radio className="w-4 h-4 text-purple-400" />
-                <span>Stream VODs</span>
-              </NavLink>
-            )}
-
             <NavLink to="/dispatcher" className={getNavClass}>
               <Send className="w-4 h-4 text-emerald-400" />
               <span>YouTube Dispatcher</span>

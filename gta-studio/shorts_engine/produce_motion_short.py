@@ -1,0 +1,1180 @@
+import os
+import sys
+import re
+import json
+import time
+import random
+import asyncio
+import requests
+import subprocess
+import urllib.parse
+import imageio_ffmpeg
+from typing import Optional, List, Dict, Set
+
+FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.join(BASE_DIR, "shorts_engine"))
+
+
+def _run_ffmpeg(cmd: List[str]) -> subprocess.CompletedProcess:
+    """Runs FFmpeg at lower CPU priority on Linux/VPS so web UI and SSH stay responsive."""
+    full_cmd = (["nice", "-n", "10"] + cmd) if os.name != "nt" else cmd
+    return subprocess.run(full_cmd, capture_output=True, text=True)
+
+# Load environment variables from .env if present
+def _load_env_fallback():
+    env_path = os.path.join(BASE_DIR, ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        if k.strip() not in os.environ:
+                            os.environ[k.strip()] = v.strip().strip("'\"")
+        except Exception:
+            pass
+
+_load_env_fallback()
+
+from engine import format_ass_time, generate_voice, get_audio_duration, build_ass_subtitles, strip_watermarks, FONTS_DIR
+from idea_bank import NICHE_PROFILES
+
+GAMEPLAY_DIR = os.environ.get("GAMEPLAY_DIR") or os.path.join(BASE_DIR, "shorts_engine", "gameplay")
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9"
+}
+
+# In-memory candidate cache: {query_clean: (timestamp, [urls])}
+_QUERY_CACHE: Dict[str, tuple] = {}
+CACHE_TTL = 6 * 3600  # 6 hours
+
+def extract_clip_id(url: str) -> str:
+    """Extracts a unique, stable clip identifier from a stock video URL."""
+    m_pix = re.search(r'pixabay\.com/video/[^/]+/[^/]+/[^/]+/(\d+)-', url)
+    if m_pix:
+        return f"pix_{m_pix.group(1)}"
+    m_uns = re.search(r'images\.unsplash\.com/photo-([a-zA-Z0-9_-]+)', url)
+    if m_uns:
+        return f"uns_{m_uns.group(1)[:25]}"
+    m = re.search(r'/videos/(\d+)/', url)
+    if m:
+        return f"mix_{m.group(1)}"
+    m2 = re.search(r'mixkit-([^.]+?)(?:-\d+)?\.', url)
+    if m2:
+        return f"mix_{m2.group(1)[:25]}"
+    import hashlib
+    return "clip_" + hashlib.md5(url.encode()).hexdigest()[:12]
+
+def get_video_duration(file_path: str) -> float:
+    """Gets video duration in seconds via FFmpeg stderr inspection."""
+    try:
+        cmd = [FFMPEG, "-i", file_path]
+        res = subprocess.run(cmd, capture_output=True, text=True, errors="ignore")
+        m = re.search(r'Duration:\s*(\d+):(\d+):(\d+\.\d+)', res.stderr)
+        if m:
+            h, m_m, s = m.groups()
+            return int(h) * 3600 + int(m_m) * 60 + float(s)
+    except Exception:
+        pass
+    return 12.0
+
+def load_clip_history(clip_history_file: Optional[str]) -> Dict[str, dict]:
+    if not clip_history_file or not os.path.exists(clip_history_file):
+        return {}
+    try:
+        with open(clip_history_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def record_clip_usage(clip_history_file: Optional[str], clip_urls: List[str]):
+    if not clip_history_file:
+        return
+    try:
+        history = load_clip_history(clip_history_file)
+        now = time.time()
+        for u in clip_urls:
+            cid = extract_clip_id(u)
+            entry = history.get(cid, {"count": 0, "last_used_ts": 0})
+            entry["count"] = entry.get("count", 0) + 1
+            entry["last_used_ts"] = now
+            history[cid] = entry
+
+        os.makedirs(os.path.dirname(clip_history_file), exist_ok=True)
+        with open(clip_history_file, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2)
+    except Exception as e:
+        print(f"Warning: could not save clip history: {e}")
+
+# Color Grading Film LUT Looks (Procedural FFmpeg filter chains)
+COLOR_LOOKS = {
+    "noir_contrast": {
+        "name": "Dark Noir High-Contrast",
+        "filter": "eq=contrast=1.18:brightness=-0.02:saturation=0.78,unsharp=3:3:0.6:3:3:0.0"
+    },
+    "cinematic_teal_orange": {
+        "name": "Teal & Orange Cinema",
+        "filter": "colorbalance=rs=-0.08:gs=0.02:bs=0.12:rh=0.10:gh=0.03:bh=-0.08,eq=contrast=1.12:saturation=1.15"
+    },
+    "cold_thriller": {
+        "name": "Cold Thriller Shadow",
+        "filter": "colorbalance=rs=-0.1:gs=-0.02:bs=0.15,eq=contrast=1.15:saturation=0.85,noise=alls=4:allf=t+u"
+    },
+    "warm_vintage": {
+        "name": "Warm Golden Mystery",
+        "filter": "colorbalance=rs=0.10:gs=0.04:bs=-0.08:rh=0.12:gh=0.06:bh=-0.05,eq=contrast=1.08:saturation=1.05,vignette=PI/4.5"
+    },
+    "crisp_hdr": {
+        "name": "Crisp 4K Pop",
+        "filter": "eq=contrast=1.10:saturation=1.20,unsharp=5:5:0.8:5:5:0.0"
+    }
+}
+
+# Ambient Procedural Audio Bed Presets
+AUDIO_BEDS = {
+    "deep_heartbeat": {
+        "name": "Deep Sub-Bass Heartbeat",
+        "filter": "anoisesrc=d=60:c=brown:r=44100:a=0.04,lowpass=f=95,tremolo=f=1.2:d=0.7",
+        "weight": 0.14
+    },
+    "dark_drone": {
+        "name": "Dark Ambient Drone",
+        "filter": "anoisesrc=d=60:c=brown:r=44100:a=0.05,lowpass=f=120",
+        "weight": 0.13
+    },
+    "subtle_tension": {
+        "name": "Subtle High-Tension Rumble",
+        "filter": "anoisesrc=d=60:c=pink:r=44100:a=0.03,lowpass=f=140",
+        "weight": 0.12
+    },
+    "clock_tick": {
+        "name": "Psychological Clockwork Pulse",
+        "filter": "anoisesrc=d=60:c=pink:r=44100:a=0.035,lowpass=f=160,tremolo=f=2.0:d=0.9",
+        "weight": 0.15
+    }
+}
+
+# Verified Physical Stock Video Slugs (Mixkit verified 20-40 HD clips each)
+VERIFIED_STOCK_SLUGS = {
+    "tunnel", "subway", "security-camera", "crowd", "eye", "police", "prison",
+    "hospital", "ocean", "fire", "smoke", "office", "running", "night-street",
+    "shadow", "silhouette", "walking-alone", "rain-window", "chess", "laboratory",
+    "dark-street", "traffic", "train", "door", "clock", "stairs"
+}
+
+# Semantic dictionary mapping concrete spoken cues to literal stock-video queries (no false-positive traps)
+SCRIPT_VISUAL_TRIGGER_MAP = [
+    (re.compile(r'\b(phone|texting|text message|notification|screen|smartphone|scroll(?:ing)?)\b', re.I), "person texting smartphone"),
+    (re.compile(r'\b(argu(?:e|ing|ment)|fight(?:ing)?|yell(?:ing)?|couple|partner|relationship|breakup)\b', re.I), "couple arguing"),
+    (re.compile(r'\b(boss|coworker|corporate|workplace|office|meeting|interview|colleague|boardroom)\b', re.I), "business meeting office"),
+    (re.compile(r'\b(handshake|deal|negotiation|contract|agreement)\b', re.I), "business handshake"),
+    (re.compile(r'\b(mirror|reflection|yourself|self)\b', re.I), "person looking mirror"),
+    (re.compile(r'\b(eye|eyes|stare|staring|blink|gaze|eye contact|pupil)\b', re.I), "close up eyes"),
+    (re.compile(r'\b(whisper|secret|gossip|rumor|ear)\b', re.I), "person whispering secret"),
+    (re.compile(r'\b(smile|smiling|laugh|laughing|fake smile|grin)\b', re.I), "person smiling portrait"),
+    (re.compile(r'\b(stress|stressed|anxious|anxiety|panic|overthink|headache|cry|crying)\b', re.I), "stressed person thinking"),
+    (re.compile(r'\b(money|cash|dollar|rich|wealth|wallet|bank|pay)\b', re.I), "counting money cash"),
+    (re.compile(r'\b(cctv|surveillance|security camera|recorded|spy)\b', re.I), "security camera"),
+    (re.compile(r'\b(police|interrogation|fbi|detective|arrest|handcuff|suspect|interrogate)\b', re.I), "police interrogation"),
+    (re.compile(r'\b(prison|jail|inmate|behind bars|courtroom|judge|verdict)\b', re.I), "prison cell bars"),
+    (re.compile(r'\b(hospital|nurse|doctor|patient|injection|medicine|clinical|ward)\b', re.I), "hospital corridor"),
+    (re.compile(r'\b(experiment|scientist|laboratory|researchers|brain|neural|mri)\b', re.I), "science laboratory"),
+    (re.compile(r'\b(crowd|strangers|bystanders|hundred people|packed room)\b', re.I), "crowd people walking"),
+    (re.compile(r'\b(subway|train|metro|platform)\b', re.I), "subway station"),
+    (re.compile(r'\b(tunnel|hallway|corridor|underground|elevator)\b', re.I), "dark hallway"),
+    (re.compile(r'\b(car|driving|driver|parking|garage|highway)\b', re.I), "driving car night"),
+    (re.compile(r'\b(run|running|flee|escape|chase|sprint)\b', re.I), "person running night"),
+    (re.compile(r'\b(walking alone|empty street|alley|sidewalk|midnight|night street)\b', re.I), "person walking night street"),
+    (re.compile(r'\b(chess|checkmate|chessboard)\b', re.I), "chess board"),
+    (re.compile(r'\b(fire|flame|blaze|burning|smoke)\b', re.I), "fire flames dark"),
+    (re.compile(r'\b(ocean|waves|drown|drowning|underwater)\b', re.I), "dark ocean waves"),
+    (re.compile(r'\b(rain|storm|thunder|raindrop)\b', re.I), "rain window night"),
+    (re.compile(r'\b(clock|countdown|hourglass|stopwatch|timer)\b', re.I), "clock ticking"),
+    (re.compile(r'\b(writing|notebook|journal|letter|document|file|dossier)\b', re.I), "person writing notebook"),
+    (re.compile(r'\b(door|knock|locked|room)\b', re.I), "opening dark door"),
+]
+
+_ABSTRACT_BANNED_KWS = {
+    "psychology", "dark psychology", "manipulation", "gaslighting", "betrayal",
+    "paradox", "cognitive bias", "narcissism", "mindset", "human behavior",
+    "dark", "mystery", "concept", "fact", "trick", "secret",
+}
+
+_MOOD_SAFE_FALLBACKS = [
+    "person thinking dark", "dark silhouette", "night city street",
+    "dramatic shadow face", "empty dark hallway", "person looking window",
+    "moody rain night", "close up eye",
+]
+
+def map_text_to_verified_slug(text: str, fallback_slug: str = "shadow") -> str:
+    """Extracts a verified Mixkit slug matching text (used for Mixkit fallback only)."""
+    t_clean = text.lower().strip()
+    hyphenated = t_clean.replace(" ", "-")
+    if hyphenated in VERIFIED_STOCK_SLUGS:
+        return hyphenated
+    for slug in VERIFIED_STOCK_SLUGS:
+        if slug.replace("-", " ") in t_clean:
+            return slug
+    return fallback_slug
+
+def extract_timeline_visual_queries(
+    script_text: str,
+    target_cuts: int,
+    keywords_from_prompt: Optional[List[str]] = None,
+    niche: str = "dark_psychology"
+) -> List[str]:
+    """
+    Produces `target_cuts` chronological stock-video search queries tightly aligned to what is spoken.
+    Priority 1: Concrete chronological keywords from LLM/Studio (verbatim multi-word Pixabay queries).
+    Priority 2: Concrete physical trigger matches on each chronological script sentence.
+    Priority 3: Mood-neutral dark psychology fallbacks (never random unrelated objects).
+    """
+    clean_kws = []
+    for kw in (keywords_from_prompt or []):
+        k = re.sub(r"[^a-zA-Z0-9\s-]", "", str(kw)).replace("-", " ").strip().lower()
+        k = re.sub(r"\s+", " ", k)
+        if len(k) >= 3 and k not in _ABSTRACT_BANNED_KWS:
+            clean_kws.append(k)
+
+    raw_sentences = [s.strip() for s in re.split(r'[.!?]+', script_text) if len(s.strip()) > 6]
+    if not raw_sentences:
+        raw_sentences = [script_text]
+
+    cuts_queries: List[str] = []
+    total_chunks = len(raw_sentences)
+
+    for cut_idx in range(target_cuts):
+        chunk_idx = min(int((cut_idx / float(target_cuts)) * total_chunks), total_chunks - 1)
+        sentence_chunk = raw_sentences[chunk_idx]
+
+        # Priority 1: If we have rich chronological scene keywords (>= half of target_cuts), trust their exact scene order
+        chosen = None
+        if len(clean_kws) >= max(4, target_cuts // 2):
+            kw_idx = min(int((cut_idx / float(target_cuts)) * len(clean_kws)), len(clean_kws) - 1)
+            chosen = clean_kws[kw_idx]
+
+        # Priority 2: Direct literal physical trigger in the spoken sentence
+        if not chosen:
+            for pattern, query_str in SCRIPT_VISUAL_TRIGGER_MAP:
+                if pattern.search(sentence_chunk):
+                    chosen = query_str
+                    break
+
+        # Priority 3: Any leftover user/prompt keyword
+        if not chosen and clean_kws:
+            chosen = clean_kws[cut_idx % len(clean_kws)]
+
+        # Priority 4: Mood-safe cinematic fallback (never unrelated fire/ocean/prison)
+        if not chosen:
+            chosen = _MOOD_SAFE_FALLBACKS[cut_idx % len(_MOOD_SAFE_FALLBACKS)]
+
+        # Avoid 3 identical consecutive queries
+        if len(cuts_queries) >= 2 and cuts_queries[-1] == chosen and cuts_queries[-2] == chosen:
+            alt = next((m for m in _MOOD_SAFE_FALLBACKS if m != chosen and m not in cuts_queries[-2:]), _MOOD_SAFE_FALLBACKS[0])
+            chosen = alt
+
+        cuts_queries.append(chosen)
+
+    return cuts_queries
+
+_OFFTOPIC_PIXABAY_TAGS = {
+    "dog", "puppy", "cat", "kitten", "pet", "animal", "animals", "wildlife",
+    "bird", "birds", "seagull", "seagulls", "wolf", "turtle", "horse", "fish",
+    "insect", "butterfly", "flower", "flowers", "cartoon", "anime", "baby",
+    "toddler", "cooking", "cake", "pizza", "fruit", "apple", "banana", "cow",
+    "sheep", "duck", "chicken", "deer", "bear", "lion", "tiger", "monkey", "cute", "adorable",
+}
+_CHEERFUL_PIXABAY_TAGS = {
+    "cheerful", "happiness", "happy", "fun", "celebration", "party", "holiday",
+    "vacation", "beach", "wedding", "comedy", "festive", "joyful", "sunny",
+}
+_HUMAN_QUERY_CUES = {
+    "person", "man", "woman", "couple", "boss", "people", "crowd", "eye",
+    "eyes", "face", "hand", "hands", "lover", "lovers", "partner", "girl", "boy",
+}
+_HUMAN_PIXABAY_TAGS = _HUMAN_QUERY_CUES | {
+    "human", "portrait", "silhouette", "business", "office", "meeting",
+    "depression", "sad", "stress", "stressed", "angry", "fear", "lonely", "thinking",
+}
+_QUERY_FILLER = {"the", "a", "an", "in", "on", "at", "of", "to", "dark", "looking", "close", "up", "glow", "pulse", "illustration"}
+
+
+def harvest_candidates_for_query(query: str) -> List[str]:
+    """Fetches topic-matched HD clips using Pixabay tag-validation + category=people (#1), Mixkit (#2), Unsplash (#3)."""
+    q_phrase = re.sub(r"\s+", " ", query.strip().replace("-", " ")).lower()
+    if not q_phrase:
+        return []
+
+    now = time.time()
+    if q_phrase in _QUERY_CACHE:
+        ts, cached_urls = _QUERY_CACHE[q_phrase]
+        if now - ts < CACHE_TTL and cached_urls:
+            return list(cached_urls)
+
+    results: List[str] = []
+
+    # 1. Pixabay Video API with tag-level semantic validation & off-topic rejection
+    pixabay_key = os.environ.get("PIXABAY_API_KEY")
+    if pixabay_key:
+        q_words = set(q_phrase.split())
+        content_words = [w for w in q_phrase.split() if w not in _QUERY_FILLER and len(w) >= 3]
+        wants_human = bool(q_words & _HUMAN_QUERY_CUES)
+
+        pix_queries = [q_phrase]
+        if len(content_words) >= 2:
+            compact = " ".join(content_words[:2])
+            if compact != q_phrase:
+                pix_queries.append(compact)
+
+        scored_pix = []
+        seen_pix = set()
+        for pq in pix_queries:
+            if len(scored_pix) >= 8:
+                break
+            try:
+                params = {
+                    "key": pixabay_key,
+                    "q": pq,
+                    "video_type": "film",
+                    "order": "popular",
+                    "min_height": 720,
+                    "safesearch": "true",
+                    "per_page": 20,
+                }
+                if wants_human:
+                    params["category"] = "people"
+                pr = requests.get("https://pixabay.com/api/videos/", params=params, timeout=8)
+                if pr.status_code != 200:
+                    continue
+                for hit in pr.json().get("hits", []):
+                    tags = {t.strip().lower() for t in (hit.get("tags") or "").split(",") if t.strip()}
+                    # Reject animals, pets, birds, cartoons, food unless explicitly requested
+                    if (tags & _OFFTOPIC_PIXABAY_TAGS) - q_words:
+                        continue
+                    # Reject cheerful/beach/holiday clips unless explicitly requested
+                    if (tags & _CHEERFUL_PIXABAY_TAGS) - q_words:
+                        continue
+                    # If query asks for a person/couple/face/eye, require a human tag
+                    if wants_human and not (tags & _HUMAN_PIXABAY_TAGS):
+                        continue
+                    vids = hit.get("videos", {})
+                    cand = vids.get("medium", {}).get("url") or vids.get("large", {}).get("url") or vids.get("small", {}).get("url")
+                    if not cand or cand in seen_pix:
+                        continue
+                    # Require at least 1 real content word match in tags when content words exist
+                    ov = len(tags & set(content_words)) if content_words else len(tags & q_words)
+                    if content_words and ov == 0:
+                        continue
+                    seen_pix.add(cand)
+                    scored_pix.append((ov, cand))
+            except Exception as e:
+                print(f"Pixabay fetch note: {e}")
+
+        scored_pix.sort(key=lambda x: x[0], reverse=True)
+        for _ov, cand in scored_pix[:12]:
+            results.append(cand)
+
+    # 2. Mixkit (Only if Pixabay returned < 4 clips, so unrelated Mixkit slugs never dilute exact Pixabay hits)
+    if len(results) < 4:
+        mix_slug = map_text_to_verified_slug(q_phrase, fallback_slug=q_phrase.replace(" ", "-"))
+        for page in (1, 2):
+            try:
+                page_url = f"https://mixkit.co/free-stock-video/{mix_slug}/" if page == 1 else f"https://mixkit.co/free-stock-video/{mix_slug}/?page=2"
+                r = requests.get(page_url, headers=HEADERS, timeout=6)
+                if r.status_code == 200:
+                    found = re.findall(r'https://assets\.mixkit\.co/videos/\d+/\d+-(?:1080|720|360)\.mp4', r.text)
+                    for f in found:
+                        hd = re.sub(r'-\d+\.mp4$', '-720.mp4', f) if 'mixkit.co' in f else f
+                        if hd not in results:
+                            results.append(hd)
+                elif r.status_code == 429:
+                    break
+            except Exception:
+                pass
+
+    # 3. Unsplash API (Only if video sources returned < 3 clips)
+    unsplash_key = os.environ.get("UNSPLASH_ACCESS_KEY")
+    if len(results) < 3 and unsplash_key:
+        try:
+            u_url = f"https://api.unsplash.com/search/photos?query={urllib.parse.quote_plus(q_phrase)}&orientation=portrait&per_page=8"
+            ur = requests.get(u_url, headers={"Authorization": f"Client-ID {unsplash_key}"}, timeout=6)
+            if ur.status_code == 200:
+                udata = ur.json()
+                for p in udata.get("results", []):
+                    urls = p.get("urls", {})
+                    cand = urls.get("regular") or urls.get("full") or urls.get("small")
+                    if cand and cand not in results:
+                        results.append(cand)
+        except Exception as e:
+            print(f"Unsplash fetch note: {e}")
+
+    _QUERY_CACHE[q_phrase] = (now, results)
+    return results
+
+def pick_best_clip_candidate(
+    candidates: List[str],
+    used_in_video: Set[str],
+    clip_history: Dict[str, dict]
+) -> Optional[str]:
+    """Selects the most relevant, non-repeating clip (strongly preferring top-ranked Pixabay matches)."""
+    if not candidates:
+        return None
+
+    available = [c for c in candidates if extract_clip_id(c) not in used_in_video]
+    if not available:
+        available = candidates
+
+    scored = []
+    now = time.time()
+    for idx, c in enumerate(available):
+        cid = extract_clip_id(c)
+        hist = clip_history.get(cid, {"count": 0, "last_used_ts": 0})
+        count = hist.get("count", 0)
+        last_used = hist.get("last_used_ts", 0)
+
+        hours_since = (now - last_used) / 3600.0 if last_used > 0 else 999.0
+        recency_penalty = 50.0 / (hours_since + 1.0)
+        count_penalty = count * 15.0
+        source_penalty = 0.0 if "pixabay.com" in c else (6.0 if "mixkit.co" in c else 14.0)
+        rank_penalty = idx * 0.8
+        jitter = random.uniform(0.0, 1.5)
+
+        penalty = count_penalty + recency_penalty + source_penalty + rank_penalty + jitter
+        scored.append((penalty, c))
+
+    scored.sort(key=lambda x: x[0])
+    chosen = scored[0][1]
+    used_in_video.add(extract_clip_id(chosen))
+    return chosen
+
+def download_clip_with_smart_fallback(
+    query: str,
+    dest_path: str,
+    niche: str,
+    used_in_video: Set[str],
+    clip_history: Dict[str, dict]
+) -> tuple:
+    """Harvests candidates for the literal query, selects top-relevance non-repeating clip, and downloads it."""
+    candidates = harvest_candidates_for_query(query)
+
+    # Mood-coherent fallback only if exact query returned zero results
+    if not candidates:
+        for fq in _MOOD_SAFE_FALLBACKS:
+            candidates = harvest_candidates_for_query(fq)
+            if candidates:
+                break
+
+    if not candidates:
+        import glob, shutil
+        existing_clips = glob.glob(os.path.join(BASE_DIR, "users_data", "*", "videos", "*", "clip_*.mp4"))
+        if existing_clips:
+            fresh_local = [c for c in existing_clips if c not in used_in_video]
+            picked = random.choice(fresh_local or existing_clips)
+            used_in_video.add(picked)
+            shutil.copy2(picked, dest_path)
+            return True, f"local_cached_{os.path.basename(picked)}"
+        raise RuntimeError(f"Could not find stock video clip for '{query}' in niche '{niche}'")
+
+    # Try downloading best candidate; if it fails or produces corrupt/empty file, try next
+    while candidates:
+        selected_url = pick_best_clip_candidate(candidates, used_in_video, clip_history)
+        if not selected_url:
+            break
+
+        print(f"  Downloading fresh clip for '{query}' -> {selected_url}")
+        try:
+            r = requests.get(selected_url, headers=HEADERS, stream=True, timeout=25)
+            if r.status_code == 200:
+                is_image = "images.unsplash.com" in selected_url or r.headers.get("Content-Type", "").startswith("image/")
+                if is_image:
+                    # Download image to temp and convert to 1080x1920 30fps Ken Burns smooth pan/zoom mp4
+                    temp_img = dest_path + ".jpg"
+                    with open(temp_img, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1024 * 64):
+                            if chunk:
+                                f.write(chunk)
+
+                    # Dynamic Ken Burns Zoom/Pan animation
+                    zoom_cmd = [
+                        FFMPEG, "-y",
+                        "-loop", "1",
+                        "-i", temp_img,
+                        "-t", "4.5",
+                        "-vf", (
+                            "scale=1200:2133:force_original_aspect_ratio=increase,"
+                            "crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2,"
+                            "zoompan=z='min(zoom+0.0015,1.15)':d=135:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,"
+                            "fps=30,setsar=1"
+                        ),
+                        "-c:v", "libx264",
+                        "-preset", "veryfast",
+                        "-crf", "19",
+                        "-pix_fmt", "yuv420p",
+                        dest_path
+                    ]
+                    z_res = _run_ffmpeg(zoom_cmd)
+                    if os.path.exists(temp_img):
+                        try: os.remove(temp_img)
+                        except Exception: pass
+
+                    if z_res.returncode == 0 and os.path.exists(dest_path) and os.path.getsize(dest_path) > 20000:
+                        mb = round(os.path.getsize(dest_path) / (1024 * 1024), 2)
+                        print(f"  Saved Unsplash Ken Burns motion clip: {dest_path} ({mb} MB)")
+                        return dest_path, selected_url
+                else:
+                    with open(dest_path, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1024 * 64):
+                            if chunk:
+                                f.write(chunk)
+
+                    if os.path.exists(dest_path) and os.path.getsize(dest_path) > 100000:
+                        mb = round(os.path.getsize(dest_path) / (1024 * 1024), 2)
+                        print(f"  Saved clip: {dest_path} ({mb} MB)")
+                        return dest_path, selected_url
+        except Exception as e:
+            print(f"  Clip download error ({selected_url}): {e}")
+
+        # Discard failed candidate and try next
+        if selected_url in candidates:
+            candidates.remove(selected_url)
+
+    raise RuntimeError(f"Failed to download a valid clip for '{query}' across available candidates.")
+
+def render_motion_video(
+    clip_paths: list,
+    audio_path: str,
+    ass_path: str,
+    output_mp4: str,
+    duration: float,
+    color_look: Optional[str] = None,
+    audio_bed: Optional[str] = None,
+):
+    import random
+    # Select or randomly pick color look & audio bed for complete visual/auditory distinctiveness
+    if not color_look or color_look not in COLOR_LOOKS:
+        c_key = random.choice(list(COLOR_LOOKS.keys()))
+    else:
+        c_key = color_look
+
+    if not audio_bed or audio_bed not in AUDIO_BEDS:
+        a_key = random.choice(list(AUDIO_BEDS.keys()))
+    else:
+        a_key = audio_bed
+
+    color_cfg = COLOR_LOOKS[c_key]
+    audio_cfg = AUDIO_BEDS[a_key]
+
+    print(f"[4/5] Multi-cut render ({len(clip_paths)} motion clips, {duration:.2f}s) [Color: {color_cfg['name']}]...")
+
+    per_clip = duration / len(clip_paths)
+    inputs = []
+    filter_parts = []
+
+    for i, clip in enumerate(clip_paths):
+        clip_dur = get_video_duration(clip)
+        max_offset = max(0.0, clip_dur - per_clip - 0.5)
+        offset = round(random.uniform(0.0, min(max_offset, 6.0)), 2) if max_offset > 1.0 else 0.0
+
+        inputs.extend(["-stream_loop", "-1", "-ss", f"{offset:.2f}", "-t", f"{per_clip:.3f}", "-i", clip])
+
+        flip_filter = ",hflip" if random.random() < 0.30 else ""
+        if i % 2 == 0:
+            scale_crop = "scale=1200:2133:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
+        else:
+            scale_crop = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
+
+        filter_parts.append(
+            f"[{i}:v]trim=duration={per_clip:.3f},setpts=PTS-STARTPTS,fps=30,"
+            f"{scale_crop},setsar=1{flip_filter}[v{i}]"
+        )
+
+    concat_ins = "".join(f"[v{i}]" for i in range(len(clip_paths)))
+    concat_filter = f"{concat_ins}concat=n={len(clip_paths)}:v=1:a=0[vbase]"
+    grade_filter = f"[vbase]{color_cfg['filter']}[vgraded]"
+
+    clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+    clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
+    fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
+    subtitle_filter = f"[vgraded]ass='{clean_ass}'{fonts_arg}[vfinal]"
+
+    # Audio mix with procedural tension bed + 0.0s hook impact thump
+    audio_input_idx = len(clip_paths)
+    synth_input_idx = len(clip_paths) + 1
+    impact_input_idx = len(clip_paths) + 2
+    bed_weight = audio_cfg.get("weight", 0.14)
+    audio_filter = (
+        f"[{audio_input_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
+        f"[avoice][{synth_input_idx}:a][{impact_input_idx}:a]amix=inputs=3:duration=first:weights=1.0 {bed_weight} 0.35[afinal]"
+    )
+
+    parts = filter_parts + [concat_filter, grade_filter, subtitle_filter, audio_filter]
+    full_filter = ";".join(parts)
+
+    cmd = [
+        FFMPEG, "-y",
+        *inputs,
+        "-i", audio_path,
+        "-f", "lavfi", "-t", f"{duration:.2f}",
+        "-i", audio_cfg["filter"],
+        "-f", "lavfi", "-t", "0.45",
+        "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
+        "-filter_complex", full_filter,
+        "-map", "[vfinal]",
+        "-map", "[afinal]",
+        "-map_metadata", "-1",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "19",
+        "-threads", "2",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-t", f"{duration:.2f}",
+        output_mp4
+    ]
+
+    res = _run_ffmpeg(cmd)
+    if res.returncode != 0:
+        print("FFmpeg error:", res.stderr[-1000:])
+        raise RuntimeError("FFmpeg render failed")
+    print(f"Motion video rendered: {output_mp4}")
+
+
+def fetch_unsplash_thumbnail(query: str, dest_path: str) -> Optional[str]:
+    """Downloads a high-CTR portrait thumbnail from Unsplash for the video topic."""
+    unsplash_key = os.environ.get("UNSPLASH_ACCESS_KEY")
+    if not unsplash_key:
+        return None
+    try:
+        u_clean = query.strip().replace("-", " ")
+        u_url = f"https://api.unsplash.com/search/photos?query={urllib.parse.quote_plus(u_clean)}&orientation=portrait&per_page=6"
+        ur = requests.get(u_url, headers={"Authorization": f"Client-ID {unsplash_key}"}, timeout=7)
+        if ur.status_code == 200:
+            udata = ur.json()
+            results = udata.get("results", [])
+            if results:
+                # Top candidate high-res image
+                cand_url = results[0].get("urls", {}).get("regular") or results[0].get("urls", {}).get("full")
+                if cand_url:
+                    r = requests.get(cand_url, headers=HEADERS, timeout=20)
+                    if r.status_code == 200 and len(r.content) > 10000:
+                        with open(dest_path, "wb") as f:
+                            f.write(r.content)
+                        print(f"  Saved Unsplash portrait thumbnail: {dest_path}")
+                        return dest_path
+    except Exception as e:
+        print(f"Unsplash thumbnail error: {e}")
+    return None
+
+
+def get_gameplay_clip(gameplay_pref: str = "minecraft") -> str:
+    """Finds a gameplay background video from the local gameplay bank."""
+    if not os.path.exists(GAMEPLAY_DIR):
+        os.makedirs(GAMEPLAY_DIR, exist_ok=True)
+    files = [os.path.join(GAMEPLAY_DIR, f) for f in os.listdir(GAMEPLAY_DIR) if f.endswith(".mp4")]
+    if not files:
+        raise RuntimeError("No gameplay clips found in shorts_engine/gameplay bank.")
+    pref = [f for f in files if gameplay_pref.lower() in os.path.basename(f).lower()]
+    return random.choice(pref if pref else files)
+
+
+def render_gameplay_short(
+    audio_path: str,
+    ass_path: str,
+    output_mp4: str,
+    duration: float,
+    gameplay_path: Optional[str] = None,
+    cinema_frame: bool = False
+):
+    """Renders 30fps vertical multi-cut gameplay Short (5 dynamic random scenes) for peak retention."""
+    num_cuts = 8 if cinema_frame else 5
+    per_cut = duration / num_cuts
+
+    if gameplay_path and os.path.exists(gameplay_path):
+        chosen_clips = [gameplay_path] * num_cuts
+    else:
+        chosen_clips = [get_gameplay_clip() for _ in range(num_cuts)]
+
+    print(f"[4/5] Rendering High-Retention Multi-Cut Gameplay short ({duration:.2f}s, {num_cuts} scenes, cinema={cinema_frame})...")
+    clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+    clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
+    fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
+
+    dur_cache: Dict[str, float] = {}
+    inputs = []
+    filter_parts = []
+    for i, clip_file in enumerate(chosen_clips):
+        if clip_file not in dur_cache:
+            dur_cache[clip_file] = get_video_duration(clip_file)
+        clip_dur = dur_cache[clip_file]
+        max_offset = max(0.0, clip_dur - per_cut - 1.5)
+        offset = round(random.uniform(0.0, max_offset), 2) if max_offset > 1.0 else 0.0
+
+        inputs.extend(["-stream_loop", "-1", "-ss", f"{offset:.2f}", "-t", f"{per_cut:.3f}", "-i", clip_file])
+        if cinema_frame:
+            filter_parts.append(
+                f"[{i}:v]trim=duration={per_cut:.3f},setpts=PTS-STARTPTS,fps=30,"
+                f"scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1[v{i}]"
+            )
+        else:
+            scale_crop = (
+                "scale=1166:2074:force_original_aspect_ratio=increase,crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2"
+                if i % 2 == 0
+                else "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
+            )
+            filter_parts.append(
+                f"[{i}:v]trim=duration={per_cut:.3f},setpts=PTS-STARTPTS,fps=30,{scale_crop},setsar=1[v{i}]"
+            )
+
+    concat_ins = "".join(f"[v{i}]" for i in range(num_cuts))
+    audio_idx = num_cuts
+    if cinema_frame:
+        synth_idx = num_cuts + 1
+        impact_idx = num_cuts + 2
+        filter_complex = (
+            ";".join(filter_parts) + ";"
+            f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.06:saturation=1.10,split=2[bg_src][fg_src];"
+            f"[bg_src]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=6:2,scale=1080:1920:flags=bilinear,setsar=1[vbg];"
+            f"[fg_src]scale=1080:-2,setsar=1[vfg];"
+            f"[vbg][vfg]overlay=(W-w)/2:(H-h)/2,ass='{clean_ass}'{fonts_arg}[vfinal];"
+            f"[{audio_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
+            f"[avoice][{synth_idx}:a][{impact_idx}:a]amix=inputs=3:duration=first:weights=1.0 0.06 0.35[afinal]"
+        )
+        cmd = [
+            FFMPEG, "-y",
+            *inputs,
+            "-i", audio_path,
+            "-f", "lavfi", "-t", f"{duration:.2f}",
+            "-i", "sine=frequency=58:sample_rate=44100,lowpass=f=110,volume=0.05",
+            "-f", "lavfi", "-t", "0.45",
+            "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
+            "-filter_complex", filter_complex,
+            "-map", "[vfinal]",
+            "-map", "[afinal]",
+            "-map_metadata", "-1",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "19",
+            "-threads", "2",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-t", f"{duration:.2f}",
+            output_mp4
+        ]
+    else:
+        synth_idx = num_cuts + 1
+        impact_idx = num_cuts + 2
+        filter_complex = (
+            ";".join(filter_parts) + ";"
+            f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.08:saturation=1.12,"
+            f"ass='{clean_ass}'{fonts_arg}[vfinal];"
+            f"[{audio_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
+            f"[avoice][{synth_idx}:a][{impact_idx}:a]amix=inputs=3:duration=first:weights=1.0 0.08 0.35[afinal]"
+        )
+        cmd = [
+            FFMPEG, "-y",
+            *inputs,
+            "-i", audio_path,
+            "-f", "lavfi", "-t", f"{duration:.2f}",
+            "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.03,lowpass=f=140",
+            "-f", "lavfi", "-t", "0.45",
+            "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
+            "-filter_complex", filter_complex,
+            "-map", "[vfinal]",
+            "-map", "[afinal]",
+            "-map_metadata", "-1",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "19",
+            "-threads", "2",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-t", f"{duration:.2f}",
+            output_mp4
+        ]
+    res = _run_ffmpeg(cmd)
+    if res.returncode != 0:
+        print("FFmpeg gameplay render error:", res.stderr[-800:])
+        raise RuntimeError("FFmpeg gameplay render failed")
+
+    # Minimum size guard: Ensure output has full video frames
+    if not os.path.exists(output_mp4) or os.path.getsize(output_mp4) < 1_500_000:
+        raise RuntimeError(f"Gameplay render generated an incomplete/empty video ({os.path.getsize(output_mp4) if os.path.exists(output_mp4) else 0} bytes).")
+
+    print(f"Gameplay short rendered: {output_mp4}")
+
+
+def _probe_media_dims(path: str) -> tuple:
+    try:
+        r = subprocess.run([FFMPEG, "-i", path], capture_output=True, text=True, timeout=6)
+        m = re.search(r"Video:.*?,\s*(\d{3,5})x(\d{3,5})", r.stderr or "")
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    except Exception:
+        pass
+    return 0, 0
+
+
+def download_valid_images(urls: list, dest_dir: str, limit: int = 3) -> list:
+    """Downloads up to `limit` valid >=500x350 images in parallel for hybrid Documentary Shorts."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(item):
+        idx, u = item
+        dest = os.path.join(dest_dir, f"topic_img_{idx}.img")
+        try:
+            r = requests.get(u, headers={"User-Agent": "ShadowMindBot/1.0"}, timeout=7)
+            if r.status_code != 200 or len(r.content) < 8000:
+                return None
+            with open(dest, "wb") as f:
+                f.write(r.content)
+            w, h = _probe_media_dims(dest)
+            if w < 500 or h < 350:
+                os.remove(dest)
+                return None
+            return dest
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        valid = [p for p in ex.map(_one, enumerate((urls or [])[:limit * 2])) if p]
+    return valid[:limit]
+
+
+def render_news_media_short(
+    media_urls: list,
+    audio_path: str,
+    ass_path: str,
+    output_mp4: str,
+    duration: float,
+    cinema_frame: bool = True,
+    pad_with_gameplay: bool = False,
+):
+    """Renders 30fps Cinema Frame Short from scraped article images (Ken Burns) & videos."""
+    import tempfile
+    import shutil
+    from concurrent.futures import ThreadPoolExecutor
+
+    tmp_dir = tempfile.mkdtemp(prefix="news_media_")
+    try:
+        def _dl(item):
+            idx, url = item
+            low = url.split("?")[0].lower()
+            is_vid = low.endswith((".mp4", ".webm"))
+            ext = ".mp4" if low.endswith(".mp4") else (".webm" if low.endswith(".webm") else ".img")
+            dest = os.path.join(tmp_dir, f"m_{idx}{ext}")
+            try:
+                r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10 if is_vid else 7, stream=is_vid)
+                if r.status_code != 200:
+                    return None
+                with open(dest, "wb") as f:
+                    if is_vid:
+                        total = 0
+                        for chunk in r.iter_content(chunk_size=65536):
+                            total += len(chunk)
+                            if total > 30_000_000:
+                                return None
+                            f.write(chunk)
+                    else:
+                        f.write(r.content)
+                w, h = _probe_media_dims(dest)
+                if w < 500 or h < 280:
+                    return None
+                return ("video" if is_vid else "image", dest)
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            fetched = [x for x in ex.map(_dl, enumerate((media_urls or [])[:8])) if x]
+
+        if not fetched:
+            print("[NEWS MEDIA] No usable article media downloaded; falling back to gameplay cuts.")
+            return render_gameplay_short(audio_path, ass_path, output_mp4, duration, None, cinema_frame)
+
+        scenes = list(fetched)
+        if len(scenes) < 4:
+            if pad_with_gameplay:
+                try:
+                    while len(scenes) < 6:
+                        scenes.append(("video", get_gameplay_clip()))
+                except Exception:
+                    pass
+            else:
+                # Cycle article's own visuals with distinct Ken Burns camera moves (no hardcoded server gameplay)
+                while len(scenes) < 4:
+                    scenes.append(fetched[len(scenes) % len(fetched)])
+
+        num_cuts = len(scenes)
+        per_cut = duration / num_cuts
+        frames_per_cut = max(1, int(round(per_cut * 30)))
+        print(f"[4/5] Rendering News-Media Cinema Short ({duration:.2f}s, {len(fetched)} unique scraped visuals across {num_cuts} cuts)...")
+
+        clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+        clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
+        fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
+
+        dur_cache: Dict[str, float] = {}
+        inputs = []
+        filter_parts = []
+        for i, (kind, path) in enumerate(scenes):
+            if kind == "image":
+                inputs.extend(["-i", path])
+                move = i % 4
+                if move == 0:
+                    zp = f"zoompan=z='min(zoom+0.0014,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames_per_cut}:s=1080x608:fps=30"
+                elif move == 1:
+                    zp = f"zoompan=z='max(1.15-0.0014*on,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames_per_cut}:s=1080x608:fps=30"
+                elif move == 2:
+                    zp = f"zoompan=z='1.12':x='(iw-iw/zoom)*on/{frames_per_cut}':y='ih/2-(ih/zoom/2)':d={frames_per_cut}:s=1080x608:fps=30"
+                else:
+                    zp = f"zoompan=z='1.12':x='(iw-iw/zoom)*(1-on/{frames_per_cut})':y='ih/2-(ih/zoom/2)':d={frames_per_cut}:s=1080x608:fps=30"
+                filter_parts.append(
+                    f"[{i}:v]scale=1080:608:force_original_aspect_ratio=increase,crop=1080:608,setsar=1,"
+                    f"{zp},setpts=PTS-STARTPTS[v{i}]"
+                )
+            else:
+                if path not in dur_cache:
+                    dur_cache[path] = get_video_duration(path)
+                cdur = dur_cache[path]
+                max_off = max(0.0, cdur - per_cut - 1.0)
+                off = round(random.uniform(0.0, max_off), 2) if max_off > 0.8 else 0.0
+                inputs.extend(["-stream_loop", "-1", "-ss", f"{off:.2f}", "-t", f"{per_cut:.3f}", "-i", path])
+                filter_parts.append(
+                    f"[{i}:v]trim=duration={per_cut:.3f},setpts=PTS-STARTPTS,fps=30,"
+                    f"scale=1080:608:force_original_aspect_ratio=increase,crop=1080:608,setsar=1[v{i}]"
+                )
+
+        concat_ins = "".join(f"[v{i}]" for i in range(num_cuts))
+        audio_idx = num_cuts
+        synth_idx = num_cuts + 1
+        impact_idx = num_cuts + 2
+        filter_complex = (
+            ";".join(filter_parts) + ";"
+            f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.06:saturation=1.10,split=2[bg_src][fg_src];"
+            f"[bg_src]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=6:2,scale=1080:1920:flags=bilinear,setsar=1[vbg];"
+            f"[fg_src]scale=1080:608,setsar=1[vfg];"
+            f"[vbg][vfg]overlay=(W-w)/2:(H-h)/2,ass='{clean_ass}'{fonts_arg}[vfinal];"
+            f"[{audio_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
+            f"[avoice][{synth_idx}:a][{impact_idx}:a]amix=inputs=3:duration=first:weights=1.0 0.06 0.35[afinal]"
+        )
+        cmd = [
+            FFMPEG, "-y",
+            *inputs,
+            "-i", audio_path,
+            "-f", "lavfi", "-t", f"{duration:.2f}",
+            "-i", "sine=frequency=58:sample_rate=44100,lowpass=f=110,volume=0.05",
+            "-f", "lavfi", "-t", "0.45",
+            "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
+            "-filter_complex", filter_complex,
+            "-map", "[vfinal]",
+            "-map", "[afinal]",
+            "-map_metadata", "-1",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "20",
+            "-threads", "2",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-t", f"{duration:.2f}",
+            output_mp4,
+        ]
+        res = _run_ffmpeg(cmd)
+        if res.returncode != 0:
+            print("FFmpeg news-media render error:", res.stderr[-800:])
+            raise RuntimeError("FFmpeg news-media render failed")
+
+        if not os.path.exists(output_mp4) or os.path.getsize(output_mp4) < 500_000:
+            raise RuntimeError("News-media render generated incomplete video.")
+        print(f"News-media short rendered: {output_mp4}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def render_split_retention_short(
+    clip_paths: list,
+    audio_path: str,
+    ass_path: str,
+    output_mp4: str,
+    duration: float,
+    gameplay_path: Optional[str] = None
+):
+    """Renders 50/50 Split-Screen (Top: Cinematic Story Cuts, Bottom: Minecraft Parkour, Center: Bold Captions)."""
+    if not gameplay_path or not os.path.exists(gameplay_path):
+        gameplay_path = get_gameplay_clip("minecraft")
+    print(f"[4/5] Rendering 50/50 Split-Screen video (Story Visuals + Parkour, {duration:.2f}s)...")
+    clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+    clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
+    fonts_arg = f":fontsdir='{clean_fonts}'" if os.path.exists(FONTS_DIR) else ""
+
+    cuts = clip_paths[:min(6, len(clip_paths))] if clip_paths else []
+    per_cut = duration / max(1, len(cuts))
+
+    inputs = []
+    top_parts = []
+    for i, c in enumerate(cuts):
+        inputs.extend(["-stream_loop", "-1", "-i", c])
+        top_parts.append(
+            f"[{i}:v]trim=duration={per_cut:.3f},setpts=PTS-STARTPTS,fps=30,"
+            f"scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[top_{i}]"
+        )
+    concat_top = "".join(f"[top_{i}]" for i in range(len(cuts)))
+    top_chain = f"{concat_top}concat=n={len(cuts)}:v=1:a=0[vtop]" if cuts else ""
+
+    gp_dur = get_video_duration(gameplay_path)
+    gp_offset = round(random.uniform(0.0, max(0.0, gp_dur - duration - 2.0)), 2) if gp_dur > duration + 2.0 else 0.0
+    gameplay_input_idx = len(cuts)
+    inputs.extend(["-stream_loop", "-1", "-ss", f"{gp_offset:.2f}", "-t", f"{duration:.2f}", "-i", gameplay_path])
+
+    bottom_chain = (
+        f"[{gameplay_input_idx}:v]trim=duration={duration:.2f},setpts=PTS-STARTPTS,fps=30,"
+        f"scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[vbottom]"
+    )
+
+    stack_chain = "[vtop][vbottom]vstack=inputs=2[vstacked]"
+    div_chain = "[vstacked]drawbox=y=958:color=black@0.9:width=1080:height=4:t=fill[vdivided]"
+    sub_chain = f"[vdivided]ass='{clean_ass}'{fonts_arg}[vfinal]"
+
+    audio_input_idx = len(inputs)
+    synth_input_idx = audio_input_idx + 1
+    audio_chain = (
+        f"[{audio_input_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
+        f"[avoice][{synth_input_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.08[afinal]"
+    )
+
+    filter_chains = []
+    if top_parts:
+        filter_chains.extend(top_parts)
+    if top_chain:
+        filter_chains.append(top_chain)
+    filter_chains.extend([bottom_chain, stack_chain, div_chain, sub_chain, audio_chain])
+    full_filter = ";".join(filter_chains)
+
+    cmd = [
+        FFMPEG, "-y",
+        *inputs,
+        "-i", audio_path,
+        "-f", "lavfi", "-t", f"{duration:.2f}",
+        "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.03,lowpass=f=140",
+        "-filter_complex", full_filter,
+        "-map", "[vfinal]",
+        "-map", "[afinal]",
+        "-map_metadata", "-1",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "19",
+        "-threads", "2",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-t", f"{duration:.2f}",
+        output_mp4
+    ]
+    res = _run_ffmpeg(cmd)
+    if res.returncode != 0:
+        print("FFmpeg split render error:", res.stderr[-800:])
+        raise RuntimeError("FFmpeg split render failed")
+    print(f"Split retention short rendered: {output_mp4}")
+
+
+async def produce_motion_short(
+    video_id: str,
+    script_text: str,
+    clip_keywords: list,
+    seo_meta: dict,
+    niche: str = "dark_psychology",
+    clip_history_file: Optional[str] = None,
+    target_dir: Optional[str] = None,
+    visual_mode: str = "cinematic_cuts"
+):
+    if not target_dir:
+        target_dir = os.path.join(BASE_DIR, "videos", video_id)
+    os.makedirs(target_dir, exist_ok=True)
+
+    audio_file = os.path.join(target_dir, "voice.mp3")
+    ass_file = os.path.join(target_dir, "captions.ass")
+    output_mp4 = os.path.join(target_dir, f"{video_id}.mp4")
+    meta_file = os.path.join(target_dir, "seo_metadata.txt")
+
+    print(f"\n=== PRODUCING REAL-MOTION SHORT: {video_id.upper()} (Niche: {niche} | Mode: {visual_mode}) ===")
+    words = await generate_voice(script_text, audio_file)
+    dur = get_audio_duration(audio_file)
+    print(f"Audio Duration: {dur:.2f}s")
+
+    build_ass_subtitles(words, ass_file)
+
+    if visual_mode == "parkour_brainrot":
+        # Pure Hypnotic Gameplay (Minecraft Parkour / Subway Surfers)
+        gameplay_file = get_gameplay_clip("minecraft")
+        render_gameplay_short(audio_file, ass_file, output_mp4, dur, gameplay_file)
+
+    elif visual_mode == "split_retention":
+        # 50/50 Split Screen: Top Story Visuals + Bottom Minecraft Parkour
+        gameplay_file = get_gameplay_clip("minecraft")
+        target_cuts = 4
+        timeline_queries = extract_timeline_visual_queries(
+            script_text=script_text,
+            target_cuts=target_cuts,
+            keywords_from_prompt=clip_keywords,
+            niche=niche
+        )
+        clip_paths = []
+        used_in_video: Set[str] = set()
+        clip_history = load_clip_history(clip_history_file)
+        for idx, kw in enumerate(timeline_queries):
+            c_path = os.path.join(target_dir, f"clip_{idx}.mp4")
+            _, _ = download_clip_with_smart_fallback(kw, c_path, niche, used_in_video, clip_history)
+            clip_paths.append(c_path)
+        render_split_retention_short(clip_paths, audio_file, ass_file, output_mp4, dur, gameplay_file)
+
+    else:
+        # Standard Multi-Cut High Pacing Cinematic Stock synchronized to spoken script
+        target_cuts = max(12, min(18, round(dur / 2.6)))
+        timeline_queries = extract_timeline_visual_queries(
+            script_text=script_text,
+            target_cuts=target_cuts,
+            keywords_from_prompt=clip_keywords,
+            niche=niche
+        )
+
+        clip_history = load_clip_history(clip_history_file)
+        used_in_video: Set[str] = set()
+        chosen_urls: List[str] = []
+        clip_paths: List[str] = []
+
+        print(f"[3/5] Scraping & downloading {len(timeline_queries)} script-synchronized stock clips: {timeline_queries}...")
+        for idx, kw in enumerate(timeline_queries):
+            clip_path = os.path.join(target_dir, f"clip_{idx}.mp4")
+            _, chosen_url = download_clip_with_smart_fallback(
+                query=kw,
+                dest_path=clip_path,
+                niche=niche,
+                used_in_video=used_in_video,
+                clip_history=clip_history
+            )
+            chosen_urls.append(chosen_url)
+            clip_paths.append(clip_path)
+
+        record_clip_usage(clip_history_file, chosen_urls)
+        render_motion_video(clip_paths, audio_file, ass_file, output_mp4, dur)
+
+    strip_watermarks(output_mp4)
+
+    with open(meta_file, "w", encoding="utf-8") as f:
+        f.write(f"TITLE:\n{seo_meta['title']}\n\n")
+        f.write(f"DESCRIPTION:\n{seo_meta['description']}\n\n")
+        if "search_tags" in seo_meta and seo_meta["search_tags"]:
+            st = seo_meta["search_tags"]
+            tags_str = ", ".join(st) if isinstance(st, list) else str(st)
+            f.write(f"TAGS:\n{tags_str}\n\n")
+        f.write(f"PINNED COMMENT:\n{seo_meta['pinned_comment']}\n")
+
+    mb = os.path.getsize(output_mp4) / (1024 * 1024)
+    print(f"\n[SUCCESS] REAL-MOTION SHORT READY: {output_mp4} ({mb:.2f} MB)\n")
+    return output_mp4

@@ -835,8 +835,10 @@ def sync_channel_live_feed(paths: dict, channel_handle: str, force: bool = False
                 with urllib.request.urlopen(oe_req, timeout=5) as oe_resp:
                     if oe_resp.status == 200:
                         oe_data = json.loads(oe_resp.read().decode("utf-8", errors="ignore"))
-                        oembed_title = oe_data.get("title")
-                        is_public_oembed = True
+                        author_url = (oe_data.get("author_url") or "").lower()
+                        if not author_url or handle_clean.lower() in author_url:
+                            oembed_title = oe_data.get("title")
+                            is_public_oembed = True
             except Exception:
                 pass
 

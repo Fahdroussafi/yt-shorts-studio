@@ -1,0 +1,997 @@
+import React, { createContext, useContext, useState, useEffect } from 'react';
+
+const AppContext = createContext(null);
+
+export function useApp() {
+  const context = useContext(AppContext);
+  if (!context) {
+    throw new Error('useApp must be used within an AppProvider');
+  }
+  return context;
+}
+
+export function AppProvider({ children }) {
+  // Authentication State
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem('yt_studio_jwt') || '');
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authChecking, setAuthChecking] = useState(true);
+
+  // Toast Notification System
+  const [toasts, setToasts] = useState([]);
+  const showToast = (message, type = 'info') => {
+    const id = Date.now() + Math.random().toString(36).substring(2, 6);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3800);
+  };
+  const closeToast = (id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('yt_studio_jwt');
+    setAuthToken('');
+    setCurrentUser(null);
+    setStats(null);
+    setVideos([]);
+    setUsage(null);
+    setAiSettings(null);
+    setChannelData({ channel_handle: '', channel_url: '', has_youtube_token: false, has_client_secret: false });
+    setInputChannelHandle('');
+    setInputYoutubeToken('');
+    setGeneratedIdea(null);
+    setStudioVideoId('short_01');
+    setStudioScript('');
+    setStudioTitle('');
+    setStudioDesc('');
+    setDispatchVideoId('');
+    setUploadResult(null);
+    setActiveTaskId(null);
+    setTaskStatus(null);
+    setIsProducing(false);
+    setPreviewVideo(null);
+  };
+
+  // Authenticated fetch wrapper
+  const authFetch = (url, options = {}) => {
+    const headers = { ...(options.headers || {}) };
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
+    return fetch(url, { ...options, headers }).then(res => {
+      if (res.status === 401) {
+        handleLogout();
+        throw new Error('Unauthorized');
+      }
+      return res;
+    });
+  };
+
+  // Global Data State
+  const [stats, setStats] = useState(null);
+  const [videos, setVideos] = useState([]);
+  const [niches, setNiches] = useState([]);
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [loadingVideos, setLoadingVideos] = useState(false);
+  const [usage, setUsage] = useState(null);
+  const [loadingUsage, setLoadingUsage] = useState(false);
+  const [syncingChannel, setSyncingChannel] = useState(false);
+  const [studioMediaUrls, setStudioMediaUrls] = useState([]);
+  const [studioHookBanner, setStudioHookBanner] = useState('');
+
+  // Modals & Popups
+  const [previewVideo, setPreviewVideo] = useState(null);
+  const [copiedId, setCopiedId] = useState(null);
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [showChannelModal, setShowChannelModal] = useState(false);
+
+  // AI Flash Model State
+  const [aiSettings, setAiSettings] = useState(null);
+  const [inputApiKey, setInputApiKey] = useState('');
+  const [savingKey, setSavingKey] = useState(false);
+  const [aiKeyError, setAiKeyError] = useState('');
+
+  // Channel Connection State
+  const [channelData, setChannelData] = useState({ channel_handle: '', channel_url: '', has_youtube_token: false, has_client_secret: false });
+  const [inputChannelHandle, setInputChannelHandle] = useState('');
+  const [inputYoutubeToken, setInputYoutubeToken] = useState('');
+  const [savingChannel, setSavingChannel] = useState(false);
+  const [oauthStep, setOauthStep] = useState('initial');
+  const [oauthAuthUrl, setOauthAuthUrl] = useState('');
+  const [inputOauthCode, setInputOauthCode] = useState('');
+  const [exchangingOauth, setExchangingOauth] = useState(false);
+  const [uploadingTokenFile, setUploadingTokenFile] = useState(false);
+  const [tokenUploadError, setTokenUploadError] = useState('');
+  const [showManualJson, setShowManualJson] = useState(false);
+  const [showChangeCredentials, setShowChangeCredentials] = useState(false);
+
+  // Idea Lab State
+  const [selectedNiche, setSelectedNiche] = useState('dark_psychology');
+  const [ideaConcept, setIdeaConcept] = useState('');
+  const [generatingIdea, setGeneratingIdea] = useState(false);
+  const [generatedIdea, setGeneratedIdea] = useState(null);
+
+  // Studio Production State
+  const [studioVideoId, setStudioVideoId] = useState('short_08');
+  const [studioVoice, setStudioVoice] = useState('en-US-ChristopherNeural');
+  const [studioScript, setStudioScript] = useState('');
+  const [studioKeywords, setStudioKeywords] = useState('mystery, shadows, thinking, city, dark');
+  const [studioTitle, setStudioTitle] = useState('');
+  const [studioDesc, setStudioDesc] = useState('');
+  const [studioComment, setStudioComment] = useState('What do you think of this psychological truth? Comment below. 👇');
+  const [visualMode, setVisualMode] = useState('cinematic_cuts'); // 'cinematic_cuts' | 'parkour_brainrot' | 'split_retention'
+  const [studioSearchTags, setStudioSearchTags] = useState('dark psychology tricks, human behavior psychology, survival hacks');
+  const [activeTaskId, setActiveTaskId] = useState(null);
+  const [taskStatus, setTaskStatus] = useState(null);
+  const [isProducing, setIsProducing] = useState(false);
+  const [pendingTaskQueue, setPendingTaskQueue] = useState([]);
+  const [seriesTasks, setSeriesTasks] = useState([]);
+
+  // Dispatcher State
+  const [dispatchVideoId, setDispatchVideoId] = useState('');
+  const [dispatchMode, setDispatchMode] = useState('public');
+  const [dispatchTime, setDispatchTime] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null);
+  const [batchProgress, setBatchProgress] = useState(null);
+
+  // FIX: Prevent background scrolling whenever ANY modal is active
+  useEffect(() => {
+    const isAnyModalOpen = Boolean(showAiModal || showChannelModal || previewVideo);
+    if (isAnyModalOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [showAiModal, showChannelModal, previewVideo]);
+
+  // Auth Verification on mount
+  useEffect(() => {
+    const token = localStorage.getItem('yt_studio_jwt');
+    if (!token) {
+      setAuthChecking(false);
+      return;
+    }
+    fetch('/api/auth/me', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+      .then(res => {
+        if (!res.ok) throw new Error('Unauthorized');
+        return res.json();
+      })
+      .then(user => {
+        setCurrentUser(user);
+        setAuthToken(token);
+        setAuthChecking(false);
+      })
+      .catch(() => {
+        handleLogout();
+        setAuthChecking(false);
+      });
+  }, []);
+
+  // Fetch initial data when authenticated
+  useEffect(() => {
+    if (!authToken) return;
+    fetchStats();
+    fetchVideos();
+    fetchNiches();
+    fetchAiSettings();
+    fetchChannelSettings();
+    fetchUsage();
+  }, [authToken]);
+
+  // Lock default niche & voice to GTA 6 when running in GTA studio mode
+  useEffect(() => {
+    if (usage?.studio_mode === 'gta') {
+      setSelectedNiche('gta6_launch');
+      setStudioVoice((prev) => (prev === 'en-US-ChristopherNeural' ? 'en-US-AndrewMultilingualNeural' : prev));
+    }
+  }, [usage?.studio_mode]);
+
+  // Background Telemetry Sync every 45s
+  useEffect(() => {
+    if (!authToken) return;
+    const interval = setInterval(() => {
+      fetchStats();
+    }, 45000);
+    return () => clearInterval(interval);
+  }, [authToken]);
+
+  // Poll task status if producing
+  useEffect(() => {
+    if (!isProducing) return;
+    if (seriesTasks.length === 0 && !activeTaskId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        if (seriesTasks.length > 0) {
+          let anyNewlyDone = false;
+          const updated = await Promise.all(
+            seriesTasks.map(async (t) => {
+              if (t.status === 'completed' || t.status === 'failed') return t;
+              const res = await authFetch(`/api/produce/status/${t.taskId}`);
+              if (!res.ok) return t;
+              const data = await res.json();
+              if (data.status === 'completed' || data.status === 'failed') anyNewlyDone = true;
+              return { ...t, ...data };
+            })
+          );
+          setSeriesTasks(updated);
+          if (anyNewlyDone) fetchVideos();
+          if (updated.every((t) => t.status === 'completed' || t.status === 'failed')) {
+            setIsProducing(false);
+          }
+          return;
+        }
+
+        const res = await authFetch(`/api/produce/status/${activeTaskId}`);
+        if (res.ok) {
+          const data = await res.json();
+          setTaskStatus(data);
+          if (data.status === 'completed' || data.status === 'failed') {
+            fetchVideos();
+            setIsProducing(false);
+          }
+        }
+      } catch (err) {
+        console.error("Poll error:", err);
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [activeTaskId, isProducing, seriesTasks]);
+
+  // API Call Handlers
+  const fetchStats = async () => {
+    setLoadingStats(true);
+    try {
+      const res = await authFetch('/api/stats');
+      if (res.ok) {
+        const data = await res.json();
+        setStats(data);
+      }
+    } catch (e) {
+      console.error("Stats fetch error:", e);
+    } finally {
+      setLoadingStats(false);
+    }
+  };
+
+  const fetchVideos = async () => {
+    setLoadingVideos(true);
+    try {
+      const res = await authFetch('/api/videos');
+      if (res.ok) {
+        const data = await res.json();
+        setVideos(data);
+        const unscheduled = data.filter((v) => !v.yt_id && v.status !== 'SCHEDULED');
+        if (unscheduled.length > 0 && !dispatchVideoId) {
+          setDispatchVideoId(unscheduled[unscheduled.length - 1].id);
+        }
+      }
+    } catch (e) {
+      console.error("Videos fetch error:", e);
+    } finally {
+      setLoadingVideos(false);
+    }
+  };
+
+  const fetchUsage = async () => {
+    setLoadingUsage(true);
+    try {
+      const [uRes, aiRes] = await Promise.all([
+        authFetch('/api/usage'),
+        authFetch('/api/settings/ai')
+      ]);
+      if (uRes.ok) {
+        const data = await uRes.json();
+        setUsage(data);
+      }
+      if (aiRes.ok) {
+        const aiData = await aiRes.json();
+        setAiSettings(aiData);
+      }
+    } catch (e) {
+      console.error("Usage fetch error:", e);
+    } finally {
+      setTimeout(() => setLoadingUsage(false), 500);
+    }
+  };
+
+  const fetchNiches = async () => {
+    try {
+      const res = await authFetch('/api/niches');
+      if (res.ok) {
+        const data = await res.json();
+        setNiches(data);
+      }
+    } catch (e) {
+      console.error("Niches fetch error:", e);
+    }
+  };
+
+  const fetchAiSettings = async () => {
+    try {
+      const res = await authFetch('/api/settings/ai');
+      if (res.ok) {
+        const data = await res.json();
+        setAiSettings(data);
+      }
+    } catch (e) {
+      console.error("AI settings fetch error:", e);
+    }
+  };
+
+  const fetchChannelSettings = async () => {
+    try {
+      const res = await authFetch('/api/settings/channel');
+      if (res && res.ok) {
+        const data = await res.json();
+        setChannelData(data);
+        setInputChannelHandle(data.channel_handle || '');
+      }
+    } catch (e) {
+      console.error("Channel settings fetch error:", e);
+    }
+  };
+
+  const handleSaveAiKey = async () => {
+    if (!inputApiKey.trim()) return;
+    setSavingKey(true);
+    setAiKeyError('');
+    try {
+      const res = await authFetch('/api/settings/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: inputApiKey.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || "Failed to verify API key with Groq.");
+      }
+      showToast("Groq LPU API Key verified and saved successfully!", "success");
+      setShowAiModal(false);
+      setInputApiKey('');
+      fetchAiSettings();
+      fetchUsage();
+    } catch (e) {
+      setAiKeyError(e.message);
+    } finally {
+      setSavingKey(false);
+    }
+  };
+
+  const handleResetAiKey = async () => {
+    if (!confirm("Revert to default pre-configured Groq key?")) return;
+    setSavingKey(true);
+    setAiKeyError('');
+    try {
+      const res = await authFetch('/api/settings/ai', { method: 'DELETE' });
+      if (res.ok) {
+        fetchAiSettings();
+        fetchUsage();
+        showToast("Reverted to pre-configured system key.", "info");
+      }
+    } catch (e) {
+      showToast("Error resetting key: " + e.message, "error");
+    } finally {
+      setSavingKey(false);
+    }
+  };
+
+  const handleTokenFileUpload = async (file) => {
+    if (!file) return;
+    setUploadingTokenFile(true);
+    setTokenUploadError('');
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const res = await authFetch('/api/settings/youtube-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token_json: JSON.stringify(parsed) })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || "Failed to process credential file.");
+      }
+      if (data.auth_required && data.auth_url) {
+        setOauthAuthUrl(data.auth_url);
+        setOauthStep('awaiting_code');
+      } else {
+        fetchChannelSettings();
+        fetchUsage();
+        fetchStats();
+        setShowChannelModal(false);
+        setOauthStep('initial');
+        setShowChangeCredentials(false);
+        showToast(data.message || "YouTube channel connected successfully!", "success");
+      }
+    } catch (err) {
+      setTokenUploadError(err.message);
+    } finally {
+      setUploadingTokenFile(false);
+    }
+  };
+
+  const handleStartGoogleAuth = async () => {
+    setUploadingTokenFile(true);
+    setTokenUploadError('');
+    try {
+      const res = await authFetch('/api/settings/youtube-auth-url');
+      const data = await res.json();
+      if (data.has_client_secret && data.auth_url) {
+        setOauthAuthUrl(data.auth_url);
+        setOauthStep('awaiting_code');
+      } else {
+        showToast("No Google OAuth client credentials found on server. Please upload your client_secret.json file.", "error");
+      }
+    } catch (err) {
+      setTokenUploadError(err.message);
+    } finally {
+      setUploadingTokenFile(false);
+    }
+  };
+
+  const handleCompleteOauthCode = async () => {
+    if (!inputOauthCode.trim()) {
+      showToast("Please paste the authorization code or redirect URL from Google.", "error");
+      return;
+    }
+    setExchangingOauth(true);
+    setTokenUploadError('');
+    try {
+      const res = await authFetch('/api/settings/youtube-oauth-callback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code_or_url: inputOauthCode.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || "Failed to exchange OAuth code.");
+      }
+      setInputOauthCode('');
+      setOauthStep('initial');
+      setShowChangeCredentials(false);
+      fetchChannelSettings();
+      fetchUsage();
+      fetchStats();
+      setShowChannelModal(false);
+      showToast("YouTube channel connected successfully!", "success");
+    } catch (err) {
+      setTokenUploadError(err.message);
+    } finally {
+      setExchangingOauth(false);
+    }
+  };
+
+  const handleSaveChannel = async () => {
+    const handleTrimmed = inputChannelHandle.trim();
+    const tokenTrimmed = inputYoutubeToken.trim();
+
+    if (!handleTrimmed && !tokenTrimmed) {
+      showToast("Please enter a YouTube handle or upload credentials.", "warning");
+      return;
+    }
+
+    setSavingChannel(true);
+    setTokenUploadError('');
+    try {
+      if (handleTrimmed) {
+        const hRes = await authFetch('/api/settings/channel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ channel_handle: handleTrimmed })
+        });
+        const hData = await hRes.json();
+        if (!hRes.ok) {
+          throw new Error(hData.detail || hData.message || "Failed to save channel handle.");
+        }
+      }
+      if (tokenTrimmed) {
+        const res = await authFetch('/api/settings/youtube-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token_json: tokenTrimmed })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || data.message || "Failed to save YouTube token.");
+        }
+        if (data.auth_required && data.auth_url) {
+          setOauthAuthUrl(data.auth_url);
+          setOauthStep('awaiting_code');
+          setSavingChannel(false);
+          return;
+        }
+        setInputYoutubeToken('');
+      }
+      setShowChannelModal(false);
+      setOauthStep('initial');
+      setShowChangeCredentials(false);
+      fetchChannelSettings();
+      fetchUsage();
+      fetchStats();
+      showToast("Channel settings updated successfully!", "success");
+    } catch (e) {
+      setTokenUploadError(e.message);
+      showToast("Error saving channel settings: " + e.message, "error");
+    } finally {
+      setSavingChannel(false);
+    }
+  };
+
+  const handleDisconnectYoutube = async () => {
+    if (!confirm("Disconnect your YouTube channel OAuth token?")) return;
+    try {
+      await authFetch('/api/settings/youtube-token', { method: 'DELETE' });
+      fetchChannelSettings();
+      fetchUsage();
+      fetchStats();
+      setOauthStep('initial');
+      setShowChangeCredentials(false);
+      showToast("YouTube channel disconnected.", "info");
+    } catch (e) {
+      showToast("Error disconnecting: " + e.message, "error");
+    }
+  };
+
+  const handleSyncChannel = async () => {
+    setSyncingChannel(true);
+    showToast("Scanning YouTube channel for published shorts...", "info");
+    try {
+      const res = await authFetch('/api/channel/sync', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(data.message || `Channel sync complete! Restored ${data.restored_count || 0} videos.`, "success");
+        await fetchStats();
+      } else {
+        showToast(`Sync failed: ${data.detail || 'Could not query channel.'}`, "error");
+      }
+    } catch (e) {
+      showToast(`Network error syncing channel: ${e.message}`, "error");
+    } finally {
+      setSyncingChannel(false);
+    }
+  };
+
+  const copyMetadata = (v) => {
+    const text = `TITLE:\n${v.title}\n\nDESCRIPTION:\n${v.description}\n\nPINNED COMMENT:\n${v.pinned_comment}`;
+    navigator.clipboard.writeText(text);
+    setCopiedId(v.id);
+    showToast(`Copied SEO metadata for ${v.id}!`, "success");
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  // FIX: Immediate optimistic update on delete so Overview & Vault update instantly without manual F5
+  const handleDeleteVideo = async (videoId) => {
+    if (!window.confirm(`Delete local media files for '${videoId}' from server disk?\n\nNote: If this video is already published or scheduled on YouTube, its view tracking, channel stats, and telemetry history will be safely preserved in your dashboard.`)) {
+      return;
+    }
+    try {
+      const res = await authFetch(`/api/videos/${videoId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(data.message || `Local files for ${videoId} purged from disk.`, "success");
+        if (previewVideo?.id === videoId) {
+          setPreviewVideo(null);
+        }
+
+        // Optimistic cache eviction
+        setVideos(prev => prev.filter(v => v.id !== videoId));
+        setStats(prev => prev ? {
+          ...prev,
+          videos: (prev.videos || []).filter(v => v.short_id !== videoId && v.id !== videoId)
+        } : prev);
+
+        fetchVideos();
+        fetchStats();
+      } else {
+        showToast(`Failed to delete: ${data.detail}`, "error");
+      }
+    } catch (e) {
+      showToast(`Error deleting: ${e.message}`, "error");
+    }
+  };
+
+  const [seriesMode, setSeriesMode] = useState(1); // 1 = Single Short, 2 = 2-Part Series, 3 = 3-Part Series
+
+  const handleGenerateIdea = async (overrideNiche = null, isSurprise = false, countOverride = null) => {
+    setGeneratingIdea(true);
+    try {
+      const targetNiche = usage?.studio_mode === 'gta' ? 'gta6_launch' : (overrideNiche || selectedNiche);
+      const count = countOverride !== null ? countOverride : seriesMode;
+      const res = await authFetch('/api/ideas/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          niche: targetNiche,
+          concept: isSurprise ? '' : ideaConcept,
+          surprise: isSurprise,
+          series_count: count
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGeneratedIdea(data);
+        if (!data.is_series && data.next_id) {
+          setStudioVideoId(data.next_id);
+        } else if (data.is_series && data.episodes?.length > 0) {
+          setStudioVideoId(data.episodes[0].next_id);
+        }
+      } else {
+        const errText = await res.text();
+        showToast(`Idea generation failed: ${res.statusText || 'Server Error'}`, "error");
+        console.error("Idea generation failed:", res.status, errText);
+      }
+    } catch (e) {
+      console.error("Idea generation error:", e);
+      showToast("Network error during script generation.", "error");
+    } finally {
+      setGeneratingIdea(false);
+      fetchUsage();
+    }
+  };
+
+  const autoGenerateAndFillStudio = async () => {
+    setGeneratingIdea(true);
+    try {
+      const res = await authFetch('/api/ideas/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ niche: usage?.studio_mode === 'gta' ? 'gta6_launch' : 'random', concept: '', surprise: true })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGeneratedIdea(data);
+        sendIdeaToStudio(data);
+      }
+    } catch (e) {
+      console.error("Auto generate error:", e);
+    } finally {
+      setGeneratingIdea(false);
+      fetchUsage();
+    }
+  };
+
+  const sendIdeaToStudio = (idea, navigate) => {
+    if (idea.next_id) {
+      setStudioVideoId(idea.next_id);
+    }
+    setStudioTitle(idea.title);
+    setStudioScript(idea.script);
+    setStudioKeywords(Array.isArray(idea.keywords) ? idea.keywords.join(', ') : (idea.keywords || ''));
+    if (idea.search_tags) {
+      setStudioSearchTags(Array.isArray(idea.search_tags) ? idea.search_tags.join(', ') : idea.search_tags);
+    }
+    if (idea.visual_mode) {
+      setVisualMode(idea.visual_mode);
+    }
+    setStudioDesc(idea.description);
+    setStudioComment(idea.pinned_comment);
+    if (idea.voice) {
+      setStudioVoice(idea.voice);
+    }
+    setStudioMediaUrls(Array.isArray(idea.media_urls) ? idea.media_urls : []);
+    setStudioHookBanner(idea.hook_banner || '');
+    if (navigate) {
+      navigate('/studio');
+    }
+  };
+
+  const enqueueProduce = async (payload) => {
+    const res = await authFetch('/api/produce', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    return data.task_id;
+  };
+
+  const buildIdeaPayload = (idea) => {
+    const kws = Array.isArray(idea.keywords) ? idea.keywords : (idea.keywords || '').split(',').map(s => s.trim()).filter(Boolean);
+    const tags = Array.isArray(idea.search_tags) ? idea.search_tags : (idea.search_tags || studioSearchTags || '').split(',').map(s => s.trim()).filter(Boolean);
+    const vid = idea.next_id || studioVideoId;
+    return {
+      video_id: vid,
+      script_text: idea.script,
+      clip_keywords: kws,
+      search_tags: tags,
+      visual_mode: idea.visual_mode || visualMode,
+      title: idea.title || `${vid} #shorts`,
+      description: idea.description,
+      pinned_comment: idea.pinned_comment,
+      voice: idea.voice || studioVoice,
+      niche: idea.niche || selectedNiche,
+      media_urls: Array.isArray(idea.media_urls) ? idea.media_urls : [],
+      hook_banner: idea.hook_banner || undefined
+    };
+  };
+
+  const handleQuickProduce = async (idea, navigate) => {
+    sendIdeaToStudio(idea, navigate);
+    showToast(`Quick starting ${idea.next_id || studioVideoId} in Studio...`, 'info');
+    setIsProducing(true);
+    setPendingTaskQueue([]);
+    setSeriesTasks([]);
+    setTaskStatus({ status: 'queued', progress: 5, log: ['Initializing production request from Idea Lab...'] });
+
+    try {
+      const taskId = await enqueueProduce(buildIdeaPayload(idea));
+      setActiveTaskId(taskId);
+      showToast("Production started in Studio!", "success");
+    } catch (e) {
+      showToast(`Error starting production: ${e.message}`, "error");
+      setIsProducing(false);
+    }
+  };
+
+  const handleProduceSeries = async (episodes, navigate) => {
+    if (!episodes || episodes.length === 0) return;
+    sendIdeaToStudio(episodes[0], navigate);
+    setIsProducing(true);
+    setPendingTaskQueue([]);
+    setTaskStatus(null);
+    setSeriesTasks(
+      episodes.map((ep, idx) => ({
+        taskId: null,
+        videoId: ep.next_id || `part_${idx + 1}`,
+        title: ep.title || `Part ${idx + 1}`,
+        part: ep.series_part || idx + 1,
+        total: ep.series_total || episodes.length,
+        status: 'queued',
+        progress: 5,
+        log: ['[QUEUE] Submitting to production pipeline...']
+      }))
+    );
+
+    try {
+      const queued = [];
+      for (let i = 0; i < episodes.length; i++) {
+        const ep = episodes[i];
+        const payload = buildIdeaPayload(ep);
+        const taskId = await enqueueProduce(payload);
+        queued.push({
+          taskId,
+          videoId: payload.video_id,
+          title: payload.title,
+          part: ep.series_part || i + 1,
+          total: ep.series_total || episodes.length,
+          status: 'queued',
+          progress: 5,
+          log: ['[QUEUE] Queued on VPS render pipeline...']
+        });
+      }
+      setSeriesTasks(queued);
+      setActiveTaskId(queued[0].taskId);
+      showToast(`Queued all ${queued.length} parts in Studio!`, 'success');
+    } catch (e) {
+      showToast(`Series queue error: ${e.message}`, 'error');
+      setIsProducing(false);
+    }
+  };
+
+  const handleStartProduction = async () => {
+    if (!studioScript.trim()) {
+      showToast("Please enter a script first.", "error");
+      return;
+    }
+    setIsProducing(true);
+    setPendingTaskQueue([]);
+    setSeriesTasks([]);
+    setTaskStatus({ status: 'queued', progress: 5, log: ['Initializing production request...'] });
+
+    try {
+      const kws = studioKeywords.split(',').map(s => s.trim()).filter(Boolean);
+      const tags = studioSearchTags.split(',').map(s => s.trim()).filter(Boolean);
+      const taskId = await enqueueProduce({
+        video_id: studioVideoId,
+        script_text: studioScript,
+        clip_keywords: kws,
+        search_tags: tags,
+        visual_mode: visualMode,
+        title: studioTitle || `${studioVideoId} #shorts`,
+        description: studioDesc,
+        pinned_comment: studioComment,
+        voice: studioVoice,
+        niche: usage?.studio_mode === 'gta' ? 'gta6_launch' : selectedNiche,
+        media_urls: studioMediaUrls,
+        hook_banner: studioHookBanner || undefined
+      });
+      setActiveTaskId(taskId);
+    } catch (e) {
+      showToast(`Error starting production: ${e.message}`, "error");
+      setIsProducing(false);
+    }
+  };
+
+  const handleStartGuideProduction = async (topic, targetMinutes = 6) => {
+    setIsProducing(true);
+    setTaskStatus({ status: 'queued', progress: 5, log: ['Generating 16:9 guide chapters & UI card blueprint...'] });
+    try {
+      const genRes = await authFetch('/api/guides/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic: topic || '',
+          target_minutes: Number(targetMinutes) || 6,
+          niche: usage?.studio_mode === 'gta' ? 'gta6_launch' : selectedNiche
+        })
+      });
+      const genData = await genRes.json();
+      if (!genRes.ok) throw new Error(genData.detail || `HTTP ${genRes.status}`);
+
+      setStudioVideoId(genData.next_id);
+      setStudioTitle(genData.blueprint?.title || '');
+      const prodRes = await authFetch('/api/guides/produce', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          video_id: genData.next_id,
+          blueprint: genData.blueprint,
+          voice: studioVoice
+        })
+      });
+      const prodData = await prodRes.json();
+      if (!prodRes.ok) throw new Error(prodData.detail || `HTTP ${prodRes.status}`);
+      setActiveTaskId(prodData.task_id);
+    } catch (e) {
+      showToast(`Guide build error: ${e.message}`, "error");
+      setIsProducing(false);
+    }
+  };
+
+  const formatPublishAt = (t) => {
+    if (!t) return null;
+    if (t.includes('Z')) return t;
+    return `${t.replace(' ', 'T')}${t.length === 16 ? ':00.000Z' : 'Z'}`;
+  };
+
+  const uploadSingleVideo = async (videoId, privacyStatus, publishAt) => {
+    const res = await authFetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_id: videoId,
+        privacy_status: privacyStatus,
+        publish_at: publishAt ? formatPublishAt(publishAt) : null
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, video_id: videoId, error: data.detail || `HTTP ${res.status}`, status: res.status };
+    }
+    return { success: true, ...data };
+  };
+
+  const handleUpload = async () => {
+    setUploading(true);
+    setUploadResult(null);
+    try {
+      const result = await uploadSingleVideo(
+        dispatchVideoId,
+        dispatchMode,
+        dispatchMode === 'scheduled' ? dispatchTime : null
+      );
+      setUploadResult(result);
+      if (result.success) {
+        fetchVideos();
+        fetchStats();
+        fetchUsage();
+      }
+    } catch (e) {
+      setUploadResult({ success: false, error: e.message });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleBatchUpload = async (items) => {
+    if (!items || items.length === 0) return;
+    setUploading(true);
+    setUploadResult(null);
+    const results = [];
+    setBatchProgress({ active: true, current: 0, total: items.length, currentId: items[0].videoId, results: [] });
+
+    try {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        setBatchProgress({
+          active: true,
+          current: i + 1,
+          total: items.length,
+          currentId: item.videoId,
+          results: [...results]
+        });
+        let res;
+        try {
+          res = await uploadSingleVideo(item.videoId, 'scheduled', item.publishAt);
+        } catch (err) {
+          res = { success: false, video_id: item.videoId, error: err.message };
+        }
+        results.push({ ...res, scheduledAt: item.publishAt });
+        setBatchProgress({
+          active: true,
+          current: i + 1,
+          total: items.length,
+          currentId: item.videoId,
+          results: [...results]
+        });
+        if (!res.success) {
+          // Stop batch on auth/quota/upload error instead of burning remaining calls
+          break;
+        }
+      }
+      fetchVideos();
+      fetchStats();
+      fetchUsage();
+    } finally {
+      setUploading(false);
+      setBatchProgress((prev) => (prev ? { ...prev, active: false } : null));
+    }
+  };
+
+  const value = {
+    authToken, setAuthToken,
+    currentUser, setCurrentUser,
+    authChecking, setAuthChecking,
+    handleLogout,
+    authFetch,
+    toasts, showToast, closeToast,
+    stats, setStats, loadingStats, fetchStats,
+    videos, setVideos, loadingVideos, fetchVideos,
+    usage, loadingUsage, fetchUsage,
+    niches, fetchNiches,
+    previewVideo, setPreviewVideo,
+    copiedId, copyMetadata,
+    handleDeleteVideo,
+    syncingChannel, handleSyncChannel,
+    aiSettings, setAiSettings, showAiModal, setShowAiModal,
+    inputApiKey, setInputApiKey, savingKey, aiKeyError, setAiKeyError,
+    handleSaveAiKey, handleResetAiKey,
+    channelData, setChannelData, showChannelModal, setShowChannelModal,
+    inputChannelHandle, setInputChannelHandle,
+    inputYoutubeToken, setInputYoutubeToken,
+    savingChannel, oauthStep, setOauthStep,
+    oauthAuthUrl, inputOauthCode, setInputOauthCode,
+    exchangingOauth, uploadingTokenFile, tokenUploadError, setTokenUploadError,
+    showManualJson, setShowManualJson,
+    showChangeCredentials, setShowChangeCredentials,
+    handleTokenFileUpload, handleStartGoogleAuth, handleCompleteOauthCode,
+    handleSaveChannel, handleDisconnectYoutube,
+    selectedNiche, setSelectedNiche,
+    seriesMode, setSeriesMode,
+    ideaConcept, setIdeaConcept,
+    generatingIdea, generatedIdea,
+    handleGenerateIdea, autoGenerateAndFillStudio,
+    sendIdeaToStudio, handleQuickProduce, handleProduceSeries,
+    studioVideoId, setStudioVideoId,
+    studioVoice, setStudioVoice,
+    studioScript, setStudioScript,
+    studioKeywords, setStudioKeywords,
+    studioTitle, setStudioTitle,
+    studioDesc, setStudioDesc,
+    studioComment, setStudioComment,
+    visualMode, setVisualMode,
+    studioSearchTags, setStudioSearchTags,
+    activeTaskId, taskStatus, isProducing, pendingTaskQueue, seriesTasks, handleStartProduction, handleStartGuideProduction,
+    dispatchVideoId, setDispatchVideoId,
+    dispatchMode, setDispatchMode,
+    dispatchTime, setDispatchTime,
+    uploading, uploadResult, handleUpload,
+    batchProgress, handleBatchUpload
+  };
+
+  return (
+    <AppContext.Provider value={value}>
+      {children}
+    </AppContext.Provider>
+  );
+}
+
