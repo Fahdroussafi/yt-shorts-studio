@@ -480,6 +480,7 @@ def generate_ai_script(
             brand_name=brand_name,
             brand_handle=brand_handle,
             topic_history_file=topic_history_file,
+            user_key_file=user_key_file,
         )
 
     prompt, chosen_angle, profile = build_prompt_and_schema(

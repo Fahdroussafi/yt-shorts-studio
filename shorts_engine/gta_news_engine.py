@@ -138,7 +138,7 @@ def extract_extractive_script(
     headline: str,
     body_text: str,
     brand_name: str = "PixelBreach",
-    target_words: int = 80,
+    target_words: int = 50,
 ) -> str:
     """Pure-Python extractive summarizer: ranks sentences by headline overlap + facts, zero AI."""
     sentences = _split_clean_sentences(body_text)
@@ -172,17 +172,17 @@ def extract_extractive_script(
         pos_bonus = max(0.0, 2.5 - idx * 0.25)
         scored.append((idx, tf_score + hl_overlap + has_number + pos_bonus, s))
 
-    # Pick top-scoring sentences up to ~target_words, then restore original chronological order
+    # Pick top-scoring sentences up to ~target_words (~18-24s spoken), then restore chronological order
     scored.sort(key=lambda x: x[1], reverse=True)
     chosen = []
     word_total = len(headline.split()) + 6
     for idx, _sc, s in scored:
         wlen = len(s.split())
-        if chosen and word_total + wlen > target_words + 15:
+        if chosen and word_total + wlen > target_words + 12:
             continue
         chosen.append((idx, s))
         word_total += wlen
-        if word_total >= target_words or len(chosen) >= 4:
+        if word_total >= target_words or len(chosen) >= 2:
             break
 
     chosen.sort(key=lambda x: x[0])
@@ -197,10 +197,31 @@ def extract_extractive_script(
 
 
 _STRIKE_RISK_TERMS = (
-    "leak", "leaked build", "play early", "early access download",
+    "leak", "leaks", "leaker", "leaked build", "leek", "cyberleek",
+    "datamined", "datamine", "play early", "early access download",
     "free download", "crack", "piracy", "mod menu", "money glitch",
     "afk bot", "duplication glitch",
 )
+
+_OFF_TOPIC_TERMS = (
+    "nba", "2k27", "2k26", "fortnite", "discord", "politician",
+    "conservative", "labour", "parliament", "prime minister", "badenoch",
+    "trump", "biden", "election", "stocks", "share price", "investor",
+    "earnings", "gta online", "event week", "shark card", "cosmetics",
+    "skin pack", "time zone", "countdown", "pre-order", "preorder", "explained",
+)
+
+_HIGH_VALUE_TERMS = (
+    "gameplay", "map", "vice city", "leonida", "lucia", "jason",
+    "mission", "wanted", "weapon", "car", "vehicle", "secret",
+    "easter egg", "mechanic", "ps5", "xbox", "screenshot", "trailer",
+    "detail", "feature", "weather", "physics", "tips", "guide",
+)
+
+
+def _article_relevance_score(title: str) -> int:
+    low = title.lower()
+    return sum(2 for term in _HIGH_VALUE_TERMS if term in low)
 
 
 def fetch_gta_articles(topic_filter: Optional[str] = None, used_titles: Optional[set] = None) -> List[Dict]:
@@ -222,7 +243,7 @@ def fetch_gta_articles(topic_filter: Optional[str] = None, used_titles: Optional
                     continue
                 if any(term in low_t for term in _STRIKE_RISK_TERMS):
                     continue
-                if not topic_filter and any(skip in low_t for skip in ("time zone", "countdown", "pre-order", "preorder", "explained")):
+                if not topic_filter and any(skip in low_t for skip in _OFF_TOPIC_TERMS):
                     continue
                 if low_t in used_titles:
                     continue
@@ -237,10 +258,12 @@ def fetch_gta_articles(topic_filter: Optional[str] = None, used_titles: Optional
                     "title": title,
                     "link": link,
                     "body": clean_body,
+                    "score": _article_relevance_score(title),
                 })
         except Exception:
             continue
 
+    articles.sort(key=lambda a: a.get("score", 0), reverse=True)
     return articles
 
 
@@ -257,7 +280,7 @@ DANGLING_STARTS = (
 def _is_good_script(script: str, headline: str, brand_name: str) -> Tuple[bool, str]:
     """Deterministic quality gate: rejects thin, broken, dangling, or reference-heavy scripts."""
     words = script.split()
-    if len(words) < 55 or len(words) > 125:
+    if len(words) < 35 or len(words) > 78:
         return False, f"word count {len(words)} out of bounds"
 
     low = script.lower()
@@ -269,7 +292,7 @@ def _is_good_script(script: str, headline: str, brand_name: str) -> Tuple[bool, 
         body_only = body_only[len(headline.rstrip(" .!?")):].lstrip(" .!?")
 
     body_sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", body_only) if len(s.split()) >= 5]
-    if len(body_sents) < 2:
+    if len(body_sents) < 1:
         return False, "too few body sentences"
 
     if body_sents[0].lower().startswith(DANGLING_STARTS):
@@ -285,13 +308,97 @@ def _is_good_script(script: str, headline: str, brand_name: str) -> Tuple[bool, 
     return True, "ok"
 
 
+_DANGLING_END_WORDS = {
+    "a", "an", "the", "as", "to", "for", "of", "in", "on", "with", "and", "or",
+    "by", "at", "is", "are", "was", "were", "your", "its", "their", "here's",
+    "heres", "ahead", "more", "much", "about", "highlighting", "reportedly", "grand",
+}
+
+
+def _strip_unbalanced_quotes(text: str) -> str:
+    for q in ('"', "'", "“", "”", "‘", "’"):
+        if text.count(q) % 2 == 1:
+            text = text.replace(q, "")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _clean_phrase_limit(text: str, max_chars: int = 48, min_words: int = 3) -> str:
+    base = re.split(r"\s*[—–|]\s*", (text or "").strip())[0]
+    base = re.sub(r"#\S+", "", base)
+    base = _strip_unbalanced_quotes(base).strip(" .,:;-!?")
+    words = base.split()
+    out: List[str] = []
+    for w in words:
+        cand = f"{' '.join(out)} {w}".strip()
+        if len(cand) > max_chars:
+            break
+        out.append(w)
+    while len(out) > min_words and out[-1].lower().strip(",.-:!?()") in _DANGLING_END_WORDS:
+        out.pop()
+    return " ".join(out).strip(" .,:;-")
+
+
+def _clean_short_title_and_banner(raw_title: str) -> Tuple[str, str]:
+    clean_head = _clean_phrase_limit(raw_title, max_chars=48, min_words=3)
+    if not clean_head:
+        clean_head = "GTA 6 Major Update"
+    yt_title = f"{clean_head} #shorts #gta6"
+    banner = _clean_phrase_limit(clean_head, max_chars=28, min_words=2).upper()
+    if len(banner.split()) < 2:
+        banner = "GTA 6 UPDATE"
+    return yt_title, banner
+
+
+def _rewrite_gta_short_with_groq(
+    headline: str,
+    body_text: str,
+    brand_name: str,
+    user_key_file: Optional[str] = None,
+) -> Optional[Dict[str, str]]:
+    """Rewrites raw RSS headline/body into punchy 18-24s spoken Shorts script + non-chopped title & banner."""
+    try:
+        from gemini_generator import get_groq_key, generate_with_groq_lpu
+        g_key = get_groq_key(user_key_file, allow_fallback=True)
+        if not g_key:
+            return None
+        snippet = re.sub(r"\s+", " ", body_text or "").strip()[:1200]
+        prompt = (
+            f'Turn this GTA 6 news article into a punchy 20-second YouTube Short.\n'
+            f'Headline: {headline}\n'
+            f'Facts: {snippet}\n\n'
+            f'Rules:\n'
+            f'- hook_banner: ALL CAPS 3-5 words, <= 28 chars, complete phrase, NO cutoffs.\n'
+            f'- title: Complete catchy title <= 48 chars (NO hashtags, NO cut-off words, NO unbalanced quotes).\n'
+            f'- script: 45-58 words total, spoken punchy style: 1-line hook, 2 concrete facts, end with "Follow {brand_name} for more."\n'
+            f'Respond ONLY with JSON: {{"hook_banner":"...","title":"...","script":"..."}}'
+        )
+        res = generate_with_groq_lpu(prompt, g_key)
+        if not isinstance(res, dict):
+            return None
+        hook = _clean_phrase_limit((res.get("hook_banner") or "").upper(), max_chars=28, min_words=2).upper()
+        title_clean = _clean_phrase_limit(res.get("title") or "", max_chars=48, min_words=3)
+        script_clean = re.sub(r"\s+", " ", (res.get("script") or "").strip())
+        if len(script_clean.split()) < 30 or not title_clean or len(hook.split()) < 2:
+            return None
+        if brand_name.lower() not in script_clean.lower():
+            script_clean = script_clean.rstrip(" .,!?") + f". Follow {brand_name} for more."
+        return {
+            "hook_banner": hook,
+            "title": f"{title_clean} #shorts #gta6",
+            "script": script_clean,
+        }
+    except Exception:
+        return None
+
+
 def generate_zero_ai_gta_script(
     concept: Optional[str] = None,
     brand_name: str = "PixelBreach",
     brand_handle: str = "@PixelBreach-y6",
     topic_history_file: Optional[str] = None,
+    user_key_file: Optional[str] = None,
 ) -> Dict:
-    """Builds a factual 30s GTA 6 Short script purely algorithmically from real RSS news or pasted text."""
+    """Builds a punchy ~20s GTA 6 Short script from real RSS news or pasted text."""
     from idea_bank import load_topic_history, record_topic_history
 
     history = load_topic_history(topic_history_file)
@@ -307,9 +414,10 @@ def generate_zero_ai_gta_script(
         raw = concept.strip()
         first_line = raw.splitlines()[0][:80].strip()
         script = extract_extractive_script(first_line, raw, brand_name=brand_name)
-        short_title = re.sub(r"\s+", " ", first_line)[:42].rstrip(" .,:;-") + " #shorts #gta6"
+        short_title, hook_banner = _clean_short_title_and_banner(first_line)
         return {
             "title": short_title,
+            "hook_banner": hook_banner,
             "script": script,
             "keywords": ["gaming-console", "miami-night", "neon-city", "sports-car"],
             "search_tags": ["gta 6 news", "gta vi", "gta 6 update", "gaming shorts"],
@@ -332,11 +440,14 @@ def generate_zero_ai_gta_script(
     if not articles:
         raise RuntimeError("No live GTA articles reachable from RSS feeds right now.")
 
-    pool = list(articles[:15])
+    # Prefer top-scored gameplay/detail articles first (small jitter within top 6)
+    pool = list(articles[:6])
     random.shuffle(pool)
+    pool.extend(articles[6:15])
 
     art = None
     script = ""
+    best_body = ""
     for cand in pool:
         body = cand["body"]
         if len(body) < 350 and cand.get("link"):
@@ -348,33 +459,28 @@ def generate_zero_ai_gta_script(
         if ok:
             art = cand
             script = cand_script
+            best_body = body
             break
         print(f"Skipped '{cand['title'][:45]}': {reason}")
 
     if not art:
         art = pool[0]
-        body = art["body"]
-        if len(body) < 350 and art.get("link"):
+        best_body = art["body"]
+        if len(best_body) < 350 and art.get("link"):
             fetched = _fetch_article_paragraphs(art["link"])
-            if len(fetched) > len(body):
-                body = fetched
-        script = extract_extractive_script(art["title"], body, brand_name=brand_name)
+            if len(fetched) > len(best_body):
+                best_body = fetched
+        script = extract_extractive_script(art["title"], best_body, brand_name=brand_name)
 
-    # Build clean title without mid-phrase chopping (up to 65 chars + #shorts #gta6)
-    base_title = re.split(r"\s*[—–|:]\s*", art["title"].strip())[0]
-    if len(base_title) < 20:
-        base_title = art["title"].strip()
-    words = base_title.split()
-    short_head = ""
-    for w in words:
-        if len(short_head) + len(w) + 1 > 65:
-            break
-        short_head = f"{short_head} {w}".strip()
-    dangling_end = {"a", "an", "the", "as", "to", "for", "of", "in", "on", "with", "and", "or", "by", "at", "grand"}
-    head_words = short_head.split()
-    while len(head_words) > 3 and head_words[-1].lower().strip(",.-:") in dangling_end:
-        head_words.pop()
-    yt_title = f"{' '.join(head_words)} #shorts #gta6"
+    rewritten = _rewrite_gta_short_with_groq(art["title"], best_body, brand_name, user_key_file=user_key_file)
+    if rewritten:
+        yt_title = rewritten["title"]
+        hook_banner = rewritten["hook_banner"]
+        script = rewritten["script"]
+        source_tag = f"rss_{art['outlet'].lower().replace(' ', '_')}_groq"
+    else:
+        yt_title, hook_banner = _clean_short_title_and_banner(art["title"])
+        source_tag = f"rss_{art['outlet'].lower().replace(' ', '_')}_zero_ai"
 
     if topic_history_file:
         record_topic_history(topic_history_file, yt_title, "gta6_launch", art["title"])
@@ -383,6 +489,7 @@ def generate_zero_ai_gta_script(
 
     return {
         "title": yt_title,
+        "hook_banner": hook_banner,
         "script": script,
         "keywords": ["gaming-console", "miami-night", "neon-city", "sports-car"],
         "search_tags": ["gta 6 news", "gta vi", "gta 6 update", "gta 6 release", "gaming shorts"],
@@ -391,5 +498,5 @@ def generate_zero_ai_gta_script(
         "voice": "en-US-AndrewMultilingualNeural",
         "visual_mode": "cinematic_cuts",
         "media_urls": media_urls,
-        "source": f"rss_{art['outlet'].lower().replace(' ', '_')}_zero_ai",
+        "source": source_tag,
     }

@@ -398,6 +398,7 @@ class ProduceRequest(BaseModel):
     visual_mode: Optional[str] = "cinematic_cuts"   # "cinematic_cuts" | "parkour_brainrot" | "split_retention"
     search_tags: Optional[List[str]] = None
     media_urls: Optional[List[str]] = None
+    hook_banner: Optional[str] = None
 
 
 class UploadRequest(BaseModel):
@@ -1809,6 +1810,7 @@ def generate_idea(req: IdeaGenerateRequest, user: dict = Depends(require_auth)):
             "voice": ai_result.get("voice", profile.get("voice_recommended", "en-US-ChristopherNeural")),
             "visual_mode": ai_result.get("visual_mode"),
             "media_urls": ai_result.get("media_urls", []),
+            "hook_banner": ai_result.get("hook_banner"),
             "chosen_angle": ai_result.get("chosen_angle", req.concept or "Viral Psychology Hook"),
             "generation_type": "surprise_seed" if req.surprise else "custom_concept"
         }
@@ -1930,17 +1932,13 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             PRODUCTION_TASKS[task_id]["progress"] = 30
             PRODUCTION_TASKS[task_id]["log"].append(f"[2/5] Voice synthesized ({dur:.2f}s, {voice_choice}). Building viral ASS subtitles...")
 
-            raw_t = re.sub(r"#\S+", "", req.title or "")
-            raw_t = re.sub(r"\([^)]*\)", "", raw_t).strip(" -|:")
-            b_words = []
-            for w in raw_t.split():
-                if len(" ".join(b_words + [w])) > 40:
-                    break
-                b_words.append(w)
-            dangling_b = {"a", "an", "the", "of", "to", "in", "on", "for", "with", "and", "or", "by", "at"}
-            while len(b_words) > 2 and b_words[-1].lower().strip(",.-:()") in dangling_b:
-                b_words.pop()
-            hook_banner = " ".join(b_words) if b_words else ("GTA 6 BREAKING NEWS" if use_cinema_frame else None)
+            explicit_banner = (req.hook_banner or "").strip()[:32]
+            if explicit_banner:
+                hook_banner = explicit_banner
+            else:
+                from gta_news_engine import _clean_phrase_limit
+                clean_b = _clean_phrase_limit(req.title or "", max_chars=28, min_words=2).upper()
+                hook_banner = clean_b if len(clean_b.split()) >= 2 else ("GTA 6 BREAKING NEWS" if use_cinema_frame else None)
             top_badge = f"@{brand_name}" if use_cinema_frame else None
 
             # 2. Subtitles with Pop-In Animations & High-Contrast Colors
