@@ -233,6 +233,11 @@ def _download_images(media_urls: List[str], work_dir: str) -> List[str]:
             if r.status_code == 200 and len(r.content) > 4000:
                 with open(dst, "wb") as f:
                     f.write(r.content)
+                with Image.open(dst) as im:
+                    w, h = im.size
+                if w < 320 or h < 180:
+                    os.remove(dst)
+                    continue
                 paths.append(dst)
         except Exception:
             continue
@@ -308,7 +313,10 @@ def render_guide_card_png(
     draw.text((166, 143), badge_txt, font=f_badge, fill=(9, 14, 26, 255))
 
     step_txt = f"{idx + 1:02d} / {total:02d}"
-    draw.text((W - 260, 142), f"@{brand_name}  •  {step_txt}", font=f_brand, fill=(148, 163, 184, 255))
+    header_right = f"@{brand_name}  •  {step_txt}"
+    hr_box = draw.textbbox((0, 0), header_right, font=f_brand)
+    hr_w = hr_box[2] - hr_box[0]
+    draw.text((W - 144 - hr_w, 142), header_right, font=f_brand, fill=(148, 163, 184, 255))
 
     # 4. Headline
     headline = str(chapter.get("headline") or chapter.get("chapter_title") or "Guide Breakdown").strip()
@@ -384,16 +392,18 @@ def render_guide_card_png(
 
         if has_inset and bg_image_path:
             try:
-                inset = Image.open(bg_image_path).convert("RGB")
-                iw, ih = 560, 420
-                sc = max(iw / inset.width, ih / inset.height)
-                inset = inset.resize((int(inset.width * sc), int(inset.height * sc)), Image.Resampling.LANCZOS)
-                il = (inset.width - iw) // 2
-                it = (inset.height - ih) // 2
-                inset = inset.crop((il, it, il + iw, it + ih))
-                ix, iy = W - 144 - iw, content_top + 16
-                draw.rounded_rectangle((ix - 6, iy - 6, ix + iw + 6, iy + ih + 6), radius=22, fill=(56, 189, 248, 255))
-                canvas.paste(inset.convert("RGBA"), (ix, iy))
+                inset = Image.open(bg_image_path).convert("RGBA")
+                max_iw, max_ih = 600, 420
+                sc = min(max_iw / inset.width, max_ih / inset.height)
+                iw, ih = max(1, int(round(inset.width * sc))), max(1, int(round(inset.height * sc)))
+                inset = inset.resize((iw, ih), Image.Resampling.LANCZOS)
+                mask = Image.new("L", (iw, ih), 0)
+                ImageDraw.Draw(mask).rounded_rectangle((0, 0, iw - 1, ih - 1), radius=16, fill=255)
+                bullets_h = len(bullets) * 128 + max(0, len(bullets) - 1) * 24
+                ix = (W - 144) - iw
+                iy = content_top + 8 + max(0, (bullets_h - ih) // 2)
+                draw.rounded_rectangle((ix - 5, iy - 5, ix + iw + 5, iy + ih + 5), radius=20, fill=(56, 189, 248, 255))
+                canvas.paste(inset, (ix, iy), mask)
             except Exception:
                 pass
 
