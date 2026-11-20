@@ -216,6 +216,132 @@ def list_twitch_channel_clips(channel_or_url: str, limit: int = 8) -> List[Dict]
         return []
 
 
+_TWITCH_GQL_CHAT_HASH = "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a"
+
+
+def _scan_single_vod_chat_spikes(vod_id: str, duration: int, min_msgs_per_min: int = 60) -> List[Dict]:
+    """Scans Twitch GQL chat replay for 60s message-rate spikes (msgs/min)."""
+    buckets: Dict[int, int] = {}
+    samples: Dict[int, str] = {}
+    cursor = None
+    try:
+        for _ in range(12):
+            variables = {"videoID": str(vod_id), "cursor": cursor} if cursor else {"videoID": str(vod_id), "contentOffsetSeconds": 0}
+            r = requests.post(
+                "https://gql.twitch.tv/gql",
+                headers={"Client-ID": "kimne78kx3ncx6brgo4mv6wki5h1ko", "Content-Type": "application/json"},
+                json={
+                    "operationName": "VideoCommentsByOffsetOrCursor",
+                    "variables": variables,
+                    "extensions": {"persistedQuery": {"version": 1, "sha256Hash": _TWITCH_GQL_CHAT_HASH}},
+                },
+                timeout=6,
+            )
+            if r.status_code != 200:
+                break
+            comments = ((r.json().get("data") or {}).get("video") or {}).get("comments") or {}
+            edges = comments.get("edges") or []
+            if not edges:
+                break
+            for edge in edges:
+                node = edge.get("node") or {}
+                off = int(node.get("contentOffsetSeconds") or 0)
+                b = (off // 60) * 60
+                buckets[b] = buckets.get(b, 0) + 1
+                if b not in samples:
+                    frags = (node.get("message") or {}).get("fragments") or []
+                    msg = "".join(fr.get("text", "") for fr in frags).strip()
+                    if msg:
+                        samples[b] = msg[:60]
+                cursor = edge.get("cursor")
+            if not (comments.get("pageInfo") or {}).get("hasNextPage"):
+                break
+    except Exception:
+        return []
+
+    if not buckets:
+        return []
+
+    ranked = sorted(buckets.items(), key=lambda x: x[1], reverse=True)
+    out = []
+    for b, cnt in ranked[:4]:
+        if cnt < min_msgs_per_min:
+            continue
+        st = max(0, b + 5)
+        et = min(duration if duration > 0 else b + 55, st + 32)
+        if et - st < 10:
+            continue
+        out.append({
+            "start": fmt_timestamp(st),
+            "end": fmt_timestamp(et),
+            "start_sec": st,
+            "end_sec": et,
+            "msgs_per_min": cnt,
+            "sample": samples.get(b, ""),
+        })
+    return out
+
+
+def scan_top_gta_chat_spikes(min_msgs_per_min: int = 80, limit_streams: int = 12, language: str = "en") -> Dict:
+    """Agent 1: Polls top live GTA VI / GTA V Twitch streams via Helix and finds chat-explosion moments."""
+    hdrs = _get_twitch_helix_headers()
+    if not hdrs:
+        raise RuntimeError("TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET are required.")
+
+    s_resp = requests.get(
+        "https://api.twitch.tv/helix/streams",
+        params=[("game_id", "1867279146"), ("game_id", "32982"), ("first", 30)],
+        headers=hdrs,
+        timeout=8,
+    )
+    streams = s_resp.json().get("data", []) if s_resp.status_code == 200 else []
+    if language and language != "all":
+        filtered = [s for s in streams if (s.get("language") or "").lower() == language.lower()]
+        if filtered:
+            streams = filtered
+    streams = streams[:limit_streams]
+
+    def _inspect_streamer(st):
+        uid = st.get("user_id")
+        try:
+            v_resp = requests.get(
+                "https://api.twitch.tv/helix/videos",
+                params={"user_id": uid, "type": "archive", "first": 1},
+                headers=hdrs,
+                timeout=8,
+            )
+            vids = v_resp.json().get("data", []) if v_resp.status_code == 200 else []
+            if not vids:
+                return []
+            v = vids[0]
+            dur = _parse_helix_duration(v.get("duration", ""))
+            if dur < 60:
+                return []
+            sp_list = _scan_single_vod_chat_spikes(v["id"], dur, min_msgs_per_min=min_msgs_per_min)
+            thumb = (v.get("thumbnail_url") or "").replace("%{width}", "320").replace("%{height}", "180")
+            for sp in sp_list:
+                sp.update({
+                    "streamer": st.get("user_name") or st.get("user_login"),
+                    "viewer_count": int(st.get("viewer_count") or 0),
+                    "game_name": st.get("game_name") or "Grand Theft Auto",
+                    "vod_id": v["id"],
+                    "vod_url": v.get("url") or f"https://www.twitch.tv/videos/{v['id']}",
+                    "vod_title": v.get("title") or st.get("title") or "GTA Stream",
+                    "thumbnail": thumb,
+                })
+            return sp_list
+        except Exception:
+            return []
+
+    all_spikes: List[Dict] = []
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        for res in ex.map(_inspect_streamer, streams):
+            all_spikes.extend(res)
+
+    all_spikes.sort(key=lambda x: x["msgs_per_min"], reverse=True)
+    return {"streams_scanned": len(streams), "spikes": all_spikes[:15]}
+
+
 def _parse_hls_playlist(m3u8_url: str) -> Tuple[bytes, List[Tuple[float, float, str]]]:
     """Fetches an HLS playlist and returns (init_bytes, [(start_sec, end_sec, seg_url), ...])."""
     base = m3u8_url.rsplit("/", 1)[0] + "/"
