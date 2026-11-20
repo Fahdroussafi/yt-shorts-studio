@@ -220,55 +220,46 @@ _TWITCH_GQL_CHAT_HASH = "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044
 
 
 def _scan_single_vod_chat_spikes(vod_id: str, duration: int, min_msgs_per_min: int = 60) -> List[Dict]:
-    """Scans Twitch GQL chat replay for 60s message-rate spikes (msgs/min)."""
-    buckets: Dict[int, int] = {}
-    samples: Dict[int, str] = {}
-    cursor = None
-    try:
-        for _ in range(12):
-            variables = {"videoID": str(vod_id), "cursor": cursor} if cursor else {"videoID": str(vod_id), "contentOffsetSeconds": 0}
+    """Samples evenly across a VOD via Twitch GQL chat replay and computes real msgs/min velocity."""
+    if duration < 90:
+        return []
+    offsets = [int(duration * f) for f in (0.08, 0.18, 0.28, 0.38, 0.48, 0.58, 0.68, 0.78, 0.88)]
+    hdrs = {"Client-ID": "kimne78kx3ncx6brgo4mv6wki5h1ko", "Content-Type": "application/json"}
+
+    def _probe(off: int):
+        try:
             r = requests.post(
                 "https://gql.twitch.tv/gql",
-                headers={"Client-ID": "kimne78kx3ncx6brgo4mv6wki5h1ko", "Content-Type": "application/json"},
+                headers=hdrs,
                 json={
                     "operationName": "VideoCommentsByOffsetOrCursor",
-                    "variables": variables,
+                    "variables": {"videoID": str(vod_id), "contentOffsetSeconds": off},
                     "extensions": {"persistedQuery": {"version": 1, "sha256Hash": _TWITCH_GQL_CHAT_HASH}},
                 },
                 timeout=6,
             )
             if r.status_code != 200:
-                break
-            comments = ((r.json().get("data") or {}).get("video") or {}).get("comments") or {}
-            edges = comments.get("edges") or []
-            if not edges:
-                break
-            for edge in edges:
-                node = edge.get("node") or {}
-                off = int(node.get("contentOffsetSeconds") or 0)
-                b = (off // 60) * 60
-                buckets[b] = buckets.get(b, 0) + 1
-                if b not in samples:
-                    frags = (node.get("message") or {}).get("fragments") or []
-                    msg = "".join(fr.get("text", "") for fr in frags).strip()
-                    if msg:
-                        samples[b] = msg[:60]
-                cursor = edge.get("cursor")
-            if not (comments.get("pageInfo") or {}).get("hasNextPage"):
-                break
-    except Exception:
-        return []
+                return None
+            edges = (((r.json().get("data") or {}).get("video") or {}).get("comments") or {}).get("edges") or []
+            if len(edges) < 5:
+                return None
+            offs = [int((e.get("node") or {}).get("contentOffsetSeconds") or off) for e in edges]
+            span = max(3.0, float(max(offs) - min(offs)))
+            mpm = int(round((len(edges) / span) * 60.0))
+            mid_node = edges[len(edges) // 2].get("node") or {}
+            frags = (mid_node.get("message") or {}).get("fragments") or []
+            sample = "".join(fr.get("text", "") for fr in frags).strip()[:60]
+            center = offs[len(offs) // 2]
+            return (mpm, center, sample)
+        except Exception:
+            return None
 
-    if not buckets:
-        return []
-
-    ranked = sorted(buckets.items(), key=lambda x: x[1], reverse=True)
+    hits = [h for h in (_probe(o) for o in offsets) if h and h[0] >= min_msgs_per_min]
+    hits.sort(key=lambda x: x[0], reverse=True)
     out = []
-    for b, cnt in ranked[:4]:
-        if cnt < min_msgs_per_min:
-            continue
-        st = max(0, b + 5)
-        et = min(duration if duration > 0 else b + 55, st + 32)
+    for mpm, center, sample in hits[:3]:
+        st = max(0, center - 12)
+        et = min(duration, st + 32)
         if et - st < 10:
             continue
         out.append({
@@ -276,8 +267,8 @@ def _scan_single_vod_chat_spikes(vod_id: str, duration: int, min_msgs_per_min: i
             "end": fmt_timestamp(et),
             "start_sec": st,
             "end_sec": et,
-            "msgs_per_min": cnt,
-            "sample": samples.get(b, ""),
+            "msgs_per_min": mpm,
+            "sample": sample,
         })
     return out
 
