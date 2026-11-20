@@ -168,7 +168,7 @@ CAPTION_STYLES = {
     }
 }
 
-def build_ass_subtitles(words, output_ass: str, style_name: Optional[str] = None, margin_v: int = 860, fontsize: Optional[int] = None, top_badge: Optional[str] = None, hook_banner: Optional[str] = None):
+def build_ass_subtitles(words, output_ass: str, style_name: Optional[str] = None, margin_v: int = 860, fontsize: Optional[int] = None, top_badge: Optional[str] = None, hook_banner: Optional[str] = None, fallback_duration: Optional[float] = None):
     """Builds dynamic animated subtitles with zero-gap persistent presence."""
     import random
     if not style_name or style_name not in CAPTION_STYLES:
@@ -208,11 +208,12 @@ Style: HookBanner,{cfg['font']},54,&H0000D7FF,&H0000FFFF,&H00000000,&HD00C0C14,-
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     events = []
-    if top_badge and phrases:
-        total_end = format_ass_time(phrases[-1]["end"] + 1.0)
+    overlay_end = (phrases[-1]["end"] + 1.0) if phrases else fallback_duration
+    if top_badge and overlay_end:
+        total_end = format_ass_time(overlay_end)
         events.append(f"Dialogue: 1,0:00:00.00,{total_end},Badge,,0,0,0,,{top_badge}")
-    if hook_banner and phrases:
-        banner_end = format_ass_time(min(3.5, phrases[-1]["end"] + 1.0))
+    if hook_banner and overlay_end:
+        banner_end = format_ass_time(min(3.5, overlay_end))
         clean_banner = hook_banner.replace("{", "").replace("}", "").strip().upper()
         events.append(f"Dialogue: 2,0:00:00.00,{banner_end},HookBanner,,0,0,0,,{{\\fad(150,300)}}{clean_banner}")
     pop_anim = cfg.get("anim", "")

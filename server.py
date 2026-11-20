@@ -948,6 +948,7 @@ def get_channel_stats(user: dict = Depends(require_auth)):
         local_exists = os.path.exists(dir_path) and bool(mp4_files)
         storage_status = "LOCAL_AND_CLOUD" if local_exists else "CLOUD_ARCHIVED"
 
+        yt_watch_url = f"https://youtube.com/shorts/{yt_id}" if "#shorts" in title.lower() else f"https://www.youtube.com/watch?v={yt_id}"
         audit_results.append({
             "short_id": short_key,
             "yt_id": yt_id,
@@ -957,7 +958,7 @@ def get_channel_stats(user: dict = Depends(require_auth)):
             "motion_type": motion_type,
             "status": status_val,
             "publish_at": info.get("publish_at"),
-            "url": f"https://youtube.com/shorts/{yt_id}",
+            "url": yt_watch_url,
             "local_exists": local_exists,
             "storage_status": storage_status
         })
@@ -1026,7 +1027,7 @@ def list_videos(user: dict = Depends(require_auth)):
             try:
                 content = open(meta_path, "r", encoding="utf-8").read()
                 t_match = re.search(r'TITLE:\s*(.*?)(?=\n\n|\nDESCRIPTION:|$)', content, re.DOTALL)
-                d_match = re.search(r'DESCRIPTION:\s*(.*?)(?=\n\nPINNED COMMENT:|$)', content, re.DOTALL)
+                d_match = re.search(r'DESCRIPTION:\s*(.*?)(?=\n\n(?:SEARCH )?TAGS(?:\s*\([^)]*\))?:|\n\nPINNED COMMENT:|$)', content, re.DOTALL)
                 c_match = re.search(r'PINNED COMMENT:\s*(.*)', content, re.DOTALL)
 
                 if t_match:
@@ -1041,7 +1042,10 @@ def list_videos(user: dict = Depends(require_auth)):
 
         mapping = mappings.get(f, {})
         yt_id = mapping.get("yt_id")
-        motion_type = "Real-Motion HD" if file_size_mb > 10 else "Still Pilot"
+        is_guide = os.path.exists(meta_path) and "#shorts" not in title.lower()
+        has_thumb = os.path.exists(os.path.join(dir_path, "thumbnail.jpg"))
+        motion_type = "16:9 Guide" if is_guide else ("Real-Motion HD" if file_size_mb > 10 else "Still Pilot")
+        yt_watch_url = (f"https://youtube.com/shorts/{yt_id}" if not is_guide else f"https://www.youtube.com/watch?v={yt_id}") if yt_id else None
 
         results.append({
             "id": f,
@@ -1053,12 +1057,33 @@ def list_videos(user: dict = Depends(require_auth)):
             "tags": tags,
             "pinned_comment": pinned_comment,
             "motion_type": motion_type,
+            "is_guide": is_guide,
+            "has_thumbnail": has_thumb,
             "yt_id": yt_id,
-            "yt_url": f"https://youtube.com/shorts/{yt_id}" if yt_id else None,
+            "yt_url": yt_watch_url,
             "status": mapping.get("default_status", "LOCAL_READY")
         })
 
     return results
+
+
+@app.get("/api/videos/{short_id}/thumbnail")
+def get_video_thumbnail(short_id: str, req: Request, token: Optional[str] = None):
+    """Serves generated thumbnail.jpg for a user-scoped video."""
+    auth_token = token
+    if not auth_token:
+        auth_header = req.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            auth_token = auth_header[7:].strip()
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = verify_jwt(auth_token)
+    paths = get_user_paths(user)
+    clean_id = sanitize_short_id(short_id)
+    thumb_path = os.path.join(paths["videos_dir"], clean_id, "thumbnail.jpg")
+    if os.path.commonpath([thumb_path, paths["videos_dir"]]) != os.path.abspath(paths["videos_dir"]) or not os.path.isfile(thumb_path):
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
+    return FileResponse(thumb_path, media_type="image/jpeg")
 
 
 @app.api_route("/api/videos/{short_id}/stream", methods=["GET", "HEAD"])
@@ -2309,7 +2334,7 @@ async def run_vod_production(task_id: str, req: VodProduceRequest, target_videos
             else:
                 PRODUCTION_TASKS[task_id]["log"].append("[2/4] Using pure Xbox game audio + Top Hook Banner...")
 
-            build_ass_subtitles(words, ass_file, margin_v=520, top_badge=f"@{brand_name}", hook_banner=hook_text)
+            build_ass_subtitles(words, ass_file, margin_v=520, top_badge=f"@{brand_name}", hook_banner=hook_text, fallback_duration=dur)
             PRODUCTION_TASKS[task_id]["progress"] = 70
             PRODUCTION_TASKS[task_id]["log"].append(f"[3/4] Rendering 1080x1920 Cinema Frame ({dur:.1f}s, -14 LUFS)...")
 
@@ -2403,18 +2428,18 @@ def upload_to_youtube(req: UploadRequest, user: dict = Depends(require_auth)):
     meta_path = os.path.join(dir_path, "seo_metadata.txt")
     title = f"{req.video_id} #shorts"
     description = ""
-    tags = ["shorts", "psychology", "darkpsychology"]
+    tags = ["gta 6", "gta vi", "gaming"] if ADMIN_ONLY_MODE else ["shorts", "psychology", "darkpsychology"]
 
     if os.path.exists(meta_path):
         try:
             content = open(meta_path, "r", encoding="utf-8").read()
             t_m = re.search(r'TITLE:\s*(.*?)(?=\n\n|\nDESCRIPTION:|$)', content, re.DOTALL)
-            d_m = re.search(r'DESCRIPTION:\s*(.*?)(?=\n\nPINNED COMMENT:|$)', content, re.DOTALL)
+            d_m = re.search(r'DESCRIPTION:\s*(.*?)(?=\n\n(?:SEARCH )?TAGS(?:\s*\([^)]*\))?:|\n\nPINNED COMMENT:|$)', content, re.DOTALL)
             if t_m:
                 title = t_m.group(1).strip()
             if d_m:
                 description = d_m.group(1).strip()
-            tags_m = re.search(r'TAGS:\s*(.*?)(?=\n\nPINNED COMMENT:|\nPINNED COMMENT:|$)', content, re.DOTALL)
+            tags_m = re.search(r'(?:SEARCH )?TAGS(?:\s*\([^)]*\))?:\s*(.*?)(?=\n\nPINNED COMMENT:|\nPINNED COMMENT:|$)', content, re.DOTALL)
             if tags_m and tags_m.group(1).strip():
                 tags = [t.strip() for t in tags_m.group(1).split(",") if t.strip()]
             else:
@@ -2437,13 +2462,16 @@ def upload_to_youtube(req: UploadRequest, user: dict = Depends(require_auth)):
             detail="YouTube channel not connected for this account. Please go to Channel Settings and connect your YouTube OAuth token (token.json) to upload."
         )
 
+    thumb_file = os.path.join(dir_path, "thumbnail.jpg")
+    thumb_arg = thumb_file if os.path.exists(thumb_file) else None
+    cat_id = "20" if ADMIN_ONLY_MODE else "27"
     try:
         if req.publish_at:
             from upload_scheduled import upload_scheduled_short
-            yt_url = upload_scheduled_short(video_path, title, description, tags, req.publish_at, token_file=token_to_use)
+            yt_url = upload_scheduled_short(video_path, title, description, tags, req.publish_at, token_file=token_to_use, category_id=cat_id, thumbnail_path=thumb_arg)
         else:
             from uploader import upload_short
-            yt_url = upload_short(video_path, title, description, tags, req.privacy_status, token_file=token_to_use)
+            yt_url = upload_short(video_path, title, description, tags, req.privacy_status, token_file=token_to_use, category_id=cat_id, thumbnail_path=thumb_arg)
 
         from datetime import datetime, timezone
         yt_id = yt_url.split("/")[-1].split("?")[0]
@@ -2581,7 +2609,7 @@ async def run_guide_production(task_id: str, req: GuideProduceRequest, target_vi
                 f.write(
                     f"TITLE:\n{req.blueprint.get('title', req.video_id)}\n\n"
                     f"DESCRIPTION:\n{full_desc}\n\n"
-                    f"SEARCH TAGS (Paste into YouTube Tags Box):\n{tags_str}\n\n"
+                    f"TAGS:\n{tags_str}\n\n"
                     f"PINNED COMMENT:\n{req.blueprint.get('pinned_comment', '')}\n"
                 )
 
@@ -2590,6 +2618,8 @@ async def run_guide_production(task_id: str, req: GuideProduceRequest, target_vi
                 "mappings_file": os.path.join(u_dir, "video_mappings.json"),
                 "stats_file": os.path.join(u_dir, "stats_cache.json"),
             }, req.video_id)
+
+            shutil.rmtree(work_dir, ignore_errors=True)
 
             PRODUCTION_TASKS[task_id]["progress"] = 100
             PRODUCTION_TASKS[task_id]["status"] = "completed"

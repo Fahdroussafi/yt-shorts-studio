@@ -24,7 +24,7 @@ def get_authenticated_service(token_file: str = None):
     return build("youtube", "v3", credentials=creds)
 
 
-def upload_scheduled_short(video_path: str, title: str, description: str, tags: list, publish_at_iso: str, token_file: str = None):
+def upload_scheduled_short(video_path: str, title: str, description: str, tags: list, publish_at_iso: str, token_file: str = None, category_id: str = "27", thumbnail_path: str = None):
     youtube = get_authenticated_service(token_file)
     
     body = {
@@ -32,7 +32,7 @@ def upload_scheduled_short(video_path: str, title: str, description: str, tags: 
             "title": title[:100],
             "description": description[:5000],
             "tags": tags,
-            "categoryId": "27",
+            "categoryId": category_id,
             "defaultLanguage": "en",
             "defaultAudioLanguage": "en"
         },
@@ -72,6 +72,15 @@ def upload_scheduled_short(video_path: str, title: str, description: str, tags: 
             print(f"Upload progress: {int(status.progress() * 100)}%")
             
     video_id = response.get("id")
+    if thumbnail_path and os.path.exists(thumbnail_path):
+        try:
+            youtube.thumbnails().set(
+                videoId=video_id,
+                media_body=MediaFileUpload(thumbnail_path, mimetype="image/jpeg")
+            ).execute()
+            print(f"Custom thumbnail uploaded for {video_id}")
+        except Exception as te:
+            print(f"Thumbnail upload skipped: {te}")
     video_url = f"https://youtube.com/shorts/{video_id}"
     print(f">>> SCHEDULED SUCCESSFULLY: {video_url} <<<")
     return video_url

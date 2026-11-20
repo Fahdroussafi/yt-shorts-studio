@@ -14,6 +14,8 @@ export default function StreamVodsPage() {
   const [clips, setClips] = useState([]);
   const [highlights, setHighlights] = useState([]);
   const [selectedVod, setSelectedVod] = useState(null);
+  const [customStart, setCustomStart] = useState('00:00');
+  const [customEnd, setCustomEnd] = useState('00:30');
   const [activeTask, setActiveTask] = useState(null);
 
   useEffect(() => {
@@ -166,15 +168,43 @@ export default function StreamVodsPage() {
             })}
           </div>
           {selectedVod && (
-            <button
-              type="button"
-              onClick={() => handleFindHighlights(selectedVod)}
-              disabled={scanningHighlights}
-              className="w-full py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-sm flex items-center justify-center space-x-2 transition disabled:opacity-50"
-            >
-              <Sparkles className={`w-4 h-4 ${scanningHighlights ? 'animate-spin' : ''}`} />
-              <span>{scanningHighlights ? 'Scanning Visual + Audio Peaks...' : `Auto-Find Best Moments in VOD #${selectedVod.id}`}</span>
-            </button>
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                onClick={() => handleFindHighlights(selectedVod)}
+                disabled={scanningHighlights}
+                className="w-full py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-sm flex items-center justify-center space-x-2 transition disabled:opacity-50"
+              >
+                <Sparkles className={`w-4 h-4 ${scanningHighlights ? 'animate-spin' : ''}`} />
+                <span>{scanningHighlights ? 'Scanning Visual + Audio Peaks...' : `Auto-Find Best Moments in VOD #${selectedVod.id}`}</span>
+              </button>
+              <div className="p-3 rounded-xl bg-[#12121a] border border-slate-800 flex flex-wrap items-center gap-2 text-xs font-mono">
+                <span className="text-slate-400">Custom Range:</span>
+                <input
+                  type="text"
+                  value={customStart}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                  placeholder="00:00"
+                  className="w-24 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white outline-none focus:border-purple-500"
+                />
+                <span className="text-slate-500">→</span>
+                <input
+                  type="text"
+                  value={customEnd}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                  placeholder="00:30"
+                  className="w-24 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white outline-none focus:border-purple-500"
+                />
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => handleCutHighlight({ start: customStart.trim(), end: customEnd.trim(), url: selectedVod.url, title: selectedVod.title })}
+                  className="ml-auto px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold inline-flex items-center space-x-1 disabled:opacity-50"
+                >
+                  <Scissors className="w-3.5 h-3.5" /><span>Cut Custom Slice</span>
+                </button>
+              </div>
+            </div>
           )}
         </div>
       )}

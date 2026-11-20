@@ -670,16 +670,28 @@ def customize_concept_for_brand(concept: dict, brand_name: str = "ShadowMind", b
                 c[k] = val
     return c
 
-def get_next_short_id(videos_dir: str) -> str:
-    """Scans videos folder and finds the next short_XX id automatically."""
-    if not os.path.exists(videos_dir):
-        return "short_01"
-    folders = os.listdir(videos_dir)
+def get_next_short_id(videos_dir: str, mappings_file: Optional[str] = None) -> str:
+    """Scans videos folder and video_mappings.json and finds the next short_XX id without colliding with purged slots."""
     max_num = 0
-    for f in folders:
-        m = re.match(r"short_0*(\d+)", f.lower())
-        if m:
-            max_num = max(max_num, int(m.group(1)))
+    if os.path.exists(videos_dir):
+        for f in os.listdir(videos_dir):
+            m = re.match(r"short_0*(\d+)", f.lower())
+            if m:
+                max_num = max(max_num, int(m.group(1)))
+
+    m_path = mappings_file or os.path.join(os.path.dirname(os.path.abspath(videos_dir)), "video_mappings.json")
+    if m_path and os.path.exists(m_path):
+        try:
+            with open(m_path, "r", encoding="utf-8") as mf:
+                m_data = json.load(mf)
+            if isinstance(m_data, dict):
+                for k in m_data.keys():
+                    m = re.match(r"short_0*(\d+)", str(k).lower())
+                    if m:
+                        max_num = max(max_num, int(m.group(1)))
+        except Exception:
+            pass
+
     next_num = max_num + 1
     return f"short_{next_num:02d}"
 

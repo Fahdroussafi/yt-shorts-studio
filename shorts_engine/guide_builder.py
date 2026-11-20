@@ -235,13 +235,98 @@ def _download_images(media_urls: List[str], work_dir: str) -> List[str]:
                     f.write(r.content)
                 with Image.open(dst) as im:
                     w, h = im.size
-                if w < 320 or h < 180:
+                ratio = w / max(1, h)
+                if w < 320 or h < 180 or ratio < 0.8 or ratio > 2.5:
                     os.remove(dst)
                     continue
                 paths.append(dst)
         except Exception:
             continue
     return paths
+
+
+def _sample_gameplay_frames(work_dir: str, needed: int, existing_count: int) -> List[str]:
+    """Extracts distinct frames from local gameplay MP4s if scraped article images are scarce."""
+    if needed <= 0:
+        return []
+    gp_dir = os.environ.get("GAMEPLAY_DIR", "").strip()
+    if not gp_dir or not os.path.isdir(gp_dir):
+        gp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gameplay")
+    if not os.path.isdir(gp_dir):
+        return []
+    mp4s = [os.path.join(gp_dir, f) for f in sorted(os.listdir(gp_dir)) if f.lower().endswith(".mp4")]
+    if not mp4s:
+        return []
+    out: List[str] = []
+    for i in range(needed):
+        src = mp4s[i % len(mp4s)]
+        ts = 6 + (i * 11) % 45
+        dst = os.path.join(work_dir, f"bg_gp_{existing_count + i}.jpg")
+        try:
+            r = subprocess.run(
+                [FFMPEG, "-y", "-ss", str(ts), "-i", src, "-frames:v", "1", "-q:v", "4", dst],
+                capture_output=True, timeout=8,
+            )
+            if r.returncode == 0 and os.path.exists(dst) and os.path.getsize(dst) > 4000:
+                out.append(dst)
+        except Exception:
+            continue
+    return out
+
+
+def render_guide_thumbnail_jpg(
+    title: str,
+    out_jpg: str,
+    brand_name: str = "PixelBreach",
+    bg_image_path: Optional[str] = None,
+) -> str:
+    """Renders a clean 1280x720 high-CTR YouTube thumbnail with hero visual + bold 2-line hook."""
+    W, H = 1280, 720
+    canvas = Image.new("RGBA", (W, H), (10, 14, 26, 255))
+    if bg_image_path and os.path.exists(bg_image_path):
+        try:
+            bg = Image.open(bg_image_path).convert("RGB")
+            sc = max(W / bg.width, H / bg.height)
+            bg = bg.resize((int(bg.width * sc), int(bg.height * sc)), Image.Resampling.LANCZOS)
+            left = (bg.width - W) // 2
+            top = (bg.height - H) // 2
+            bg = bg.crop((left, top, left + W, top + H))
+            canvas.paste(bg.convert("RGBA"), (0, 0))
+        except Exception:
+            pass
+
+    # Left-to-right dark vignette for crisp text readability
+    vignette = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    v_draw = ImageDraw.Draw(vignette)
+    for x in range(0, W, 8):
+        alpha = int(235 * max(0.28, 1.0 - (x / W) * 0.78))
+        v_draw.rectangle([(x, 0), (x + 8, H)], fill=(8, 12, 24, alpha))
+    canvas = Image.alpha_composite(canvas, vignette)
+    draw = ImageDraw.Draw(canvas)
+
+    # Top-left brand pill
+    f_pill = _load_font(22, bold=True)
+    pill_txt = f"@{brand_name}"
+    pb = draw.textbbox((0, 0), pill_txt, font=f_pill)
+    pw = (pb[2] - pb[0]) + 36
+    draw.rounded_rectangle((64, 56, 64 + pw, 102), radius=14, fill=(6, 182, 212, 255))
+    draw.text((82, 66), pill_txt, font=f_pill, fill=(9, 14, 26, 255))
+
+    # Giant 2-3 line bold headline
+    clean_t = re.sub(r"#\S+", "", (title or "GTA 6 Guide")).strip()
+    f_hero = _load_font(66, bold=True)
+    lines = _wrap_text(draw, clean_t, f_hero, 780)[:3]
+    total_h = len(lines) * 82
+    ty = max(140, (H - total_h) // 2 + 10)
+    draw.rectangle((64, ty - 22, 220, ty - 14), fill=(236, 72, 153, 255))
+    for i, ln in enumerate(lines):
+        col = (56, 189, 248, 255) if i == len(lines) - 1 and len(lines) > 1 else (248, 250, 252, 255)
+        draw.text((64 + 3, ty + 3), ln, font=f_hero, fill=(0, 0, 0, 220))
+        draw.text((64, ty), ln, font=f_hero, fill=col)
+        ty += 82
+
+    canvas.convert("RGB").save(out_jpg, quality=92)
+    return out_jpg
 
 
 def render_guide_card_png(
@@ -251,6 +336,7 @@ def render_guide_card_png(
     idx: int,
     total: int,
     bg_image_path: Optional[str] = None,
+    active_step: Optional[int] = None,
 ) -> str:
     """Renders a 1920x1080 GTA-styled UI Info Card PNG using Pillow."""
     W, H = 1920, 1080
@@ -342,8 +428,11 @@ def render_guide_card_png(
         for st in stats:
             lbl = str(st.get("label") or "Metric")[:34]
             val = max(5, min(100, int(st.get("value") or 75)))
+            val_txt = f"{val}%"
+            vb = draw.textbbox((0, 0), val_txt, font=f_sub)
+            vw = vb[2] - vb[0]
             draw.text((144, sy), lbl, font=f_sub, fill=(226, 232, 240, 255))
-            draw.text((W - 240, sy), f"{val}%", font=f_sub, fill=(56, 189, 248, 255))
+            draw.text((W - 154 - vw, sy), val_txt, font=f_sub, fill=(56, 189, 248, 255))
             bar_y = sy + 48
             draw.rounded_rectangle((144, bar_y, W - 154, bar_y + 26), radius=13, fill=(30, 41, 59, 255))
             fill_w = int((W - 298) * (val / 100.0))
@@ -354,23 +443,32 @@ def render_guide_card_png(
         do_items = (chapter.get("do_list") or chapter.get("bullets") or ["Prioritize core upgrades first"])[:3]
         avoid_items = (chapter.get("avoid_list") or ["Don't waste early cash on cosmetics"])[:3]
         col_w = 770
+        max_col_y = H - 180
+        do_outline = (52, 211, 153, 255) if active_step in (None, 0) else (16, 185, 129, 90)
+        do_fill = (6, 78, 59, 140) if active_step == 0 else (6, 78, 59, 95)
+        avoid_outline = (251, 113, 133, 255) if active_step in (None, 1) else (244, 63, 94, 90)
+        avoid_fill = (127, 29, 29, 140) if active_step == 1 else (127, 29, 29, 95)
         # Left DO box
-        draw.rounded_rectangle((144, content_top, 144 + col_w, H - 150), radius=24, fill=(6, 78, 59, 110), outline=(16, 185, 129, 200), width=2)
+        draw.rounded_rectangle((144, content_top, 144 + col_w, H - 150), radius=24, fill=do_fill, outline=do_outline, width=3 if active_step == 0 else 2)
         draw.text((180, content_top + 26), "DO THIS", font=f_sub, fill=(52, 211, 153, 255))
         dy = content_top + 90
         for item in do_items:
             for ln in _wrap_text(draw, f"+ {item}", f_body, col_w - 72)[:2]:
+                if dy + 40 > max_col_y:
+                    break
                 draw.text((180, dy), ln, font=f_body, fill=(236, 253, 245, 255))
                 dy += 42
             dy += 22
 
         # Right AVOID box
         rx = 144 + col_w + 60
-        draw.rounded_rectangle((rx, content_top, rx + col_w, H - 150), radius=24, fill=(127, 29, 29, 110), outline=(244, 63, 94, 200), width=2)
+        draw.rounded_rectangle((rx, content_top, rx + col_w, H - 150), radius=24, fill=avoid_fill, outline=avoid_outline, width=3 if active_step == 1 else 2)
         draw.text((rx + 36, content_top + 26), "AVOID THIS", font=f_sub, fill=(251, 113, 133, 255))
         ay = content_top + 90
         for item in avoid_items:
             for ln in _wrap_text(draw, f"- {item}", f_body, col_w - 72)[:2]:
+                if ay + 40 > max_col_y:
+                    break
                 draw.text((rx + 36, ay), ln, font=f_body, fill=(255, 241, 242, 255))
                 ay += 42
             ay += 22
@@ -380,13 +478,17 @@ def render_guide_card_png(
         by = content_top + 8
         for b_i, b_txt in enumerate(bullets):
             box_h = 128
-            draw.rounded_rectangle((144, by, 144 + left_max_w, by + box_h), radius=20, fill=(30, 41, 59, 190), outline=(71, 85, 105, 180), width=2)
-            draw.rounded_rectangle((168, by + 34, 224, by + 90), radius=14, fill=(236, 72, 153, 255))
+            is_active = active_step is None or b_i == active_step
+            box_fill = (30, 58, 95, 220) if (active_step is not None and is_active) else ((30, 41, 59, 190) if is_active else (20, 27, 42, 140))
+            box_out = (56, 189, 248, 255) if (active_step is not None and is_active) else ((71, 85, 105, 180) if is_active else (51, 65, 85, 100))
+            txt_col = (248, 250, 252, 255) if is_active else (148, 163, 184, 200)
+            draw.rounded_rectangle((144, by, 144 + left_max_w, by + box_h), radius=20, fill=box_fill, outline=box_out, width=3 if (active_step is not None and is_active) else 2)
+            draw.rounded_rectangle((168, by + 34, 224, by + 90), radius=14, fill=(236, 72, 153, 255) if is_active else (100, 116, 139, 180))
             draw.text((186, by + 44), str(b_i + 1), font=f_sub, fill=(255, 255, 255, 255))
             b_lines = _wrap_text(draw, str(b_txt), f_body, left_max_w - 130)[:2]
             ty = by + (38 if len(b_lines) == 1 else 22)
             for ln in b_lines:
-                draw.text((248, ty), ln, font=f_body, fill=(241, 245, 249, 255))
+                draw.text((248, ty), ln, font=f_body, fill=txt_col)
                 ty += 40
             by += box_h + 24
 
@@ -412,7 +514,10 @@ def render_guide_card_png(
     prog_w = int((W - 176) * ((idx + 1) / max(1, total)))
     draw.rounded_rectangle((88, H - 52, W - 88, H - 36), radius=8, fill=(30, 41, 59, 220))
     draw.rounded_rectangle((88, H - 52, 88 + max(24, prog_w), H - 36), radius=8, fill=(56, 189, 248, 255))
-    draw.text((144, H - 132), f"CHAPTER: {chapter.get('chapter_title', '')}", font=f_small, fill=(148, 163, 184, 255))
+    footer_txt = f"CHAPTER: {chapter.get('chapter_title', '')}"
+    while len(footer_txt) > 12 and (draw.textbbox((0, 0), footer_txt, font=f_small)[2] - draw.textbbox((0, 0), footer_txt, font=f_small)[0]) > (W - 288):
+        footer_txt = footer_txt[:-4].rstrip() + "..."
+    draw.text((144, H - 132), footer_txt, font=f_small, fill=(148, 163, 184, 255))
 
     canvas.convert("RGB").save(out_png, quality=92)
     return out_png
@@ -435,6 +540,9 @@ async def render_long_guide_video(
 
     bg_imgs = await asyncio.to_thread(_download_images, blueprint.get("media_urls") or [], work_dir)
     total = len(chapters)
+    if len(bg_imgs) < total:
+        extra_gp = await asyncio.to_thread(_sample_gameplay_frames, work_dir, total - len(bg_imgs), len(bg_imgs))
+        bg_imgs.extend(extra_gp)
     seg_paths: List[str] = []
     chapter_timestamps: List[str] = []
     elapsed = 0.0
@@ -447,7 +555,6 @@ async def render_long_guide_video(
             narration = f"{ch.get('headline', '')}. {' '.join(ch.get('bullets') or [])}"
 
         mp3_path = os.path.join(work_dir, f"ch_{idx}.mp3")
-        png_path = os.path.join(work_dir, f"ch_{idx}.png")
         seg_mp4 = os.path.join(work_dir, f"seg_{idx}.mp4")
 
         await generate_voice(narration, mp3_path, voice=voice, rate="+3%", brand_name=brand_name)
@@ -456,26 +563,59 @@ async def render_long_guide_video(
         elapsed += dur
 
         bg_pick = bg_imgs[idx % len(bg_imgs)] if bg_imgs else None
-        await asyncio.to_thread(render_guide_card_png, ch, png_path, brand_name, idx, total, bg_pick)
+        ctype = (ch.get("card_type") or "step").lower()
+        if ctype == "compare":
+            step_count = 2
+        elif ctype == "step":
+            step_count = max(1, min(3, len(ch.get("bullets") or [])))
+        else:
+            step_count = 1
+
+        frame_pngs: List[str] = []
+        for s_i in range(step_count):
+            p_png = os.path.join(work_dir, f"ch_{idx}_{s_i}.png")
+            await asyncio.to_thread(
+                render_guide_card_png, ch, p_png, brand_name, idx, total, bg_pick,
+                s_i if step_count > 1 else None,
+            )
+            frame_pngs.append(p_png)
 
         if idx == 0:
             try:
-                im = Image.open(png_path).resize((1280, 720), Image.Resampling.LANCZOS)
-                im.save(thumb_jpg, quality=90)
+                await asyncio.to_thread(
+                    render_guide_thumbnail_jpg,
+                    blueprint.get("title") or ch.get("headline") or "GTA 6 Guide",
+                    thumb_jpg,
+                    brand_name,
+                    bg_pick,
+                )
             except Exception:
                 pass
 
-        # Render single chapter card -> 1920x1080 30fps mp4 with gentle fade in/out
         fade_out_st = max(0.2, dur - 0.35)
         vf = f"scale=1920:1080,fps=30,fade=t=in:st=0:d=0.35,fade=t=out:st={fade_out_st:.2f}:d=0.35,format=yuv420p"
+        if len(frame_pngs) > 1:
+            img_list_path = os.path.join(work_dir, f"img_concat_{idx}.txt")
+            slice_dur = dur / len(frame_pngs)
+            with open(img_list_path, "w", encoding="utf-8") as ilf:
+                for fp in frame_pngs:
+                    ilf.write(f"file '{os.path.abspath(fp).replace(chr(92), '/')}'\n")
+                    ilf.write(f"duration {slice_dur:.3f}\n")
+                ilf.write(f"file '{os.path.abspath(frame_pngs[-1]).replace(chr(92), '/')}'\n")
+            v_inputs = ["-f", "concat", "-safe", "0", "-i", img_list_path]
+        else:
+            v_inputs = ["-loop", "1", "-t", f"{dur:.2f}", "-i", frame_pngs[0]]
+
         cmd = [
             FFMPEG, "-y",
-            "-loop", "1", "-t", f"{dur:.2f}", "-i", png_path,
+            *v_inputs,
             "-i", mp3_path,
             "-vf", vf,
+            "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
             "-c:a", "aac", "-b:a", "160k", "-ar", "44100",
-            "-shortest", seg_mp4,
+            "-t", f"{dur:.2f}",
+            seg_mp4,
         ]
         res = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True)
         if res.returncode != 0 or not os.path.exists(seg_mp4):

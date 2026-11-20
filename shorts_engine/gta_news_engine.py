@@ -83,6 +83,7 @@ def scrape_article_media(url: str, max_items: int = 8) -> List[str]:
 
     art_m = re.search(r"<article\b[^>]*>(.*?)</article>", page, re.I | re.S)
     scope = art_m.group(1) if art_m else page
+    scope = re.sub(r"<aside\b[^>]*>.*?</aside>", " ", scope, flags=re.I | re.S)
 
     videos = []
     for v in re.findall(r'https?://[^"\'\s<>]+\.(?:mp4|webm)(?:\?[^"\'\s<>]*)?', scope, re.I):

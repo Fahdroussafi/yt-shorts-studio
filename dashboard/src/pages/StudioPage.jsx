@@ -154,7 +154,7 @@ export default function StudioPage() {
         {/* Visual Engine Mode */}
         <div className="space-y-2">
           <label className="text-xs font-mono uppercase text-slate-400">Visual Engine & Retention Mode</label>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          <div className={`grid grid-cols-1 gap-2.5 ${isGta ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
             <button
               type="button"
               onClick={() => setVisualMode('cinematic_cuts')}
@@ -195,21 +195,23 @@ export default function StudioPage() {
               </p>
             </button>
 
-            <button
-              type="button"
-              onClick={() => setVisualMode('split_retention')}
-              className={`p-3 rounded-xl border text-left transition flex flex-col justify-between ${
-                visualMode === 'split_retention'
-                  ? 'bg-cyan-950/40 border-cyan-500 text-white shadow-lg shadow-cyan-500/10'
-                  : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
-              }`}
-            >
-              <div className="font-bold text-xs flex items-center space-x-1.5 text-cyan-400">
-                <span>⚡</span>
-                <span>Split-Screen Retention</span>
-              </div>
-              <p className="text-[11px] text-slate-400 mt-1">50/50: Story scenes top, hypnotic parkour bottom</p>
-            </button>
+            {!isGta && (
+              <button
+                type="button"
+                onClick={() => setVisualMode('split_retention')}
+                className={`p-3 rounded-xl border text-left transition flex flex-col justify-between ${
+                  visualMode === 'split_retention'
+                    ? 'bg-cyan-950/40 border-cyan-500 text-white shadow-lg shadow-cyan-500/10'
+                    : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
+                }`}
+              >
+                <div className="font-bold text-xs flex items-center space-x-1.5 text-cyan-400">
+                  <span>⚡</span>
+                  <span>Split-Screen Retention</span>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">50/50: Story scenes top, hypnotic parkour bottom</p>
+              </button>
+            )}
           </div>
         </div>
 
@@ -222,7 +224,7 @@ export default function StudioPage() {
               type="text"
               value={studioKeywords}
               onChange={(e) => setStudioKeywords(e.target.value)}
-              placeholder="e.g. dark city, robot, thinking, emergency, crowd"
+              placeholder={isGta ? "e.g. gta 6, vice city, leonida, gameplay" : "e.g. dark city, robot, thinking, emergency, crowd"}
               disabled={visualMode === 'parkour_brainrot'}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white font-mono disabled:opacity-40"
             />
@@ -234,7 +236,7 @@ export default function StudioPage() {
               type="text"
               value={studioSearchTags}
               onChange={(e) => setStudioSearchTags(e.target.value)}
-              placeholder="e.g. psychology facts, human behavior, survival paradox"
+              placeholder={isGta ? "e.g. gta 6 news, gta vi, gta 6 xbox series x" : "e.g. psychology facts, human behavior, survival paradox"}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-violet-500 outline-none text-sm text-white font-mono"
             />
           </div>
