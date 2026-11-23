@@ -165,8 +165,8 @@ def generate_guide_blueprint(
         f'- STRICT FACTUALITY: Base every bullet, quote, and chapter ONLY on Reference Source Facts (when provided) and verified official GTA info. NEVER invent fake numbers, prices, dates, mission names, or unconfirmed features. Preserve "reportedly/rumored" hedging when source is unconfirmed.\n'
         f'- Exactly {num_chapters} chapters (Chapter 1 = Intro/Hook, middle = deep commentary & breakdown, final = Summary & Outro).\n'
         f'- Visual variety across chapters using card_type:\n'
-        f'  * "broll" (USE FOR ~70% OF CHAPTERS): Full-screen moving GTA gameplay behind a sleek lower-third overlay with 2-3 short key takeaways.\n'
-        f'  * "quote" (USE FOR 1-2 CHAPTERS): Highlight a key verified fact, developer quote, or source takeaway on a clean card.\n'
+        f'  * "editorial" (USE FOR ~75% OF CHAPTERS): Full-screen subject visual with smooth Ken Burns motion, clean top chapter HUD, and synced word-highlighted captions.\n'
+        f'  * "quote" (USE FOR 1-2 CHAPTERS): Highlight a key verified fact, developer quote, or source takeaway on a clean documentary card.\n'
         f'  * "compare" (USE ONLY if topic is genuinely comparing two options like PS5 vs Xbox): do_list vs avoid_list.\n'
         f'- NEVER use "stats" unless Reference Source Facts contain real benchmark numbers.\n'
         f'- Keep each bullet under 56 chars so it fits cleanly on 1920x1080 overlays.\n'
@@ -181,7 +181,7 @@ def generate_guide_blueprint(
         f'      "chapter_title": "Short Chapter Name",\n'
         f'      "badge": "INTRO" or "KEY DETAIL" or "BREAKDOWN" or "VERDICT",\n'
         f'      "headline": "Big Overlay Headline (under 42 chars)",\n'
-        f'      "card_type": "broll",\n'
+        f'      "card_type": "editorial",\n'
         f'      "bullets": ["Takeaway 1", "Takeaway 2", "Takeaway 3"],\n'
         f'      "do_list": ["Option A point 1", "Option A point 2"],\n'
         f'      "avoid_list": ["Option B point 1", "Option B point 2"]\n'
@@ -273,6 +273,178 @@ def _download_images(media_urls: List[str], work_dir: str) -> List[str]:
         except Exception:
             continue
     return paths
+
+
+def _ass_ts(sec: float) -> str:
+    sec = max(0.0, sec)
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = sec % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def build_16x9_ass_subtitles(words: List[Dict], ass_path: str) -> str:
+    """Builds crisp 1920x1080 documentary ASS captions with active-word cyan highlight."""
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        "PlayResX: 1920\n"
+        "PlayResY: 1080\n"
+        "WrapStyle: 2\n"
+        "ScaledBorderAndShadow: yes\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+        "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: DocCap,DejaVu Sans,54,&H00FFFFFF,&H00F8BD38,&H00080C18,&HB0000000,-1,0,0,0,100,100,0,0,1,4,2,2,120,120,125,1\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+    events: List[str] = []
+    chunk_size = 5
+    for i in range(0, len(words), chunk_size):
+        chunk = words[i:i + chunk_size]
+        if not chunk:
+            continue
+        for w_idx, active_w in enumerate(chunk):
+            st = float(active_w.get("start", 0.0))
+            if w_idx + 1 < len(chunk):
+                en = float(chunk[w_idx + 1].get("start", st + 0.35))
+            elif i + chunk_size < len(words):
+                en = float(words[i + chunk_size].get("start", float(active_w.get("end", st + 0.4))))
+            else:
+                en = max(st + 0.4, float(active_w.get("end", st + 0.5)))
+            en = max(st + 0.08, en)
+            parts = []
+            for j, item in enumerate(chunk):
+                txt = str(item.get("word", "")).replace("{", "").replace("}", "")
+                if j == w_idx:
+                    parts.append(r"{\c&H00F8BD38&}" + txt + r"{\c&H00FFFFFF&}")
+                else:
+                    parts.append(txt)
+            line = " ".join(parts)
+            events.append(f"Dialogue: 0,{_ass_ts(st)},{_ass_ts(en)},DocCap,,0,0,0,,{line}")
+
+    with open(ass_path, "w", encoding="utf-8") as f:
+        f.write(header + "\n".join(events) + "\n")
+    return ass_path
+
+
+def render_editorial_backdrop_jpg(
+    out_jpg: str,
+    bg_image_path: Optional[str] = None,
+    idx: int = 0,
+) -> str:
+    """Builds a crisp 1920x1080 subject backdrop (blurred edge fill + centered sharp subject photo) for Ken Burns."""
+    W, H = 1920, 1080
+    canvas = Image.new("RGBA", (W, H), (10, 14, 26, 255))
+    if bg_image_path and os.path.exists(bg_image_path):
+        try:
+            src = Image.open(bg_image_path).convert("RGB")
+            sc_bg = max(W / src.width, H / src.height)
+            bg = src.resize((int(src.width * sc_bg), int(src.height * sc_bg)), Image.Resampling.LANCZOS)
+            left = (bg.width - W) // 2
+            top = (bg.height - H) // 2
+            bg = bg.crop((left, top, left + W, top + H)).filter(ImageFilter.GaussianBlur(22))
+            canvas.paste(bg.convert("RGBA"), (0, 0))
+            dim = Image.new("RGBA", (W, H), (8, 12, 24, 150))
+            canvas = Image.alpha_composite(canvas, dim)
+
+            # Fit full subject image cleanly without cropping faces/logos
+            sc_fg = min(W / src.width, H / src.height)
+            fg_w, fg_h = max(1, int(src.width * sc_fg)), max(1, int(src.height * sc_fg))
+            fg = src.resize((fg_w, fg_h), Image.Resampling.LANCZOS).convert("RGBA")
+            canvas.paste(fg, ((W - fg_w) // 2, (H - fg_h) // 2))
+        except Exception:
+            pass
+    else:
+        grad = ImageDraw.Draw(canvas)
+        for y in range(0, H, 4):
+            ratio = y / H
+            r = int(12 + (24 if idx % 2 == 0 else 14) * ratio)
+            g = int(16 + 14 * ratio)
+            b = int(38 + 26 * (1 - ratio))
+            grad.rectangle([(0, y), (W, y + 4)], fill=(r, g, b, 255))
+        for gx in range(0, W, 120):
+            grad.line([(gx, 0), (gx, H)], fill=(56, 189, 248, 14), width=1)
+        for gy in range(0, H, 120):
+            grad.line([(0, gy), (W, gy)], fill=(56, 189, 248, 14), width=1)
+
+    # Subtle top & bottom dark vignette for HUD + subtitle legibility
+    vig = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    vd = ImageDraw.Draw(vig)
+    for y in range(0, 220, 4):
+        a = int(160 * (1.0 - y / 220.0))
+        vd.rectangle([(0, y), (W, y + 4)], fill=(6, 9, 18, a))
+    for y in range(H - 300, H, 4):
+        a = int(215 * ((y - (H - 300)) / 300.0))
+        vd.rectangle([(0, y), (W, y + 4)], fill=(6, 9, 18, a))
+    canvas = Image.alpha_composite(canvas, vig)
+    canvas.convert("RGB").save(out_jpg, quality=92)
+    return out_jpg
+
+
+def render_editorial_hud_png(
+    chapter: Dict,
+    out_png: str,
+    brand_name: str,
+    idx: int,
+    total: int,
+    all_chapters: Optional[List[Dict]] = None,
+    start_ts: str = "00:00",
+) -> str:
+    """Minimal transparent 1920x1080 documentary HUD: top chapter badge + bottom timeline bar (center open)."""
+    W, H = 1920, 1080
+    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+
+    f_badge = _load_font(22, bold=True)
+    f_head = _load_font(34, bold=True)
+    f_brand = _load_font(22, bold=True)
+    f_seg = _load_font(18, bold=True)
+
+    # Top-left clean chapter pill + headline
+    badge_txt = str(chapter.get("badge") or f"CHAPTER {idx + 1}").upper()[:18]
+    headline = str(chapter.get("headline") or chapter.get("chapter_title") or "").strip()
+    bb = draw.textbbox((0, 0), badge_txt, font=f_badge)
+    bw = (bb[2] - bb[0]) + 28
+    draw.rounded_rectangle((64, 36, 64 + bw, 76), radius=10, fill=(6, 182, 212, 240))
+    draw.text((78, 43), badge_txt, font=f_badge, fill=(9, 14, 26, 255))
+    draw.text((80 + bw, 43), f"[{start_ts}]", font=f_badge, fill=(226, 232, 240, 235))
+    if headline:
+        h_line = _wrap_text(draw, headline, f_head, 1180)[:1]
+        if h_line:
+            draw.text((66, 88), h_line[0], font=f_head, fill=(248, 250, 252, 245))
+
+    # Top-right subtle channel badge
+    pill_txt = f"@{brand_name}  •  {idx + 1:02d}/{total:02d}"
+    pb = draw.textbbox((0, 0), pill_txt, font=f_brand)
+    pw = (pb[2] - pb[0]) + 32
+    draw.rounded_rectangle((W - 64 - pw, 36, W - 64, 80), radius=14, fill=(10, 14, 26, 190), outline=(56, 189, 248, 140), width=2)
+    draw.text((W - 48 - pw, 46), pill_txt, font=f_brand, fill=(226, 232, 240, 235))
+
+    # Bottom segmented chapter timeline bar
+    bar_left, bar_right = 80, W - 80
+    bar_w = bar_right - bar_left
+    gap = 10
+    n_seg = max(1, total)
+    seg_w = int((bar_w - gap * (n_seg - 1)) / n_seg)
+    for s_i in range(n_seg):
+        sx0 = bar_left + s_i * (seg_w + gap)
+        sx1 = bar_right if s_i == n_seg - 1 else (sx0 + seg_w)
+        if s_i < idx:
+            fill_col, txt_col = (14, 116, 144, 240), (148, 163, 184, 230)
+        elif s_i == idx:
+            fill_col, txt_col = (236, 72, 153, 255), (255, 255, 255, 255)
+        else:
+            fill_col, txt_col = (30, 41, 59, 210), (148, 163, 184, 180)
+        draw.rounded_rectangle((sx0, H - 44, sx1, H - 28), radius=6, fill=fill_col)
+        if all_chapters and s_i < len(all_chapters):
+            c_lbl = str(all_chapters[s_i].get("chapter_title") or f"Part {s_i+1}")[:18]
+            draw.text((sx0 + 4, H - 70), c_lbl, font=f_seg, fill=txt_col)
+
+    canvas.save(out_png)
+    return out_png
 
 
 def _list_gameplay_videos() -> List[str]:
@@ -682,11 +854,7 @@ async def render_long_guide_video(
         raise RuntimeError("Guide blueprint has no chapters.")
 
     bg_imgs = await asyncio.to_thread(_download_images, blueprint.get("media_urls") or [], work_dir)
-    gp_videos = _list_gameplay_videos()
     total = len(chapters)
-    if len(bg_imgs) < total:
-        extra_gp = await asyncio.to_thread(_sample_gameplay_frames, work_dir, total - len(bg_imgs), len(bg_imgs))
-        bg_imgs.extend(extra_gp)
     seg_paths: List[str] = []
     chapter_timestamps: List[str] = []
     elapsed = 0.0
@@ -699,9 +867,10 @@ async def render_long_guide_video(
             narration = f"{ch.get('headline', '')}. {' '.join(ch.get('bullets') or [])}"
 
         mp3_path = os.path.join(work_dir, f"ch_{idx}.mp3")
+        ass_path = os.path.join(work_dir, f"ch_{idx}.ass")
         seg_mp4 = os.path.join(work_dir, f"seg_{idx}.mp4")
 
-        await generate_voice(narration, mp3_path, voice=voice, rate="+3%", brand_name=brand_name)
+        words = await generate_voice(narration, mp3_path, voice=voice, rate="+3%", brand_name=brand_name)
         dur = max(10.0, get_audio_duration(mp3_path))
         cur_ts = _fmt_ts(elapsed)
         chapter_timestamps.append(f"{cur_ts} - {ch.get('chapter_title', f'Chapter {idx+1}')}")
@@ -720,54 +889,42 @@ async def render_long_guide_video(
             except Exception:
                 pass
 
-        ctype = (ch.get("card_type") or "broll").lower()
-        use_broll = (ctype == "broll" or ctype == "step") and bool(gp_videos)
+        if words:
+            build_16x9_ass_subtitles(words, ass_path)
 
-        if use_broll:
-            gp_src = gp_videos[idx % len(gp_videos)]
-            seek_sec = (idx * 23) % 45
-            bullets = ch.get("bullets") or [ch.get("chapter_title") or "Key Takeaway"]
-            ov_count = max(1, min(3, len(bullets)))
-            ov_pngs: List[str] = []
-            for s_i in range(ov_count):
-                ov_p = os.path.join(work_dir, f"ov_{idx}_{s_i}.png")
-                await asyncio.to_thread(
-                    render_guide_broll_overlay_png, ch, ov_p, brand_name, idx, total, s_i, chapters, cur_ts
-                )
-                ov_pngs.append(ov_p)
+        ctype = (ch.get("card_type") or "editorial").lower()
+        if ctype in ("editorial", "broll", "step"):
+            backdrop_jpg = os.path.join(work_dir, f"backdrop_{idx}.jpg")
+            hud_png = os.path.join(work_dir, f"hud_{idx}.png")
+            await asyncio.to_thread(render_editorial_backdrop_jpg, backdrop_jpg, bg_pick, idx)
+            await asyncio.to_thread(render_editorial_hud_png, ch, hud_png, brand_name, idx, total, chapters, cur_ts)
+
+            frames = max(300, int(dur * 30) + 15)
+            move_mode = idx % 4
+            if move_mode == 0:
+                zp = f"zoompan=z='min(zoom+0.0006,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1920x1080:fps=30"
+            elif move_mode == 1:
+                zp = f"zoompan=z='max(1.12-0.0006*on,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1920x1080:fps=30"
+            elif move_mode == 2:
+                zp = f"zoompan=z='1.10':x='(iw-iw/zoom)*on/{frames}':y='ih/2-(ih/zoom/2)':d={frames}:s=1920x1080:fps=30"
+            else:
+                zp = f"zoompan=z='1.10':x='(iw-iw/zoom)*(1-on/{frames})':y='ih/2-(ih/zoom/2)':d={frames}:s=1920x1080:fps=30"
 
             fade_out_st = max(0.2, dur - 0.35)
-            # Single-frame PNG inputs (NO -loop 1 / NO concat fps=30) so FFmpeg holds <= 3 RGBA frames (~24MB RAM)
-            ov_inputs: List[str] = []
-            ov_chain = "[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30,setsar=1[bg0];"
-            prev_lbl = "bg0"
-            slice_d = dur / len(ov_pngs)
-            for s_i, op in enumerate(ov_pngs):
-                ov_inputs.extend(["-i", op])
-                in_idx = s_i + 1
-                t0 = s_i * slice_d
-                t1 = (s_i + 1) * slice_d
-                en = (
-                    "1"
-                    if len(ov_pngs) == 1
-                    else (
-                        f"lt(t,{t1:.2f})"
-                        if s_i == 0
-                        else (f"gte(t,{t0:.2f})" if s_i == len(ov_pngs) - 1 else f"gte(t,{t0:.2f})*lt(t,{t1:.2f})")
-                    )
-                )
-                next_lbl = f"bg{s_i + 1}"
-                ov_chain += f"[{prev_lbl}][{in_idx}:v]overlay=0:0:eof_action=repeat:enable='{en}'[{next_lbl}];"
-                prev_lbl = next_lbl
-            ov_chain += f"[{prev_lbl}]fade=t=in:st=0:d=0.35,fade=t=out:st={fade_out_st:.2f}:d=0.35,format=yuv420p[vout]"
-            audio_idx = len(ov_pngs) + 1
+            ass_esc = os.path.abspath(ass_path).replace("\\", "/").replace(":", "\\:")
+            ass_filter = f",subtitles='{ass_esc}'" if words and os.path.exists(ass_path) else ""
+            fc = (
+                f"[0:v]scale=2240:1260,{zp},setsar=1[bg];"
+                f"[bg][1:v]overlay=0:0:eof_action=repeat{ass_filter},"
+                f"fade=t=in:st=0:d=0.35,fade=t=out:st={fade_out_st:.2f}:d=0.35,format=yuv420p[vout]"
+            )
             cmd = [
                 FFMPEG, "-y", "-threads", "2",
-                "-stream_loop", "-1", "-ss", str(seek_sec), "-t", f"{dur:.2f}", "-i", gp_src,
-                *ov_inputs,
+                "-i", backdrop_jpg,
+                "-i", hud_png,
                 "-i", mp3_path,
-                "-filter_complex", ov_chain,
-                "-map", "[vout]", "-map", f"{audio_idx}:a",
+                "-filter_complex", fc,
+                "-map", "[vout]", "-map", "2:a",
                 "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
                 "-c:a", "aac", "-b:a", "160k", "-ar", "44100",
@@ -775,13 +932,7 @@ async def render_long_guide_video(
                 seg_mp4,
             ]
         else:
-            if ctype == "compare":
-                step_count = 2
-            elif ctype in ("step", "quote", "broll"):
-                step_count = max(1, min(3, len(ch.get("bullets") or [])))
-            else:
-                step_count = 1
-
+            step_count = 2 if ctype == "compare" else max(1, min(3, len(ch.get("bullets") or [])))
             frame_pngs: List[str] = []
             for s_i in range(step_count):
                 p_png = os.path.join(work_dir, f"ch_{idx}_{s_i}.png")
@@ -803,10 +954,10 @@ async def render_long_guide_video(
                     ilf.write(f"file '{os.path.abspath(frame_pngs[-1]).replace(chr(92), '/')}'\n")
                 v_inputs = ["-f", "concat", "-safe", "0", "-i", img_list_path]
             else:
-                v_inputs = ["-loop", "1", "-t", f"{dur:.2f}", "-i", frame_pngs[0]]
+                v_inputs = ["-i", frame_pngs[0]]
 
             cmd = [
-                FFMPEG, "-y",
+                FFMPEG, "-y", "-threads", "2",
                 *v_inputs,
                 "-i", mp3_path,
                 "-vf", vf,
