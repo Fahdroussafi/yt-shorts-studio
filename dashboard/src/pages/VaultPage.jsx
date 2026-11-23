@@ -84,36 +84,22 @@ export default function VaultPage() {
                       onError={(e) => { e.currentTarget.parentElement.style.display = 'none'; }}
                       className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
                     />
-                    <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded bg-black/75 text-violet-300 font-mono text-[10px] font-bold uppercase border border-slate-700/80">
-                      {vid.id}
-                    </span>
-                    <span className={`absolute top-2.5 right-2.5 text-[10px] font-bold px-2 py-0.5 rounded border backdrop-blur-sm ${
-                      vid.is_guide
-                        ? 'bg-pink-950/80 text-pink-300 border-pink-700/70'
-                        : vid.motion_type === 'Real-Motion HD'
-                          ? 'bg-cyan-950/80 text-cyan-300 border-cyan-800/60'
-                          : 'bg-amber-950/80 text-amber-300 border-amber-800/60'
-                    }`}>
-                      {vid.motion_type}
-                    </span>
                   </div>
                 )}
                 <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
                 <div className="space-y-2">
-                  {!vid.has_thumbnail && (
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-xs font-bold text-violet-400 uppercase">{vid.id}</span>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                        vid.is_guide
-                          ? 'bg-pink-950/60 text-pink-300 border-pink-800/60'
-                          : vid.motion_type === 'Real-Motion HD'
-                            ? 'bg-cyan-950/60 text-cyan-300 border-cyan-800/60'
-                            : 'bg-amber-950/60 text-amber-300 border-amber-800/60'
-                      }`}>
-                        {vid.motion_type}
-                      </span>
-                    </div>
-                  )}
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-xs font-bold text-violet-400 uppercase">{vid.id}</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                      vid.is_guide
+                        ? 'bg-pink-950/60 text-pink-300 border-pink-800/60'
+                        : vid.motion_type === 'Real-Motion HD'
+                          ? 'bg-cyan-950/60 text-cyan-300 border-cyan-800/60'
+                          : 'bg-amber-950/60 text-amber-300 border-amber-800/60'
+                    }`}>
+                      {vid.motion_type}
+                    </span>
+                  </div>
 
                   <h3 className="font-bold text-sm text-white line-clamp-2 leading-snug">
                     {vid.title}
