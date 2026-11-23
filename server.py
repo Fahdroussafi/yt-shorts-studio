@@ -2020,9 +2020,14 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             if explicit_banner:
                 hook_banner = explicit_banner
             else:
-                from gta_news_engine import _clean_phrase_limit
-                clean_b = _clean_phrase_limit(req.title or "", max_chars=28, min_words=2).upper()
-                hook_banner = clean_b if len(clean_b.split()) >= 2 else ("GTA 6 BREAKING NEWS" if use_cinema_frame else None)
+                raw_b = re.sub(r"#\S+", "", req.title or "")
+                raw_b = re.sub(r"\([^)]*\)", "", raw_b).strip(" -|:\"'")
+                b_words = []
+                for w in raw_b.split():
+                    if len(" ".join(b_words + [w])) > 28:
+                        break
+                    b_words.append(w)
+                hook_banner = " ".join(b_words).upper() if len(b_words) >= 2 else None
             top_badge = f"@{brand_name}" if use_cinema_frame else None
 
             # 2. Subtitles with Pop-In Animations & High-Contrast Colors
