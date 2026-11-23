@@ -162,10 +162,14 @@ def generate_guide_blueprint(
         f'Topic: "{raw_topic}"\n{ctx_block}\n'
         f'Channel: {brand_name} ({brand_handle})\n\n'
         f'Requirements:\n'
-        f'- STRICT FACTUALITY: Base every bullet, stat, and chapter ONLY on Reference Source Facts (when provided) and verified official GTA info. NEVER invent fake numbers, prices, dates, mission names, or unconfirmed features. Only use "stats" card_type if Reference Source Facts include real numbers; otherwise use "step" or "compare". Preserve "reportedly/rumored" hedging when source is unconfirmed.\n'
-        f'- Exactly {num_chapters} chapters (Chapter 1 = Intro/Hook, middle = deep actionable tips/mechanics/comparisons, final = Summary & Outro).\n'
-        f'- Mix card_type across chapters: "step" (3 concise bullets), "stats" (3-4 rated bars 0-100), "compare" (do_list vs avoid_list).\n'
-        f'- Keep each bullet under 56 chars so it fits cleanly on 1920x1080 UI cards.\n'
+        f'- STRICT FACTUALITY: Base every bullet, quote, and chapter ONLY on Reference Source Facts (when provided) and verified official GTA info. NEVER invent fake numbers, prices, dates, mission names, or unconfirmed features. Preserve "reportedly/rumored" hedging when source is unconfirmed.\n'
+        f'- Exactly {num_chapters} chapters (Chapter 1 = Intro/Hook, middle = deep commentary & breakdown, final = Summary & Outro).\n'
+        f'- Visual variety across chapters using card_type:\n'
+        f'  * "broll" (USE FOR ~70% OF CHAPTERS): Full-screen moving GTA gameplay behind a sleek lower-third overlay with 2-3 short key takeaways.\n'
+        f'  * "quote" (USE FOR 1-2 CHAPTERS): Highlight a key verified fact, developer quote, or source takeaway on a clean card.\n'
+        f'  * "compare" (USE ONLY if topic is genuinely comparing two options like PS5 vs Xbox): do_list vs avoid_list.\n'
+        f'- NEVER use "stats" unless Reference Source Facts contain real benchmark numbers.\n'
+        f'- Keep each bullet under 56 chars so it fits cleanly on 1920x1080 overlays.\n'
         f'- Output strictly valid JSON:\n'
         f'{{\n'
         f'  "title": "High-CTR curiosity-gap YouTube title under 65 chars (e.g. \\"99% of GTA 6 Players Will Miss THIS\\", \\"Don\'t Make This GTA 6 Day One Mistake\\"). NO channel name, NO generic \'Master X: Pro Tips\', NO #shorts, NO fake claims",\n'
@@ -175,13 +179,12 @@ def generate_guide_blueprint(
         f'  "chapters": [\n'
         f'    {{\n'
         f'      "chapter_title": "Short Chapter Name",\n'
-        f'      "badge": "INTRO" or "TIP 01" or "STATS" or "DO VS AVOID",\n'
-        f'      "headline": "Big UI Card Headline (under 42 chars)",\n'
-        f'      "card_type": "step",\n'
+        f'      "badge": "INTRO" or "KEY DETAIL" or "BREAKDOWN" or "VERDICT",\n'
+        f'      "headline": "Big Overlay Headline (under 42 chars)",\n'
+        f'      "card_type": "broll",\n'
         f'      "bullets": ["Takeaway 1", "Takeaway 2", "Takeaway 3"],\n'
-        f'      "stats": [{{"label": "Metric", "value": 85}}],\n'
-        f'      "do_list": ["Smart move 1", "Smart move 2"],\n'
-        f'      "avoid_list": ["Mistake 1", "Mistake 2"]\n'
+        f'      "do_list": ["Option A point 1", "Option A point 2"],\n'
+        f'      "avoid_list": ["Option B point 1", "Option B point 2"]\n'
         f'    }}\n'
         f'  ]\n'
         f'}}'
@@ -270,6 +273,96 @@ def _download_images(media_urls: List[str], work_dir: str) -> List[str]:
         except Exception:
             continue
     return paths
+
+
+def _list_gameplay_videos() -> List[str]:
+    gp_dir = os.environ.get("GAMEPLAY_DIR", "").strip()
+    if not gp_dir or not os.path.isdir(gp_dir):
+        gp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gameplay")
+    if not os.path.isdir(gp_dir):
+        return []
+    return [os.path.join(gp_dir, f) for f in sorted(os.listdir(gp_dir)) if f.lower().endswith(".mp4")]
+
+
+def render_guide_broll_overlay_png(
+    chapter: Dict,
+    out_png: str,
+    brand_name: str,
+    idx: int,
+    total: int,
+    bullet_idx: int = 0,
+    all_chapters: Optional[List[Dict]] = None,
+    start_ts: str = "00:00",
+) -> str:
+    """Renders a transparent 1920x1080 RGBA lower-third + segmented chapter bar for moving B-roll."""
+    W, H = 1920, 1080
+    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+
+    # Bottom gradient scrim so text + timeline stay crisp over bright gameplay
+    for y in range(H - 340, H, 4):
+        alpha = int(225 * ((y - (H - 340)) / 340.0))
+        draw.rectangle([(0, y), (W, y + 4)], fill=(8, 12, 22, alpha))
+
+    f_badge = _load_font(22, bold=True)
+    f_brand = _load_font(22, bold=True)
+    f_head = _load_font(42, bold=True)
+    f_sub = _load_font(28, bold=False)
+    f_small = _load_font(22, bold=True)
+    f_seg = _load_font(18, bold=True)
+
+    # Top-right subtle watermark pill
+    pill_txt = f"@{brand_name}  •  {idx + 1:02d}/{total:02d}"
+    pb = draw.textbbox((0, 0), pill_txt, font=f_brand)
+    pw = (pb[2] - pb[0]) + 32
+    draw.rounded_rectangle((W - 64 - pw, 36, W - 64, 82), radius=14, fill=(10, 14, 26, 185), outline=(56, 189, 248, 140), width=2)
+    draw.text((W - 48 - pw, 46), pill_txt, font=f_brand, fill=(226, 232, 240, 235))
+
+    # Bottom-left sleek lower-third glass card
+    bullets = chapter.get("bullets") or [chapter.get("chapter_title") or "Key Takeaway"]
+    active_b = str(bullets[bullet_idx % len(bullets)])
+    headline = str(chapter.get("headline") or chapter.get("chapter_title") or "Guide Breakdown").strip()
+    badge_txt = str(chapter.get("badge") or f"CHAPTER {idx + 1}").upper()[:20]
+
+    box_x0, box_y0, box_x1, box_y1 = 80, H - 305, 1180, H - 125
+    draw.rounded_rectangle((box_x0, box_y0, box_x1, box_y1), radius=20, fill=(11, 16, 30, 220), outline=(56, 189, 248, 160), width=2)
+    draw.rounded_rectangle((box_x0, box_y0 + 18, box_x0 + 8, box_y1 - 18), radius=4, fill=(236, 72, 153, 255))
+
+    # Badge + timestamp
+    bb = draw.textbbox((0, 0), badge_txt, font=f_badge)
+    bw = (bb[2] - bb[0]) + 28
+    draw.rounded_rectangle((box_x0 + 28, box_y0 + 18, box_x0 + 28 + bw, box_y0 + 54), radius=10, fill=(6, 182, 212, 255))
+    draw.text((box_x0 + 42, box_y0 + 24), badge_txt, font=f_badge, fill=(9, 14, 26, 255))
+    draw.text((box_x0 + 44 + bw, box_y0 + 24), f"[{start_ts}]", font=f_small, fill=(148, 163, 184, 255))
+
+    # Headline + rotating bullet
+    h_lines = _wrap_text(draw, headline, f_head, box_x1 - box_x0 - 60)[:1]
+    draw.text((box_x0 + 28, box_y0 + 66), h_lines[0] if h_lines else headline, font=f_head, fill=(248, 250, 252, 255))
+    b_lines = _wrap_text(draw, f"▸ {active_b}", f_sub, box_x1 - box_x0 - 60)[:1]
+    draw.text((box_x0 + 28, box_y0 + 122), b_lines[0] if b_lines else active_b, font=f_sub, fill=(56, 189, 248, 255))
+
+    # Segmented chapter bar at bottom
+    bar_left, bar_right = 80, W - 80
+    bar_w = bar_right - bar_left
+    gap = 10
+    n_seg = max(1, total)
+    seg_w = int((bar_w - gap * (n_seg - 1)) / n_seg)
+    for s_i in range(n_seg):
+        sx0 = bar_left + s_i * (seg_w + gap)
+        sx1 = bar_right if s_i == n_seg - 1 else (sx0 + seg_w)
+        if s_i < idx:
+            fill_col, txt_col = (14, 116, 144, 240), (148, 163, 184, 230)
+        elif s_i == idx:
+            fill_col, txt_col = (236, 72, 153, 255), (255, 255, 255, 255)
+        else:
+            fill_col, txt_col = (30, 41, 59, 210), (148, 163, 184, 180)
+        draw.rounded_rectangle((sx0, H - 46, sx1, H - 30), radius=6, fill=fill_col)
+        if all_chapters and s_i < len(all_chapters):
+            c_lbl = str(all_chapters[s_i].get("chapter_title") or f"Part {s_i+1}")[:18]
+            draw.text((sx0 + 4, H - 72), c_lbl, font=f_seg, fill=txt_col)
+
+    canvas.save(out_png)
+    return out_png
 
 
 def _sample_gameplay_frames(work_dir: str, needed: int, existing_count: int) -> List[str]:
@@ -589,6 +682,7 @@ async def render_long_guide_video(
         raise RuntimeError("Guide blueprint has no chapters.")
 
     bg_imgs = await asyncio.to_thread(_download_images, blueprint.get("media_urls") or [], work_dir)
+    gp_videos = _list_gameplay_videos()
     total = len(chapters)
     if len(bg_imgs) < total:
         extra_gp = await asyncio.to_thread(_sample_gameplay_frames, work_dir, total - len(bg_imgs), len(bg_imgs))
@@ -614,23 +708,6 @@ async def render_long_guide_video(
         elapsed += dur
 
         bg_pick = bg_imgs[idx % len(bg_imgs)] if bg_imgs else None
-        ctype = (ch.get("card_type") or "step").lower()
-        if ctype == "compare":
-            step_count = 2
-        elif ctype == "step":
-            step_count = max(1, min(3, len(ch.get("bullets") or [])))
-        else:
-            step_count = 1
-
-        frame_pngs: List[str] = []
-        for s_i in range(step_count):
-            p_png = os.path.join(work_dir, f"ch_{idx}_{s_i}.png")
-            await asyncio.to_thread(
-                render_guide_card_png, ch, p_png, brand_name, idx, total, bg_pick,
-                s_i if step_count > 1 else None, chapters, cur_ts,
-            )
-            frame_pngs.append(p_png)
-
         if idx == 0:
             try:
                 await asyncio.to_thread(
@@ -643,31 +720,95 @@ async def render_long_guide_video(
             except Exception:
                 pass
 
-        fade_out_st = max(0.2, dur - 0.35)
-        vf = f"scale=1920:1080,fps=30,fade=t=in:st=0:d=0.35,fade=t=out:st={fade_out_st:.2f}:d=0.35,format=yuv420p"
-        if len(frame_pngs) > 1:
-            img_list_path = os.path.join(work_dir, f"img_concat_{idx}.txt")
-            slice_dur = dur / len(frame_pngs)
-            with open(img_list_path, "w", encoding="utf-8") as ilf:
-                for fp in frame_pngs:
-                    ilf.write(f"file '{os.path.abspath(fp).replace(chr(92), '/')}'\n")
-                    ilf.write(f"duration {slice_dur:.3f}\n")
-                ilf.write(f"file '{os.path.abspath(frame_pngs[-1]).replace(chr(92), '/')}'\n")
-            v_inputs = ["-f", "concat", "-safe", "0", "-i", img_list_path]
-        else:
-            v_inputs = ["-loop", "1", "-t", f"{dur:.2f}", "-i", frame_pngs[0]]
+        ctype = (ch.get("card_type") or "broll").lower()
+        use_broll = (ctype == "broll" or ctype == "step") and bool(gp_videos)
 
-        cmd = [
-            FFMPEG, "-y",
-            *v_inputs,
-            "-i", mp3_path,
-            "-vf", vf,
-            "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-            "-c:a", "aac", "-b:a", "160k", "-ar", "44100",
-            "-t", f"{dur:.2f}",
-            seg_mp4,
-        ]
+        if use_broll:
+            gp_src = gp_videos[idx % len(gp_videos)]
+            seek_sec = (idx * 23) % 45
+            bullets = ch.get("bullets") or [ch.get("chapter_title") or "Key Takeaway"]
+            ov_count = max(1, min(3, len(bullets)))
+            ov_pngs: List[str] = []
+            for s_i in range(ov_count):
+                ov_p = os.path.join(work_dir, f"ov_{idx}_{s_i}.png")
+                await asyncio.to_thread(
+                    render_guide_broll_overlay_png, ch, ov_p, brand_name, idx, total, s_i, chapters, cur_ts
+                )
+                ov_pngs.append(ov_p)
+
+            if len(ov_pngs) > 1:
+                ov_list = os.path.join(work_dir, f"ov_concat_{idx}.txt")
+                slice_d = dur / len(ov_pngs)
+                with open(ov_list, "w", encoding="utf-8") as olf:
+                    for op in ov_pngs:
+                        olf.write(f"file '{os.path.abspath(op).replace(chr(92), '/')}'\n")
+                        olf.write(f"duration {slice_d:.3f}\n")
+                    olf.write(f"file '{os.path.abspath(ov_pngs[-1]).replace(chr(92), '/')}'\n")
+                ov_inputs = ["-f", "concat", "-safe", "0", "-i", ov_list]
+            else:
+                ov_inputs = ["-loop", "1", "-t", f"{dur:.2f}", "-i", ov_pngs[0]]
+
+            fade_out_st = max(0.2, dur - 0.35)
+            fc = (
+                f"[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30,setsar=1[bg];"
+                f"[1:v]fps=30[ov];"
+                f"[bg][ov]overlay=0:0:shortest=1,fade=t=in:st=0:d=0.35,fade=t=out:st={fade_out_st:.2f}:d=0.35,format=yuv420p[vout]"
+            )
+            cmd = [
+                FFMPEG, "-y",
+                "-stream_loop", "-1", "-ss", str(seek_sec), "-t", f"{dur:.2f}", "-i", gp_src,
+                *ov_inputs,
+                "-i", mp3_path,
+                "-filter_complex", fc,
+                "-map", "[vout]", "-map", "2:a",
+                "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+                "-c:a", "aac", "-b:a", "160k", "-ar", "44100",
+                "-t", f"{dur:.2f}",
+                seg_mp4,
+            ]
+        else:
+            if ctype == "compare":
+                step_count = 2
+            elif ctype in ("step", "quote", "broll"):
+                step_count = max(1, min(3, len(ch.get("bullets") or [])))
+            else:
+                step_count = 1
+
+            frame_pngs: List[str] = []
+            for s_i in range(step_count):
+                p_png = os.path.join(work_dir, f"ch_{idx}_{s_i}.png")
+                await asyncio.to_thread(
+                    render_guide_card_png, ch, p_png, brand_name, idx, total, bg_pick,
+                    s_i if step_count > 1 else None, chapters, cur_ts,
+                )
+                frame_pngs.append(p_png)
+
+            fade_out_st = max(0.2, dur - 0.35)
+            vf = f"scale=1920:1080,fps=30,fade=t=in:st=0:d=0.35,fade=t=out:st={fade_out_st:.2f}:d=0.35,format=yuv420p"
+            if len(frame_pngs) > 1:
+                img_list_path = os.path.join(work_dir, f"img_concat_{idx}.txt")
+                slice_dur = dur / len(frame_pngs)
+                with open(img_list_path, "w", encoding="utf-8") as ilf:
+                    for fp in frame_pngs:
+                        ilf.write(f"file '{os.path.abspath(fp).replace(chr(92), '/')}'\n")
+                        ilf.write(f"duration {slice_dur:.3f}\n")
+                    ilf.write(f"file '{os.path.abspath(frame_pngs[-1]).replace(chr(92), '/')}'\n")
+                v_inputs = ["-f", "concat", "-safe", "0", "-i", img_list_path]
+            else:
+                v_inputs = ["-loop", "1", "-t", f"{dur:.2f}", "-i", frame_pngs[0]]
+
+            cmd = [
+                FFMPEG, "-y",
+                *v_inputs,
+                "-i", mp3_path,
+                "-vf", vf,
+                "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+                "-c:a", "aac", "-b:a", "160k", "-ar", "44100",
+                "-t", f"{dur:.2f}",
+                seg_mp4,
+            ]
         res = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True)
         if res.returncode != 0 or not os.path.exists(seg_mp4):
             raise RuntimeError(f"FFmpeg segment {idx} failed: {res.stderr[-250:]}")
