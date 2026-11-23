@@ -120,6 +120,31 @@ def generate_guide_blueprint(
     elif len(raw_topic) > 180:
         scraped_context = raw_topic[:3800]
         raw_topic = raw_topic.splitlines()[0][:90].strip()
+    elif niche == "gta6_launch":
+        # Ground custom short topics against live GTA RSS articles matching topic keywords
+        all_arts = fetch_gta_articles(topic_filter=None, used_titles=set())
+        q_words = {w for w in re.findall(r"[a-z0-9]+", raw_topic.lower()) if len(w) > 2 and w not in {"gta", "the", "and", "for", "with"}}
+        matched = []
+        for a in all_arts:
+            hay = f"{a.get('title', '')} {a.get('body', '')[:300]}".lower()
+            hits = sum(1 for w in q_words if w in hay)
+            if hits > 0:
+                matched.append((hits, a))
+        matched.sort(key=lambda x: x[0], reverse=True)
+        chosen_arts = [a for _, a in matched[:2]] or all_arts[:2]
+        chunks = []
+        for a in chosen_arts:
+            b = a.get("body") or ""
+            if len(b) < 500 and a.get("link"):
+                fetched = _fetch_article_paragraphs(a["link"])
+                if len(fetched) > len(b):
+                    b = fetched
+            if b:
+                chunks.append(f"[{a.get('outlet', 'Source')}] {a.get('title', '')}: {b}")
+            if a.get("link") and len(media_urls) < 10:
+                media_urls.extend(scrape_article_media(a["link"], max_items=5))
+        scraped_context = "\n\n".join(chunks)[:3800]
+        media_urls = media_urls[:10]
 
     target_minutes = max(5, min(10, int(target_minutes or 6)))
     num_chapters = target_minutes  # ~1 min per chapter (155 words @ +3% edge-tts = ~60s)
@@ -137,6 +162,7 @@ def generate_guide_blueprint(
         f'Topic: "{raw_topic}"\n{ctx_block}\n'
         f'Channel: {brand_name} ({brand_handle})\n\n'
         f'Requirements:\n'
+        f'- STRICT FACTUALITY: Base every bullet, stat, and chapter ONLY on Reference Source Facts (when provided) and verified official GTA info. NEVER invent fake numbers, prices, dates, mission names, or unconfirmed features. Only use "stats" card_type if Reference Source Facts include real numbers; otherwise use "step" or "compare". Preserve "reportedly/rumored" hedging when source is unconfirmed.\n'
         f'- Exactly {num_chapters} chapters (Chapter 1 = Intro/Hook, middle = deep actionable tips/mechanics/comparisons, final = Summary & Outro).\n'
         f'- Mix card_type across chapters: "step" (3 concise bullets), "stats" (3-4 rated bars 0-100), "compare" (do_list vs avoid_list).\n'
         f'- Keep each bullet under 56 chars so it fits cleanly on 1920x1080 UI cards.\n'
@@ -187,9 +213,10 @@ def generate_guide_blueprint(
             f'Chapter Title: {ch.get("chapter_title")}\n'
             f'Card Headline: {ch.get("headline")}\n'
             f'On-screen points: {json.dumps(ch.get("bullets") or ch.get("do_list") or ch.get("stats") or [])}\n'
-            f'Context: {scraped_context[:1000]}\n'
+            f'Reference Source Facts: {scraped_context[:3800]}\n'
             f'Role: {role}\n'
             f'Rules: Write between {words_per_ch - 10} and {words_per_ch + 20} words of natural, punchy spoken English. '
+            f'STRICT FACTUALITY: ONLY state facts, numbers, dates, and names supported by Reference Source Facts or On-screen points — NEVER invent fake stats, prices, dates, or mechanics. If something is rumored/unconfirmed, say "reportedly" or "unconfirmed". '
             f'No markdown, no bullet symbols, no stage directions, no "Chapter X" label.\n'
             f'Respond ONLY with JSON: {{"narration": "..."}}'
         )

@@ -362,12 +362,13 @@ def _rewrite_gta_short_with_groq(
         g_key = get_groq_key(user_key_file, allow_fallback=True)
         if not g_key:
             return None
-        snippet = re.sub(r"\s+", " ", body_text or "").strip()[:1200]
+        snippet = re.sub(r"\s+", " ", body_text or "").strip()[:1800]
         prompt = (
             f'Turn this GTA 6 news article into a punchy 20-second YouTube Short.\n'
             f'Headline: {headline}\n'
             f'Facts: {snippet}\n\n'
             f'Rules:\n'
+            f'- STRICT FACTUALITY: ONLY state facts, numbers, dates, and names explicitly present in Headline/Facts. NEVER invent features, prices, dates, or mechanics. If the source says "rumor", "reportedly", "could", or "might", keep that hedging — never state speculation as confirmed fact.\n'
             f'- hook_banner: ALL CAPS 3-5 words, <= 28 chars, high-curiosity hook, complete phrase, NO cutoffs.\n'
             f'- title: High-CTR curiosity-gap YouTube title <= 48 chars (e.g. "Rockstar Just Hid THIS in GTA 6...", "Why GTA 6 Players Are Panicking"). NO hashtags, NO channel name, NO fake claims, NO cut-off words.\n'
             f'- script: 45-58 words total, spoken punchy style: 1-line hook, 2 concrete facts, end with "Follow {brand_name} for more."\n'
