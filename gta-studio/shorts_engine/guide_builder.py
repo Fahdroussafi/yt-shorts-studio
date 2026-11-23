@@ -736,31 +736,38 @@ async def render_long_guide_video(
                 )
                 ov_pngs.append(ov_p)
 
-            if len(ov_pngs) > 1:
-                ov_list = os.path.join(work_dir, f"ov_concat_{idx}.txt")
-                slice_d = dur / len(ov_pngs)
-                with open(ov_list, "w", encoding="utf-8") as olf:
-                    for op in ov_pngs:
-                        olf.write(f"file '{os.path.abspath(op).replace(chr(92), '/')}'\n")
-                        olf.write(f"duration {slice_d:.3f}\n")
-                    olf.write(f"file '{os.path.abspath(ov_pngs[-1]).replace(chr(92), '/')}'\n")
-                ov_inputs = ["-f", "concat", "-safe", "0", "-i", ov_list]
-            else:
-                ov_inputs = ["-loop", "1", "-t", f"{dur:.2f}", "-i", ov_pngs[0]]
-
             fade_out_st = max(0.2, dur - 0.35)
-            fc = (
-                f"[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30,setsar=1[bg];"
-                f"[1:v]fps=30[ov];"
-                f"[bg][ov]overlay=0:0:shortest=1,fade=t=in:st=0:d=0.35,fade=t=out:st={fade_out_st:.2f}:d=0.35,format=yuv420p[vout]"
-            )
+            # Single-frame PNG inputs (NO -loop 1 / NO concat fps=30) so FFmpeg holds <= 3 RGBA frames (~24MB RAM)
+            ov_inputs: List[str] = []
+            ov_chain = "[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30,setsar=1[bg0];"
+            prev_lbl = "bg0"
+            slice_d = dur / len(ov_pngs)
+            for s_i, op in enumerate(ov_pngs):
+                ov_inputs.extend(["-i", op])
+                in_idx = s_i + 1
+                t0 = s_i * slice_d
+                t1 = (s_i + 1) * slice_d
+                en = (
+                    "1"
+                    if len(ov_pngs) == 1
+                    else (
+                        f"lt(t,{t1:.2f})"
+                        if s_i == 0
+                        else (f"gte(t,{t0:.2f})" if s_i == len(ov_pngs) - 1 else f"gte(t,{t0:.2f})*lt(t,{t1:.2f})")
+                    )
+                )
+                next_lbl = f"bg{s_i + 1}"
+                ov_chain += f"[{prev_lbl}][{in_idx}:v]overlay=0:0:eof_action=repeat:enable='{en}'[{next_lbl}];"
+                prev_lbl = next_lbl
+            ov_chain += f"[{prev_lbl}]fade=t=in:st=0:d=0.35,fade=t=out:st={fade_out_st:.2f}:d=0.35,format=yuv420p[vout]"
+            audio_idx = len(ov_pngs) + 1
             cmd = [
-                FFMPEG, "-y",
+                FFMPEG, "-y", "-threads", "2",
                 "-stream_loop", "-1", "-ss", str(seek_sec), "-t", f"{dur:.2f}", "-i", gp_src,
                 *ov_inputs,
                 "-i", mp3_path,
-                "-filter_complex", fc,
-                "-map", "[vout]", "-map", "2:a",
+                "-filter_complex", ov_chain,
+                "-map", "[vout]", "-map", f"{audio_idx}:a",
                 "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
                 "-c:a", "aac", "-b:a", "160k", "-ar", "44100",
