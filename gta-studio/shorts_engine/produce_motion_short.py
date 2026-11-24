@@ -730,6 +730,7 @@ def render_gameplay_short(
                 f"[{i}:v]trim=duration={per_cut:.3f},setpts=PTS-STARTPTS,fps=30,{scale_crop},setsar=1[v{i}]"
             )
 
+    out_dur = duration + 0.3
     concat_ins = "".join(f"[v{i}]" for i in range(num_cuts))
     audio_idx = num_cuts
     if cinema_frame:
@@ -740,18 +741,18 @@ def render_gameplay_short(
             f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.06:saturation=1.10,split=2[bg_src][fg_src];"
             f"[bg_src]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=6:2,scale=1080:1920:flags=bilinear,setsar=1[vbg];"
             f"[fg_src]scale=1080:-2,setsar=1[vfg];"
-            f"[vbg][vfg]overlay=(W-w)/2:(H-h)/2,ass='{clean_ass}'{fonts_arg}[vfinal];"
-            f"[{audio_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
-            f"[avoice][{synth_idx}:a][{impact_idx}:a]amix=inputs=3:duration=first:weights=1.0 0.06 0.35[afinal]"
+            f"[vbg][vfg]overlay=(W-w)/2:(H-h)/2,fps=30,ass='{clean_ass}'{fonts_arg}[vfinal];"
+            f"[{audio_idx}:a]aresample=44100,apad=pad_dur=0.3[avoice];"
+            f"[avoice][{synth_idx}:a][{impact_idx}:a]amix=inputs=3:duration=first:weights=1.0 0.5 0.35:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[afinal]"
         )
         cmd = [
             FFMPEG, "-y",
             *inputs,
             "-i", audio_path,
-            "-f", "lavfi", "-t", f"{duration:.2f}",
-            "-i", "sine=frequency=58:sample_rate=44100,lowpass=f=110,volume=0.05",
+            "-f", "lavfi", "-t", f"{out_dur:.2f}",
+            "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.02,bandpass=f=220:w=160",
             "-f", "lavfi", "-t", "0.45",
-            "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
+            "-i", "aevalsrc=0.18*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
             "-filter_complex", filter_complex,
             "-map", "[vfinal]",
             "-map", "[afinal]",
@@ -759,11 +760,13 @@ def render_gameplay_short(
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-crf", "19",
+            "-r", "30",
             "-threads", "2",
             "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-b:a", "192k",
-            "-t", f"{duration:.2f}",
+            "-ac", "2",
+            "-t", f"{out_dur:.2f}",
             output_mp4
         ]
     else:
@@ -772,18 +775,18 @@ def render_gameplay_short(
         filter_complex = (
             ";".join(filter_parts) + ";"
             f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.08:saturation=1.12,"
-            f"ass='{clean_ass}'{fonts_arg}[vfinal];"
-            f"[{audio_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
-            f"[avoice][{synth_idx}:a][{impact_idx}:a]amix=inputs=3:duration=first:weights=1.0 0.08 0.35[afinal]"
+            f"fps=30,ass='{clean_ass}'{fonts_arg}[vfinal];"
+            f"[{audio_idx}:a]aresample=44100,apad=pad_dur=0.3[avoice];"
+            f"[avoice][{synth_idx}:a][{impact_idx}:a]amix=inputs=3:duration=first:weights=1.0 0.5 0.35:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[afinal]"
         )
         cmd = [
             FFMPEG, "-y",
             *inputs,
             "-i", audio_path,
-            "-f", "lavfi", "-t", f"{duration:.2f}",
-            "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.03,lowpass=f=140",
+            "-f", "lavfi", "-t", f"{out_dur:.2f}",
+            "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.02,bandpass=f=220:w=160",
             "-f", "lavfi", "-t", "0.45",
-            "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
+            "-i", "aevalsrc=0.18*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
             "-filter_complex", filter_complex,
             "-map", "[vfinal]",
             "-map", "[afinal]",
@@ -791,11 +794,13 @@ def render_gameplay_short(
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-crf", "19",
+            "-r", "30",
             "-threads", "2",
             "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-b:a", "192k",
-            "-t", f"{duration:.2f}",
+            "-ac", "2",
+            "-t", f"{out_dur:.2f}",
             output_mp4
         ]
     res = _run_ffmpeg(cmd)
@@ -910,10 +915,11 @@ def render_news_media_short(
                 while len(scenes) < 4:
                     scenes.append(fetched[len(scenes) % len(fetched)])
 
+        out_dur = duration + 0.3
         num_cuts = len(scenes)
-        per_cut = duration / num_cuts
+        per_cut = out_dur / num_cuts
         frames_per_cut = max(1, int(round(per_cut * 30)))
-        print(f"[4/5] Rendering News-Media Cinema Short ({duration:.2f}s, {len(fetched)} unique scraped visuals across {num_cuts} cuts)...")
+        print(f"[4/5] Rendering News-Media Cinema Short ({out_dur:.2f}s, {len(fetched)} unique scraped visuals across {num_cuts} cuts)...")
 
         clean_ass = ass_path.replace("\\", "/").replace(":", "\\:")
         clean_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
@@ -935,7 +941,7 @@ def render_news_media_short(
                 else:
                     zp = f"zoompan=z='1.12':x='(iw-iw/zoom)*(1-on/{frames_per_cut})':y='ih/2-(ih/zoom/2)':d={frames_per_cut}:s=1080x608:fps=30"
                 filter_parts.append(
-                    f"[{i}:v]scale=1080:608:force_original_aspect_ratio=increase,crop=1080:608,setsar=1,"
+                    f"[{i}:v]scale=2560:1440:force_original_aspect_ratio=increase,crop=2560:1440,setsar=1,"
                     f"{zp},setpts=PTS-STARTPTS[v{i}]"
                 )
             else:
@@ -959,18 +965,18 @@ def render_news_media_short(
             f"{concat_ins}concat=n={num_cuts}:v=1:a=0,eq=contrast=1.06:saturation=1.10,split=2[bg_src][fg_src];"
             f"[bg_src]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=6:2,scale=1080:1920:flags=bilinear,setsar=1[vbg];"
             f"[fg_src]scale=1080:608,setsar=1[vfg];"
-            f"[vbg][vfg]overlay=(W-w)/2:(H-h)/2,ass='{clean_ass}'{fonts_arg}[vfinal];"
-            f"[{audio_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=11[avoice];"
-            f"[avoice][{synth_idx}:a][{impact_idx}:a]amix=inputs=3:duration=first:weights=1.0 0.06 0.35[afinal]"
+            f"[vbg][vfg]overlay=(W-w)/2:(H-h)/2,fps=30,ass='{clean_ass}'{fonts_arg}[vfinal];"
+            f"[{audio_idx}:a]aresample=44100,apad=pad_dur=0.3[avoice];"
+            f"[avoice][{synth_idx}:a][{impact_idx}:a]amix=inputs=3:duration=first:weights=1.0 0.5 0.35:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[afinal]"
         )
         cmd = [
             FFMPEG, "-y",
             *inputs,
             "-i", audio_path,
-            "-f", "lavfi", "-t", f"{duration:.2f}",
-            "-i", "sine=frequency=58:sample_rate=44100,lowpass=f=110,volume=0.05",
+            "-f", "lavfi", "-t", f"{out_dur:.2f}",
+            "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.02,bandpass=f=220:w=160",
             "-f", "lavfi", "-t", "0.45",
-            "-i", "aevalsrc=0.22*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
+            "-i", "aevalsrc=0.18*sin(2*PI*55*t)*exp(-6*t):d=0.45:s=44100",
             "-filter_complex", filter_complex,
             "-map", "[vfinal]",
             "-map", "[afinal]",
@@ -978,11 +984,13 @@ def render_news_media_short(
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-crf", "20",
+            "-r", "30",
             "-threads", "2",
             "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-b:a", "192k",
-            "-t", f"{duration:.2f}",
+            "-ac", "2",
+            "-t", f"{out_dur:.2f}",
             output_mp4,
         ]
         res = _run_ffmpeg(cmd)

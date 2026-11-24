@@ -139,7 +139,7 @@ def extract_extractive_script(
     headline: str,
     body_text: str,
     brand_name: str = "PixelBreach",
-    target_words: int = 50,
+    target_words: int = 62,
 ) -> str:
     """Pure-Python extractive summarizer: ranks sentences by headline overlap + facts, zero AI."""
     sentences = _split_clean_sentences(body_text)
@@ -281,7 +281,7 @@ DANGLING_STARTS = (
 def _is_good_script(script: str, headline: str, brand_name: str) -> Tuple[bool, str]:
     """Deterministic quality gate: rejects thin, broken, dangling, or reference-heavy scripts."""
     words = script.split()
-    if len(words) < 35 or len(words) > 78:
+    if len(words) < 40 or len(words) > 95:
         return False, f"word count {len(words)} out of bounds"
 
     low = script.lower()
@@ -350,13 +350,20 @@ def _clean_short_title_and_banner(raw_title: str) -> Tuple[str, str]:
     return yt_title, banner
 
 
+def _sanitize_strike_terms(text: str) -> str:
+    """Replaces Take-Two strike-risk words if an LLM injects them."""
+    out = re.sub(r"\b(leaked|leaks|leak|leek)\b", "revealed", text or "", flags=re.IGNORECASE)
+    out = re.sub(r"\b(datamined|datamine)\b", "uncovered", out, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", out).strip()
+
+
 def _rewrite_gta_short_with_groq(
     headline: str,
     body_text: str,
     brand_name: str,
     user_key_file: Optional[str] = None,
 ) -> Optional[Dict[str, str]]:
-    """Rewrites raw RSS headline/body into punchy 18-24s spoken Shorts script + non-chopped title & banner."""
+    """Rewrites raw RSS headline/body into punchy 22-27s spoken Shorts script + non-chopped title, banner & comment."""
     try:
         from gemini_generator import get_groq_key, generate_with_groq_lpu
         g_key = get_groq_key(user_key_file, allow_fallback=True)
@@ -364,23 +371,26 @@ def _rewrite_gta_short_with_groq(
             return None
         snippet = re.sub(r"\s+", " ", body_text or "").strip()[:1800]
         prompt = (
-            f'Turn this GTA 6 news article into a punchy 20-second YouTube Short.\n'
+            f'Turn this GTA 6 news article into a high-retention 25-second YouTube Short.\n'
             f'Headline: {headline}\n'
             f'Facts: {snippet}\n\n'
             f'Rules:\n'
-            f'- STRICT FACTUALITY: ONLY state facts, numbers, dates, and names explicitly present in Headline/Facts. NEVER invent features, prices, dates, or mechanics. If the source says "rumor", "reportedly", "could", or "might", keep that hedging — never state speculation as confirmed fact.\n'
+            f'- STRICT FACTUALITY: ONLY state facts, numbers, dates, and names explicitly present in Headline/Facts. NEVER invent features, prices, dates, or mechanics. If the source says "rumor", "reportedly", "could", or "might", keep that hedging.\n'
+            f'- NEVER USE THE WORDS: leak, leaked, leaks, leaker, datamine, datamined, crack, piracy, mod menu.\n'
             f'- hook_banner: ALL CAPS 3-5 words, <= 28 chars, high-curiosity hook, complete phrase, NO cutoffs.\n'
-            f'- title: High-CTR curiosity-gap YouTube title <= 48 chars (e.g. "Rockstar Just Hid THIS in GTA 6...", "Why GTA 6 Players Are Panicking"). NO hashtags, NO channel name, NO fake claims, NO cut-off words.\n'
-            f'- script: 45-58 words total, spoken punchy style: 1-line hook, 2 concrete facts, end with "Follow {brand_name} for more."\n'
-            f'Respond ONLY with JSON: {{"hook_banner":"...","title":"...","script":"..."}}'
+            f'- title: High-CTR curiosity-gap YouTube title <= 48 chars (e.g. "Rockstar Just Hid THIS in GTA 6...", "Why GTA 6 Players Are Panicking"). NO hashtags, NO channel name, NO cut-off words.\n'
+            f'- script: 58-72 words total (~24s spoken): 1-line hook, 3 concrete facts, 1 debate question, end with "Follow {brand_name} for more."\n'
+            f'- pinned_comment: Short specific question about THIS exact story to spark comment debate.\n'
+            f'Respond ONLY with JSON: {{"hook_banner":"...","title":"...","script":"...","pinned_comment":"..."}}'
         )
         res = generate_with_groq_lpu(prompt, g_key)
         if not isinstance(res, dict):
             return None
-        hook = _clean_phrase_limit((res.get("hook_banner") or "").upper(), max_chars=28, min_words=2).upper()
-        title_clean = _clean_phrase_limit(res.get("title") or "", max_chars=48, min_words=3)
-        script_clean = re.sub(r"\s+", " ", (res.get("script") or "").strip())
-        if len(script_clean.split()) < 30 or not title_clean or len(hook.split()) < 2:
+        hook = _clean_phrase_limit(_sanitize_strike_terms(res.get("hook_banner") or "").upper(), max_chars=28, min_words=2).upper()
+        title_clean = _clean_phrase_limit(_sanitize_strike_terms(res.get("title") or ""), max_chars=48, min_words=3)
+        script_clean = _sanitize_strike_terms(res.get("script") or "")
+        comment_clean = _sanitize_strike_terms(res.get("pinned_comment") or "")
+        if len(script_clean.split()) < 35 or not title_clean or len(hook.split()) < 2:
             return None
         if brand_name.lower() not in script_clean.lower():
             script_clean = script_clean.rstrip(" .,!?") + f". Follow {brand_name} for more."
@@ -388,6 +398,7 @@ def _rewrite_gta_short_with_groq(
             "hook_banner": hook,
             "title": f"{title_clean} #shorts #gta6",
             "script": script_clean,
+            "pinned_comment": comment_clean or "What do you think about this? Drop your take below.",
         }
     except Exception:
         return None
@@ -475,10 +486,12 @@ def generate_zero_ai_gta_script(
         script = extract_extractive_script(art["title"], best_body, brand_name=brand_name)
 
     rewritten = _rewrite_gta_short_with_groq(art["title"], best_body, brand_name, user_key_file=user_key_file)
+    pinned_q = "What do you think about this? Drop your take below."
     if rewritten:
         yt_title = rewritten["title"]
         hook_banner = rewritten["hook_banner"]
         script = rewritten["script"]
+        pinned_q = rewritten.get("pinned_comment") or pinned_q
         source_tag = f"rss_{art['outlet'].lower().replace(' ', '_')}_groq"
     else:
         yt_title, hook_banner = _clean_short_title_and_banner(art["title"])
@@ -496,7 +509,7 @@ def generate_zero_ai_gta_script(
         "keywords": ["gaming-console", "miami-night", "neon-city", "sports-car"],
         "search_tags": ["gta 6 news", "gta vi", "gta 6 update", "gta 6 release", "gaming shorts"],
         "description": f"{art['title']} (Source: {art['outlet']} — {art['link']}). Subscribe to {brand_handle} #shorts #gta6 #gtavi #gaming",
-        "pinned_comment": "Are you ready for launch day? Drop your console below.",
+        "pinned_comment": pinned_q,
         "voice": "en-US-AndrewMultilingualNeural",
         "visual_mode": "cinematic_cuts",
         "media_urls": media_urls,

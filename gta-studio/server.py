@@ -2009,9 +2009,9 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             v_mode = getattr(req, "visual_mode", "cinematic_cuts") or "cinematic_cuts"
             use_cinema_frame = ADMIN_ONLY_MODE and v_mode in ("cinematic_cuts", "parkour_brainrot")
 
-            # 1. Voice with Micro-variation
-            voice_choice = req.voice or ("en-US-AndrewMultilingualNeural" if ADMIN_ONLY_MODE else "en-US-ChristopherNeural")
-            words = await generate_voice(clean_script, audio_file, voice=voice_choice, rate="+4%", brand_name=brand_name)
+            # 1. Voice with natural pacing (+2%)
+            voice_choice = req.voice or "en-US-AndrewMultilingualNeural"
+            words = await generate_voice(clean_script, audio_file, voice=voice_choice, rate="+2%", brand_name=brand_name)
             dur = get_audio_duration(audio_file)
             PRODUCTION_TASKS[task_id]["progress"] = 30
             PRODUCTION_TASKS[task_id]["log"].append(f"[2/5] Voice synthesized ({dur:.2f}s, {voice_choice}). Building viral ASS subtitles...")
@@ -2067,29 +2067,9 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
             resolved_media_urls = list(req.media_urls or [])
             if v_mode == "parkour_brainrot":
                 PRODUCTION_TASKS[task_id]["progress"] = 70
-                PRODUCTION_TASKS[task_id]["log"].append(
-                    "[3/5] Visual Mode: GTA 6 Server Gameplay (8-Cut Cinema Frame)..." if use_cinema_frame
-                    else "[3/5] Visual Mode: Hypnotic Gameplay Loop (Minecraft Parkour / Subway Surfers). Instant local slicing..."
-                )
+                PRODUCTION_TASKS[task_id]["log"].append("[3/5] Visual Mode: GTA 6 Server Gameplay (8-Cut Cinema Frame)...")
                 await asyncio.to_thread(render_gameplay_short, audio_file, ass_file, output_mp4, dur, None, use_cinema_frame)
-
-            elif v_mode == "split_retention":
-                niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
-                target_cuts = 4  # High quality story scenes for top half
-                timeline_queries = extract_timeline_visual_queries(
-                    script_text=clean_script,
-                    target_cuts=target_cuts,
-                    keywords_from_prompt=req.clip_keywords,
-                    niche=niche
-                )
-
-                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Visual Mode: Split-Screen Retention. Fetching {len(timeline_queries)} timeline clips in parallel: {timeline_queries}...")
-                clip_paths = await _fetch_timeline_clips_parallel(timeline_queries, niche)
-                PRODUCTION_TASKS[task_id]["progress"] = 70
-                PRODUCTION_TASKS[task_id]["log"].append("[4/5] Rendering 50/50 Split-Screen (Narrative Story on Top, Hypnotic Parkour on Bottom)...")
-                await asyncio.to_thread(render_split_retention_short, clip_paths, audio_file, ass_file, output_mp4, dur)
-
-            elif ADMIN_ONLY_MODE:  # GTA Cinematic Cuts -> Scraped News Article Images & Videos
+            else:  # GTA Cinematic Cuts -> Scraped News Article Images & Videos
                 if not resolved_media_urls and req.description:
                     url_m = re.search(r"https?://[^\s)]+", req.description)
                     if url_m:
@@ -2101,35 +2081,6 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                     f"[3/5] Visual Mode: News Media Cuts ({len(resolved_media_urls)} scraped article visuals + Ken Burns Cinema Frame)..."
                 )
                 await asyncio.to_thread(render_news_media_short, resolved_media_urls, audio_file, ass_file, output_mp4, dur, True, False)
-
-            else:  # ShadowMind cinematic_cuts -> pure full-screen stock clips (Pixabay -> Mixkit -> Unsplash)
-                niche = getattr(req, "niche", "dark_psychology") or "dark_psychology"
-                target_cuts = max(8, min(14, round(dur / 3.0)))
-                scene_kws = list(req.clip_keywords or [])
-                if len(scene_kws) < max(4, target_cuts // 2):
-                    try:
-                        from gemini_generator import generate_scene_visual_queries
-                        key_file = os.path.join(u_dir, "groq_api_key.txt")
-                        llm_scenes = await asyncio.to_thread(generate_scene_visual_queries, clean_script, target_cuts, key_file, True)
-                        if llm_scenes:
-                            scene_kws = llm_scenes
-                    except Exception:
-                        pass
-                timeline_queries = extract_timeline_visual_queries(
-                    script_text=clean_script,
-                    target_cuts=target_cuts,
-                    keywords_from_prompt=scene_kws,
-                    niche=niche
-                )
-
-                PRODUCTION_TASKS[task_id]["log"].append(f"[3/5] Fetching {len(timeline_queries)} script-synchronized stock clips in parallel: {timeline_queries}...")
-                clip_paths = await _fetch_timeline_clips_parallel(timeline_queries, niche)
-
-                PRODUCTION_TASKS[task_id]["progress"] = 70
-                PRODUCTION_TASKS[task_id]["log"].append(f"[4/5] Rendering 1080x1920 vertical video ({len(clip_paths)} dynamic cuts with random offsets & flips)...")
-
-                # 4. Render (Non-blocking async execution)
-                await asyncio.to_thread(render_motion_video, clip_paths, audio_file, ass_file, output_mp4, dur)
 
             PRODUCTION_TASKS[task_id]["progress"] = 90
             PRODUCTION_TASKS[task_id]["log"].append("[5/5] Metadata sanitized (-map_metadata -1) & packaging SEO...")
@@ -2163,10 +2114,14 @@ async def run_production(task_id: str, req: ProduceRequest, target_videos_dir: s
                             thumb_saved = True
                     except Exception:
                         pass
-            if not thumb_saved:
-                thumb_query = (req.clip_keywords[0] if req.clip_keywords else "") or req.title or "cinematic mystery"
+            if not thumb_saved and os.path.exists(output_mp4):
                 try:
-                    await asyncio.to_thread(fetch_unsplash_thumbnail, thumb_query, thumb_path)
+                    from produce_motion_short import FFMPEG as _FF
+                    await asyncio.to_thread(
+                        subprocess.run,
+                        [_FF, "-y", "-ss", f"{min(1.5, dur / 2):.1f}", "-i", output_mp4, "-frames:v", "1", "-q:v", "4", thumb_path],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
                 except Exception as te:
                     print(f"Thumbnail generation note: {te}")
 

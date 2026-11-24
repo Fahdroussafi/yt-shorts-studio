@@ -11,9 +11,14 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from engine import FFMPEG, generate_voice, get_audio_duration
 
 
+FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+
+
 def _find_font(bold: bool = False) -> Optional[str]:
     candidates = (
         [
+            os.path.join(FONTS_DIR, "Montserrat-Black.ttf"),
+            os.path.join(FONTS_DIR, "Anton-Regular.ttf"),
             "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "C:/Windows/Fonts/arialbd.ttf",
@@ -31,6 +36,19 @@ def _find_font(bold: bool = False) -> Optional[str]:
         if os.path.exists(p):
             return p
     return None
+
+
+def _trunc_words(text: str, max_chars: int = 16) -> str:
+    txt = re.sub(r"\s+", " ", (text or "").strip())
+    if len(txt) <= max_chars:
+        return txt
+    out = ""
+    for w in txt.split():
+        cand = f"{out} {w}".strip()
+        if len(cand) + 1 > max_chars:
+            break
+        out = cand
+    return (out + "…") if out else txt[: max_chars - 1] + "…"
 
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
@@ -107,7 +125,15 @@ def generate_guide_blueprint(
                     if len(fetched) > len(body):
                         body = fetched
                 scraped_context = body[:3800]
-                media_urls = scrape_article_media(art.get("link", ""), max_items=10)
+                media_urls = scrape_article_media(art.get("link", ""), max_items=8)
+                for extra_a in articles[1:5]:
+                    if len(media_urls) >= 14:
+                        break
+                    if extra_a.get("link"):
+                        for u in scrape_article_media(extra_a["link"], max_items=4):
+                            if u not in media_urls:
+                                media_urls.append(u)
+                media_urls = media_urls[:14]
             else:
                 raw_topic = "GTA 6 Complete Beginner Guide, Best Settings & Early Strategy"
         else:
@@ -296,7 +322,7 @@ def build_16x9_ass_subtitles(words: List[Dict], ass_path: str) -> str:
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        "Style: DocCap,DejaVu Sans,54,&H00FFFFFF,&H00F8BD38,&H00080C18,&HB0000000,-1,0,0,0,100,100,0,0,1,4,2,2,120,120,125,1\n\n"
+        "Style: DocCap,Montserrat,56,&H00FFFFFF,&H00F8BD38,&H00080C18,&HB0000000,-1,0,0,0,100,100,0,0,1,4,2,2,120,120,125,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -440,130 +466,11 @@ def render_editorial_hud_png(
             fill_col, txt_col = (30, 41, 59, 210), (148, 163, 184, 180)
         draw.rounded_rectangle((sx0, H - 44, sx1, H - 28), radius=6, fill=fill_col)
         if all_chapters and s_i < len(all_chapters):
-            c_lbl = str(all_chapters[s_i].get("chapter_title") or f"Part {s_i+1}")[:18]
+            c_lbl = _trunc_words(str(all_chapters[s_i].get("chapter_title") or f"Part {s_i+1}"), 16)
             draw.text((sx0 + 4, H - 70), c_lbl, font=f_seg, fill=txt_col)
 
     canvas.save(out_png)
     return out_png
-
-
-def _list_gameplay_videos() -> List[str]:
-    gp_dir = os.environ.get("GAMEPLAY_DIR", "").strip()
-    if not gp_dir or not os.path.isdir(gp_dir):
-        gp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gameplay")
-    if not os.path.isdir(gp_dir):
-        return []
-    return [os.path.join(gp_dir, f) for f in sorted(os.listdir(gp_dir)) if f.lower().endswith(".mp4")]
-
-
-def render_guide_broll_overlay_png(
-    chapter: Dict,
-    out_png: str,
-    brand_name: str,
-    idx: int,
-    total: int,
-    bullet_idx: int = 0,
-    all_chapters: Optional[List[Dict]] = None,
-    start_ts: str = "00:00",
-) -> str:
-    """Renders a transparent 1920x1080 RGBA lower-third + segmented chapter bar for moving B-roll."""
-    W, H = 1920, 1080
-    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(canvas)
-
-    # Bottom gradient scrim so text + timeline stay crisp over bright gameplay
-    for y in range(H - 340, H, 4):
-        alpha = int(225 * ((y - (H - 340)) / 340.0))
-        draw.rectangle([(0, y), (W, y + 4)], fill=(8, 12, 22, alpha))
-
-    f_badge = _load_font(22, bold=True)
-    f_brand = _load_font(22, bold=True)
-    f_head = _load_font(42, bold=True)
-    f_sub = _load_font(28, bold=False)
-    f_small = _load_font(22, bold=True)
-    f_seg = _load_font(18, bold=True)
-
-    # Top-right subtle watermark pill
-    pill_txt = f"@{brand_name}  •  {idx + 1:02d}/{total:02d}"
-    pb = draw.textbbox((0, 0), pill_txt, font=f_brand)
-    pw = (pb[2] - pb[0]) + 32
-    draw.rounded_rectangle((W - 64 - pw, 36, W - 64, 82), radius=14, fill=(10, 14, 26, 185), outline=(56, 189, 248, 140), width=2)
-    draw.text((W - 48 - pw, 46), pill_txt, font=f_brand, fill=(226, 232, 240, 235))
-
-    # Bottom-left sleek lower-third glass card
-    bullets = chapter.get("bullets") or [chapter.get("chapter_title") or "Key Takeaway"]
-    active_b = str(bullets[bullet_idx % len(bullets)])
-    headline = str(chapter.get("headline") or chapter.get("chapter_title") or "Guide Breakdown").strip()
-    badge_txt = str(chapter.get("badge") or f"CHAPTER {idx + 1}").upper()[:20]
-
-    box_x0, box_y0, box_x1, box_y1 = 80, H - 305, 1180, H - 125
-    draw.rounded_rectangle((box_x0, box_y0, box_x1, box_y1), radius=20, fill=(11, 16, 30, 220), outline=(56, 189, 248, 160), width=2)
-    draw.rounded_rectangle((box_x0, box_y0 + 18, box_x0 + 8, box_y1 - 18), radius=4, fill=(236, 72, 153, 255))
-
-    # Badge + timestamp
-    bb = draw.textbbox((0, 0), badge_txt, font=f_badge)
-    bw = (bb[2] - bb[0]) + 28
-    draw.rounded_rectangle((box_x0 + 28, box_y0 + 18, box_x0 + 28 + bw, box_y0 + 54), radius=10, fill=(6, 182, 212, 255))
-    draw.text((box_x0 + 42, box_y0 + 24), badge_txt, font=f_badge, fill=(9, 14, 26, 255))
-    draw.text((box_x0 + 44 + bw, box_y0 + 24), f"[{start_ts}]", font=f_small, fill=(148, 163, 184, 255))
-
-    # Headline + rotating bullet
-    h_lines = _wrap_text(draw, headline, f_head, box_x1 - box_x0 - 60)[:1]
-    draw.text((box_x0 + 28, box_y0 + 66), h_lines[0] if h_lines else headline, font=f_head, fill=(248, 250, 252, 255))
-    b_lines = _wrap_text(draw, f"▸ {active_b}", f_sub, box_x1 - box_x0 - 60)[:1]
-    draw.text((box_x0 + 28, box_y0 + 122), b_lines[0] if b_lines else active_b, font=f_sub, fill=(56, 189, 248, 255))
-
-    # Segmented chapter bar at bottom
-    bar_left, bar_right = 80, W - 80
-    bar_w = bar_right - bar_left
-    gap = 10
-    n_seg = max(1, total)
-    seg_w = int((bar_w - gap * (n_seg - 1)) / n_seg)
-    for s_i in range(n_seg):
-        sx0 = bar_left + s_i * (seg_w + gap)
-        sx1 = bar_right if s_i == n_seg - 1 else (sx0 + seg_w)
-        if s_i < idx:
-            fill_col, txt_col = (14, 116, 144, 240), (148, 163, 184, 230)
-        elif s_i == idx:
-            fill_col, txt_col = (236, 72, 153, 255), (255, 255, 255, 255)
-        else:
-            fill_col, txt_col = (30, 41, 59, 210), (148, 163, 184, 180)
-        draw.rounded_rectangle((sx0, H - 46, sx1, H - 30), radius=6, fill=fill_col)
-        if all_chapters and s_i < len(all_chapters):
-            c_lbl = str(all_chapters[s_i].get("chapter_title") or f"Part {s_i+1}")[:18]
-            draw.text((sx0 + 4, H - 72), c_lbl, font=f_seg, fill=txt_col)
-
-    canvas.save(out_png)
-    return out_png
-
-
-def _sample_gameplay_frames(work_dir: str, needed: int, existing_count: int) -> List[str]:
-    """Extracts distinct frames from local gameplay MP4s if scraped article images are scarce."""
-    if needed <= 0:
-        return []
-    gp_dir = os.environ.get("GAMEPLAY_DIR", "").strip()
-    if not gp_dir or not os.path.isdir(gp_dir):
-        gp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gameplay")
-    if not os.path.isdir(gp_dir):
-        return []
-    mp4s = [os.path.join(gp_dir, f) for f in sorted(os.listdir(gp_dir)) if f.lower().endswith(".mp4")]
-    if not mp4s:
-        return []
-    out: List[str] = []
-    for i in range(needed):
-        src = mp4s[i % len(mp4s)]
-        ts = 6 + (i * 11) % 45
-        dst = os.path.join(work_dir, f"bg_gp_{existing_count + i}.jpg")
-        try:
-            r = subprocess.run(
-                [FFMPEG, "-y", "-ss", str(ts), "-i", src, "-frames:v", "1", "-q:v", "4", dst],
-                capture_output=True, timeout=8,
-            )
-            if r.returncode == 0 and os.path.exists(dst) and os.path.getsize(dst) > 4000:
-                out.append(dst)
-        except Exception:
-            continue
-    return out
 
 
 def render_guide_thumbnail_jpg(
@@ -831,7 +738,7 @@ def render_guide_card_png(
             txt_col = (100, 116, 139, 210)
         draw.rounded_rectangle((sx0, H - 56, sx1, H - 38), radius=6, fill=fill_col)
         if all_chapters and s_i < len(all_chapters):
-            c_lbl = str(all_chapters[s_i].get("chapter_title") or f"Part {s_i+1}")[:18]
+            c_lbl = _trunc_words(str(all_chapters[s_i].get("chapter_title") or f"Part {s_i+1}"), 16)
             draw.text((sx0 + 4, H - 82), c_lbl, font=f_seg, fill=txt_col)
 
     canvas.convert("RGB").save(out_png, quality=92)
@@ -894,40 +801,60 @@ async def render_long_guide_video(
 
         ctype = (ch.get("card_type") or "editorial").lower()
         if ctype in ("editorial", "broll", "step"):
-            backdrop_jpg = os.path.join(work_dir, f"backdrop_{idx}.jpg")
             hud_png = os.path.join(work_dir, f"hud_{idx}.png")
-            await asyncio.to_thread(render_editorial_backdrop_jpg, backdrop_jpg, bg_pick, idx)
             await asyncio.to_thread(render_editorial_hud_png, ch, hud_png, brand_name, idx, total, chapters, cur_ts)
 
-            frames = max(300, int(dur * 30) + 15)
-            move_mode = idx % 4
-            if move_mode == 0:
-                zp = f"zoompan=z='min(zoom+0.0006,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1920x1080:fps=30"
-            elif move_mode == 1:
-                zp = f"zoompan=z='max(1.12-0.0006*on,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1920x1080:fps=30"
-            elif move_mode == 2:
-                zp = f"zoompan=z='1.10':x='(iw-iw/zoom)*on/{frames}':y='ih/2-(ih/zoom/2)':d={frames}:s=1920x1080:fps=30"
-            else:
-                zp = f"zoompan=z='1.10':x='(iw-iw/zoom)*(1-on/{frames})':y='ih/2-(ih/zoom/2)':d={frames}:s=1920x1080:fps=30"
+            sub_cuts = min(4, max(2, int(dur // 14)))
+            cut_dur = dur / sub_cuts
+            cut_frames = max(60, int(round(cut_dur * 30)))
 
+            bg_inputs: List[str] = []
+            zp_parts: List[str] = []
+            for sc_i in range(sub_cuts):
+                img_pick = bg_imgs[(idx * sub_cuts + sc_i) % len(bg_imgs)] if bg_imgs else None
+                b_jpg = os.path.join(work_dir, f"backdrop_{idx}_{sc_i}.jpg")
+                await asyncio.to_thread(render_editorial_backdrop_jpg, b_jpg, img_pick, idx + sc_i)
+                bg_inputs.extend(["-i", b_jpg])
+
+                move_mode = (idx + sc_i) % 4
+                if move_mode == 0:
+                    zp = f"zoompan=z='min(zoom+0.0008,1.14)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={cut_frames}:s=1920x1080:fps=30"
+                elif move_mode == 1:
+                    zp = f"zoompan=z='max(1.14-0.0008*on,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={cut_frames}:s=1920x1080:fps=30"
+                elif move_mode == 2:
+                    zp = f"zoompan=z='1.12':x='(iw-iw/zoom)*on/{cut_frames}':y='ih/2-(ih/zoom/2)':d={cut_frames}:s=1920x1080:fps=30"
+                else:
+                    zp = f"zoompan=z='1.12':x='(iw-iw/zoom)*(1-on/{cut_frames})':y='ih/2-(ih/zoom/2)':d={cut_frames}:s=1920x1080:fps=30"
+                zp_parts.append(f"[{sc_i}:v]scale=2560:1440,{zp},setsar=1,setpts=PTS-STARTPTS[cut{sc_i}]")
+
+            hud_idx = sub_cuts
+            aud_idx = sub_cuts + 1
+            pad_idx = sub_cuts + 2
+            concat_ins = "".join(f"[cut{k}]" for k in range(sub_cuts))
             fade_out_st = max(0.2, dur - 0.35)
             ass_esc = os.path.abspath(ass_path).replace("\\", "/").replace(":", "\\:")
-            ass_filter = f",subtitles='{ass_esc}'" if words and os.path.exists(ass_path) else ""
+            fonts_esc = os.path.abspath(FONTS_DIR).replace("\\", "/").replace(":", "\\:")
+            fonts_arg = f":fontsdir='{fonts_esc}'" if os.path.exists(FONTS_DIR) else ""
+            ass_filter = f",subtitles='{ass_esc}'{fonts_arg}" if words and os.path.exists(ass_path) else ""
             fc = (
-                f"[0:v]scale=2240:1260,{zp},setsar=1[bg];"
-                f"[bg][1:v]overlay=0:0:eof_action=repeat{ass_filter},"
-                f"fade=t=in:st=0:d=0.35,fade=t=out:st={fade_out_st:.2f}:d=0.35,format=yuv420p[vout]"
+                ";".join(zp_parts) + ";"
+                f"{concat_ins}concat=n={sub_cuts}:v=1:a=0[bg];"
+                f"[bg][{hud_idx}:v]overlay=0:0:eof_action=repeat{ass_filter},"
+                f"fade=t=in:st=0:d=0.35,fade=t=out:st={fade_out_st:.2f}:d=0.35,format=yuv420p[vout];"
+                f"[{aud_idx}:a]aresample=44100,apad=pad_dur=0.2[av];"
+                f"[av][{pad_idx}:a]amix=inputs=2:duration=first:weights=1.0 0.5:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[aout]"
             )
             cmd = [
                 FFMPEG, "-y", "-threads", "2",
-                "-i", backdrop_jpg,
+                *bg_inputs,
                 "-i", hud_png,
                 "-i", mp3_path,
+                "-f", "lavfi", "-t", f"{dur + 0.2:.2f}",
+                "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.015,bandpass=f=220:w=160",
                 "-filter_complex", fc,
-                "-map", "[vout]", "-map", "2:a",
-                "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-                "-c:a", "aac", "-b:a", "160k", "-ar", "44100",
+                "-map", "[vout]", "-map", "[aout]",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-r", "30",
+                "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-ac", "2",
                 "-t", f"{dur:.2f}",
                 seg_mp4,
             ]
@@ -960,10 +887,13 @@ async def render_long_guide_video(
                 FFMPEG, "-y", "-threads", "2",
                 *v_inputs,
                 "-i", mp3_path,
-                "-vf", vf,
-                "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-                "-c:a", "aac", "-b:a", "160k", "-ar", "44100",
+                "-f", "lavfi", "-t", f"{dur + 0.2:.2f}",
+                "-i", "anoisesrc=d=60:c=pink:r=44100:a=0.015,bandpass=f=220:w=160",
+                "-filter_complex",
+                f"[0:v]{vf}[vout];[1:a]aresample=44100,apad=pad_dur=0.2[av];[av][2:a]amix=inputs=2:duration=first:weights=1.0 0.5:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[aout]",
+                "-map", "[vout]", "-map", "[aout]",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-r", "30",
+                "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-ac", "2",
                 "-t", f"{dur:.2f}",
                 seg_mp4,
             ]
